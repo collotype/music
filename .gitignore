@@ -1,0 +1,100 @@
+# Xcode
+#
+# gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
+
+## User settings
+xcuserdata/
+
+## Compatibility with Xcode 8 and earlier (Objective-C or Swift)
+*.xcscmblueprint
+*.xccheckout
+
+## Compatibility with Xcode 3 and earlier (Objective-C)
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.pbxuser
+!default.pbxuser
+*.ppk
+!default.ppk
+*.xcodeproj/xcuserdata/*.xcuserdatad/
+*.xcodeproj/project.xcworkspace/xcshareddata/
+
+## Obj-C/Swift specific
+*.hmap
+
+## App packaging
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+## Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+## Swift Package Manager
+#
+# Add this line if you want to avoid checking in source code from SPM dependencies.
+# Packages/
+# Package.pins
+# Package.resolved
+# *.xcodeproj
+#
+# Xcode automatically generates this directory with a hierarchical structure
+# when using SPM, so we ignore the directory itself, not the specific files.
+.swiftpm/
+
+## CocoaPods
+#
+# We recommend against adding the Pods directory to your .gitignore. However
+# you should judge for yourself, the pros and cons are mentioned at:
+# https://guides.cocoapods.org/using/using-cocoapods.html#should-i-check-the-pods-directory-into-source-control
+#
+# Pods/
+#
+# Add this line if you want to avoid checking in source code from the Xcode workspace
+# *.xcworkspace
+#
+# Add this line if you want to avoid checking in source code from the Xcode workspace
+# !include.xcworkspace
+# Include.xcworkspace
+
+## Carthage
+#
+# Add this line if you want to avoid checking in source code from Carthage dependencies.
+# Carthage/Checkouts
+
+## Accio dependency management
+Dependencies/
+.accio/
+
+## fastlane
+#
+# It is recommended to not store the screenshots in the git repo.
+# Instead, use fastlane to re-generate the screenshots whenever they are needed.
+# For more information about the recommended setup visit:
+# https://docs.fastlane.tools/best-practices/source-control/#source-control
+
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+## Code Injection
+#
+# After new Xcode updates, you might need to rebuild the code injection tool
+# You can uncomment the lines below to avoid committing unnecessary build files
+# iOSInjectionProject/.build/
+# iOSInjectionProject/build/
+
+## Build
+build/
+DerivedData/
+*.xcassets
+*.app
+*.dSYM/
+
+## Node
+node_modules/
+npm-debug.log
+yarn-error.log
