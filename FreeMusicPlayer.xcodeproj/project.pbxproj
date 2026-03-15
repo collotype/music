@@ -20,7 +20,6 @@
 		A100000B /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B; };
 		A100000C /* MiniPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000C; };
 		A100000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A200000D; };
-		A100000E /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A200000F; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -149,7 +148,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A100000D /* Assets.xcassets in Resources */,
-				A100000E /* Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -306,7 +304,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FreeMusicPlayer/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "FreeMusic Player";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
@@ -337,7 +335,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FreeMusicPlayer/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "FreeMusic Player";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
