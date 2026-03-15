@@ -1,0 +1,61 @@
+name: Build Unsigned IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Clean
+        run: rm -rf build Payload output
+
+      - name: Build app without signing
+        run: |
+          xcodebuild \
+            -project FreeMusicPlayer.xcodeproj \
+            -scheme FreeMusicPlayer \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package IPA
+        run: |
+          APP_PATH=$(find build -type d -name "FreeMusicPlayer.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "FreeMusicPlayer.app not found"
+            exit 1
+          fi
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$APP_PATH/Info.plist" 2>/dev/null || echo "1.0")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          mkdir -p Payload output
+          cp -R "$APP_PATH" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload "output/FreeMusicPlayer-v${VERSION}.ipa"
+
+      - name: Show result
+        run: |
+          ls -la output
+          file output/*.ipa || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeMusicPlayer-ipa
+          path: output/*.ipa
+          if-no-files-found: error
