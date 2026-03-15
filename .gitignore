@@ -90,7 +90,6 @@ fastlane/test_output
 ## Build
 build/
 DerivedData/
-*.xcassets
 *.app
 *.dSYM/
 
