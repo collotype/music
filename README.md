@@ -1,5 +1,8 @@
 # FreeMusic Player for iOS
 
+ На данный момент не работает 
+
+
 🎵 **Свободный музыкальный плеер без регистрации и подписок**
 
 ![Platform](https://img.shields.io/badge/platform-iOS%2016.0+-blue)
