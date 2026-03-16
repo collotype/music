@@ -24,6 +24,7 @@ class AudioPlayer: ObservableObject {
     private var player: AVPlayer?
     private var playerItem: AVPlayerItem?
     private var timeObserver: Any?
+    private var durationObserver: NSKeyValueObservation?
     
     enum RepeatMode {
         case off
@@ -76,13 +77,14 @@ class AudioPlayer: ObservableObject {
         guard let url = resolvedURL(for: track) else { return }
         
         currentTrack = track
-        let playerItem = AVPlayerItem(url: url)
-        self.playerItem = playerItem
+        let newPlayerItem = AVPlayerItem(url: url)
+        self.playerItem = newPlayerItem
+        durationObserver = nil
         
         if player == nil {
-            player = AVPlayer(playerItem: playerItem)
+            player = AVPlayer(playerItem: newPlayerItem)
         } else {
-            player?.replaceCurrentItem(with: playerItem)
+            player?.replaceCurrentItem(with: newPlayerItem)
         }
         
         player?.volume = volume
@@ -92,7 +94,7 @@ class AudioPlayer: ObservableObject {
         currentTime = 0
         
         // Получение длительности
-        playerItem?.observe(\.duration, options: [.new]) { [weak self] item, _ in
+        durationObserver = newPlayerItem.observe(\.duration, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 self?.duration = CMTimeGetSeconds(item.duration)
             }
@@ -205,6 +207,7 @@ class AudioPlayer: ObservableObject {
     }
     
     deinit {
+        durationObserver = nil
         if let observer = timeObserver {
             player?.removeTimeObserver(observer)
         }
