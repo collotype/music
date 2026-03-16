@@ -15,13 +15,13 @@ struct Track: Identifiable, Codable, Equatable {
         case soundcloud
         case spotify
     }
-    
+
     enum StorageLocation: String, Codable {
         case library
         case temp
         case remote
     }
-    
+
     var id: String
     var title: String
     var artist: String
@@ -37,7 +37,7 @@ struct Track: Identifiable, Codable, Equatable {
     var sourceID: String?
     var remotePageURL: String?
     var storageLocation: StorageLocation
-    
+
     init(
         id: String = UUID().uuidString,
         title: String,
@@ -71,7 +71,7 @@ struct Track: Identifiable, Codable, Equatable {
         self.remotePageURL = remotePageURL
         self.storageLocation = storageLocation
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case id
         case title
@@ -89,10 +89,10 @@ struct Track: Identifiable, Codable, Equatable {
         case remotePageURL
         case storageLocation
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        
+
         id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
         artist = try container.decodeIfPresent(String.self, forKey: .artist) ?? ""
@@ -109,7 +109,7 @@ struct Track: Identifiable, Codable, Equatable {
         remotePageURL = try container.decodeIfPresent(String.self, forKey: .remotePageURL)
         storageLocation = try container.decodeIfPresent(StorageLocation.self, forKey: .storageLocation) ?? .library
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
@@ -128,17 +128,17 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(remotePageURL, forKey: .remotePageURL)
         try container.encode(storageLocation, forKey: .storageLocation)
     }
-    
+
     var formattedDuration: String {
         let mins = Int(duration) / 60
         let secs = Int(duration) % 60
         return String(format: "%d:%02d", mins, secs)
     }
-    
+
     var displayTitle: String {
         title.isEmpty ? "Unknown Track" : title
     }
-    
+
     var displayArtist: String {
         artist.isEmpty ? "Unknown Artist" : artist
     }
@@ -153,13 +153,19 @@ struct Playlist: Identifiable, Codable, Equatable {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     var isStarred: Bool = false
-    
+
     var tracks: [Track] {
-        DataManager.shared.tracks.filter { trackIDs.contains($0.id) }
+        trackIDs.compactMap { trackID in
+            DataManager.shared.tracks.first(where: { $0.id == trackID })
+        }
     }
-    
+
     var trackCount: Int {
         tracks.count
+    }
+
+    var displayName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Playlist" : name
     }
 }
 
@@ -168,7 +174,7 @@ enum Tab: String, CaseIterable, Hashable {
     case library
     case search
     case settings
-    
+
     var icon: String {
         switch self {
         case .home: return "house.fill"
@@ -177,7 +183,7 @@ enum Tab: String, CaseIterable, Hashable {
         case .settings: return "gearshape.fill"
         }
     }
-    
+
     var title: String {
         switch self {
         case .home: return "Home"
@@ -195,18 +201,18 @@ enum AppRoute: Hashable {
 final class AppRouter: ObservableObject {
     @Published var selectedTab: Tab = .home
     @Published var path = NavigationPath()
-    
+
     func navigate(to tab: Tab) {
         debugLog("Navigate to tab: \(tab.rawValue)")
         path = NavigationPath()
         selectedTab = tab
     }
-    
+
     func openPlaylist(_ playlistId: String) {
         debugLog("Navigate to playlist: \(playlistId)")
         path.append(AppRoute.playlist(playlistId))
     }
-    
+
     func popToRoot() {
         debugLog("Pop to root")
         path = NavigationPath()

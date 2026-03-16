@@ -11,7 +11,7 @@ struct HomeView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var router: AppRouter
-    
+
     var body: some View {
         ZStack {
             LinearGradient(
@@ -24,7 +24,7 @@ struct HomeView: View {
                 endPoint: .bottom
             )
             .ignoresSafeArea()
-            
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     WaveCard()
@@ -50,7 +50,7 @@ struct HomeView: View {
                         .foregroundColor(.white)
                 }
             }
-            
+
             ToolbarItem(placement: .topBarTrailing) {
                 HStack(spacing: 16) {
                     Button {
@@ -61,7 +61,7 @@ struct HomeView: View {
                             .foregroundColor(.white)
                     }
                     .buttonStyle(.plain)
-                    
+
                     Button {
                         debugLog("Home profile button pressed")
                         router.navigate(to: .settings)
@@ -87,7 +87,7 @@ struct HomeView: View {
 struct WaveCard: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -95,14 +95,14 @@ struct WaveCard: View {
                     Text("My Wave")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundColor(.white)
-                    
+
                     Text("Start a quick mix from the tracks already in your library.")
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.7))
                 }
-                
+
                 Spacer()
-                
+
                 Button {
                     debugLog("Wave play button pressed")
                     if let firstTrack = dataManager.tracks.randomElement() {
@@ -122,7 +122,7 @@ struct WaveCard: View {
                 }
                 .buttonStyle(.plain)
             }
-            
+
             WaveformView()
                 .frame(height: 40)
         }
@@ -165,19 +165,19 @@ struct ListenTogetherCard: View {
                         Circle()
                             .fill(Color.white.opacity(0.1))
                     )
-                
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Listen Together")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.white)
-                    
+
                     Text("Public rooms placeholder")
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.6))
                 }
-                
+
                 Spacer()
-                
+
                 Image(systemName: "chevron.right")
                     .foregroundColor(.white.opacity(0.5))
             }
@@ -194,30 +194,45 @@ struct ListenTogetherCard: View {
 struct PlaylistsSection: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var router: AppRouter
-    
+    @State private var showingCreatePlaylistPrompt = false
+    @State private var newPlaylistName: String = ""
+
+    private var displayedPlaylists: [Playlist] {
+        Array(dataManager.sortedPlaylists.prefix(5))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Playlists")
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(.white)
-            
+            HStack {
+                Text("Playlists")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.white)
+
+                Spacer()
+
+                if !dataManager.favoritePlaylists.isEmpty {
+                    Text("\(dataManager.favoritePlaylists.count) favorites")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.45))
+                }
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(Array(dataManager.playlists.prefix(5))) { playlist in
+                    ForEach(displayedPlaylists) { playlist in
                         Button {
-                            debugLog("Playlist card pressed: \(playlist.name)")
+                            debugLog("Playlist card pressed: \(playlist.displayName)")
                             router.openPlaylist(playlist.id)
                         } label: {
                             PlaylistCard(playlist: playlist)
                         }
                         .buttonStyle(.plain)
                     }
-                    
+
                     Button {
                         debugLog("Create playlist button pressed")
-                        let name = "New Playlist \(dataManager.playlists.count + 1)"
-                        let playlist = dataManager.createPlaylist(name: name)
-                        router.openPlaylist(playlist.id)
+                        newPlaylistName = "New Playlist"
+                        showingCreatePlaylistPrompt = true
                     } label: {
                         VStack {
                             RoundedRectangle(cornerRadius: 12)
@@ -228,7 +243,7 @@ struct PlaylistsSection: View {
                                         .font(.system(size: 32))
                                         .foregroundColor(.white.opacity(0.5))
                                 )
-                            
+
                             Text("Create")
                                 .font(.system(size: 13))
                                 .foregroundColor(.white.opacity(0.6))
@@ -239,12 +254,25 @@ struct PlaylistsSection: View {
                 }
             }
         }
+        .alert("Create Playlist", isPresented: $showingCreatePlaylistPrompt) {
+            TextField("Playlist name", text: $newPlaylistName)
+            Button("Cancel", role: .cancel) {
+                newPlaylistName = ""
+            }
+            Button("Create") {
+                let playlist = dataManager.createPlaylist(name: newPlaylistName)
+                newPlaylistName = ""
+                router.openPlaylist(playlist.id)
+            }
+        } message: {
+            Text("Choose a name for the new playlist.")
+        }
     }
 }
 
 struct PlaylistCard: View {
     let playlist: Playlist
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             RoundedRectangle(cornerRadius: 12)
@@ -260,16 +288,31 @@ struct PlaylistCard: View {
                 )
                 .frame(width: 140, height: 140)
                 .overlay(
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 40))
-                        .foregroundColor(.white.opacity(0.3))
+                    ZStack {
+                        Image(systemName: playlist.isStarred ? "star.circle.fill" : "music.note.list")
+                            .font(.system(size: 40))
+                            .foregroundColor(playlist.isStarred ? .yellow.opacity(0.9) : .white.opacity(0.3))
+
+                        VStack {
+                            HStack {
+                                Spacer()
+                                if playlist.isStarred {
+                                    Image(systemName: "star.fill")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.yellow)
+                                        .padding(8)
+                                }
+                            }
+                            Spacer()
+                        }
+                    }
                 )
-            
-            Text(playlist.name)
+
+            Text(playlist.displayName)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(.white)
                 .lineLimit(1)
-            
+
             Text("\(playlist.trackCount) tracks")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.5))
@@ -284,7 +327,7 @@ struct PopularSection: View {
             Text("Popular")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
-            
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(0..<5, id: \.self) { index in
@@ -298,7 +341,7 @@ struct PopularSection: View {
 
 struct PopularCard: View {
     let index: Int
-    
+
     var body: some View {
         Button {
             debugLog("Popular card pressed: \(index)")
@@ -307,7 +350,7 @@ struct PopularCard: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.1))
                     .frame(width: 140, height: 140)
-                
+
                 Text("Mix #\(index + 1)")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
@@ -319,13 +362,13 @@ struct PopularCard: View {
 
 struct RecentSection: View {
     @EnvironmentObject var dataManager: DataManager
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
-            
+
             VStack(spacing: 0) {
                 ForEach(Array(dataManager.tracks.prefix(10))) { track in
                     TrackRow(track: track)
@@ -343,11 +386,11 @@ struct TrackRow: View {
     let track: Track
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
-    
+
     var isPlaying: Bool {
         audioPlayer.currentTrack?.id == track.id && audioPlayer.isPlaying
     }
-    
+
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 8)
@@ -357,19 +400,19 @@ struct TrackRow: View {
                     Image(systemName: "music.note")
                         .foregroundColor(.white.opacity(0.3))
                 )
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(isPlaying ? .red : .white)
-                
+
                 Text(track.displayArtist)
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.5))
             }
-            
+
             Spacer()
-            
+
             Text(track.formattedDuration)
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.4))
@@ -379,7 +422,7 @@ struct TrackRow: View {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(Color.white.opacity(0.05))
                 )
-            
+
             Button {
                 debugLog("Recent favorite button pressed: \(track.displayTitle)")
                 dataManager.toggleFavorite(track)
