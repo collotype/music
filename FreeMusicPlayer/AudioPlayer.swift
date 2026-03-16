@@ -7,7 +7,9 @@
 
 import AVFoundation
 import Foundation
+import MediaPlayer
 import SwiftUI
+import UIKit
 
 final class AudioPlayer: ObservableObject {
     static let shared = AudioPlayer()
@@ -29,6 +31,8 @@ final class AudioPlayer: ObservableObject {
     private var durationObserver: NSKeyValueObservation?
     private var statusObserver: NSKeyValueObservation?
     private var manualQueue: [Track] = []
+    private var artworkDataTask: URLSessionDataTask?
+    private var nowPlayingArtworkIdentifier: String?
 
     enum RepeatMode {
         case off
@@ -43,6 +47,9 @@ final class AudioPlayer: ObservableObject {
     init() {
         configureAudioSession()
         setupNotifications()
+        setupRemoteTransportControls()
+        updateRemoteCommandAvailability()
+        clearNowPlayingInfo()
     }
 
     private func configureAudioSession() {
@@ -53,6 +60,177 @@ final class AudioPlayer: ObservableObject {
         } catch {
             debugLog("Audio session configuration failed: \(error.localizedDescription)")
         }
+    }
+
+    private func setupRemoteTransportControls() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+
+        commandCenter.playCommand.addTarget { [weak self] _ in
+            guard let self, self.currentTrack != nil else { return .noActionableNowPlayingItem }
+            return self.play() ? .success : .commandFailed
+        }
+
+        commandCenter.pauseCommand.addTarget { [weak self] _ in
+            guard let self, self.currentTrack != nil else { return .noActionableNowPlayingItem }
+            self.pause()
+            return .success
+        }
+
+        commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self, self.currentTrack != nil else { return .noActionableNowPlayingItem }
+            self.togglePlayPause()
+            return .success
+        }
+
+        commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+            guard let self, self.currentTrack != nil else { return .noActionableNowPlayingItem }
+            self.playNext()
+            return .success
+        }
+
+        commandCenter.previousTrackCommand.addTarget { [weak self] _ in
+            guard let self, self.currentTrack != nil else { return .noActionableNowPlayingItem }
+            self.playPrevious()
+            return .success
+        }
+
+        commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self,
+                  self.currentTrack != nil,
+                  let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .noActionableNowPlayingItem
+            }
+
+            self.seek(to: event.positionTime)
+            return .success
+        }
+
+        DispatchQueue.main.async {
+            UIApplication.shared.beginReceivingRemoteControlEvents()
+        }
+    }
+
+    private func updateRemoteCommandAvailability() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        let hasActiveTrack = currentTrack != nil
+        let hasSeekableTrack = hasActiveTrack && max(duration, currentTrack?.duration ?? 0) > 0
+
+        commandCenter.playCommand.isEnabled = hasActiveTrack
+        commandCenter.pauseCommand.isEnabled = hasActiveTrack
+        commandCenter.togglePlayPauseCommand.isEnabled = hasActiveTrack
+        commandCenter.nextTrackCommand.isEnabled = hasActiveTrack
+        commandCenter.previousTrackCommand.isEnabled = hasActiveTrack
+        commandCenter.changePlaybackPositionCommand.isEnabled = hasSeekableTrack
+    }
+
+    private func updateNowPlayingInfo(refreshArtwork: Bool = false) {
+        guard let track = currentTrack else {
+            clearNowPlayingInfo()
+            return
+        }
+
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPMediaItemPropertyTitle] = track.displayTitle
+        info[MPMediaItemPropertyArtist] = track.displayArtist
+
+        let normalizedAlbum = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if normalizedAlbum.isEmpty {
+            info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
+        } else {
+            info[MPMediaItemPropertyAlbumTitle] = normalizedAlbum
+        }
+
+        let resolvedDuration = duration > 0 ? duration : max(track.duration, 0)
+        if resolvedDuration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = resolvedDuration
+        } else {
+            info.removeValue(forKey: MPMediaItemPropertyPlaybackDuration)
+        }
+
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = max(currentTime, 0)
+        info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? playbackSpeed : 0
+        info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = playbackSpeed
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        updateRemoteCommandAvailability()
+
+        if refreshArtwork {
+            refreshNowPlayingArtwork(for: track)
+        }
+    }
+
+    private func refreshNowPlayingArtwork(for track: Track) {
+        let identifier = "\(track.id)::\(track.coverArtURL ?? "no-artwork")"
+        guard identifier != nowPlayingArtworkIdentifier else { return }
+
+        nowPlayingArtworkIdentifier = identifier
+        artworkDataTask?.cancel()
+        artworkDataTask = nil
+
+        guard let artworkURL = resolvedArtworkURL(for: track) else {
+            applyNowPlayingArtwork(nil)
+            return
+        }
+
+        if artworkURL.isFileURL {
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let image = (try? Data(contentsOf: artworkURL)).flatMap(UIImage.init(data:))
+
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.nowPlayingArtworkIdentifier == identifier,
+                          self.currentTrack?.id == track.id else {
+                        return
+                    }
+
+                    self.applyNowPlayingArtwork(image)
+                }
+            }
+            return
+        }
+
+        let task = URLSession.shared.dataTask(with: artworkURL) { [weak self] data, _, _ in
+            let image = data.flatMap(UIImage.init(data:))
+
+            DispatchQueue.main.async {
+                guard let self,
+                      self.nowPlayingArtworkIdentifier == identifier,
+                      self.currentTrack?.id == track.id else {
+                    return
+                }
+
+                self.artworkDataTask = nil
+                self.applyNowPlayingArtwork(image)
+            }
+        }
+
+        artworkDataTask = task
+        task.resume()
+    }
+
+    private func applyNowPlayingArtwork(_ image: UIImage?) {
+        guard currentTrack != nil else { return }
+
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+
+        if let finalImage = image ?? UIImage(named: "PlayerAvatar") {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: finalImage.size) { _ in
+                finalImage
+            }
+        } else {
+            info.removeValue(forKey: MPMediaItemPropertyArtwork)
+        }
+
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func clearNowPlayingInfo() {
+        artworkDataTask?.cancel()
+        artworkDataTask = nil
+        nowPlayingArtworkIdentifier = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        updateRemoteCommandAvailability()
     }
 
     private func setupTimeObserver() {
@@ -66,6 +244,7 @@ final class AudioPlayer: ObservableObject {
         let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             self?.currentTime = max(time.seconds, 0)
+            self?.updateNowPlayingInfo()
         }
     }
 
@@ -76,6 +255,37 @@ final class AudioPlayer: ObservableObject {
             name: .AVPlayerItemDidPlayToEndTime,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAudioSessionInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+    }
+
+    @objc private func handleAudioSessionInterruption(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let interruptionType = AVAudioSession.InterruptionType(rawValue: typeValue) else {
+            return
+        }
+
+        switch interruptionType {
+        case .began:
+            debugLog("Audio session interruption began")
+            pause()
+        case .ended:
+            debugLog("Audio session interruption ended")
+
+            if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                if options.contains(.shouldResume), currentTrack != nil {
+                    _ = play()
+                }
+            }
+        @unknown default:
+            break
+        }
     }
 
     @objc private func playerDidFinishPlaying(_ notification: Notification) {
@@ -97,6 +307,7 @@ final class AudioPlayer: ObservableObject {
                 playNext()
             } else {
                 isPlaying = false
+                updateNowPlayingInfo()
             }
         }
     }
@@ -119,6 +330,7 @@ final class AudioPlayer: ObservableObject {
         currentTrack = track
         currentTime = 0
         duration = 0
+        updateNowPlayingInfo(refreshArtwork: true)
 
         let newPlayerItem = AVPlayerItem(url: url)
         playerItem = newPlayerItem
@@ -151,6 +363,7 @@ final class AudioPlayer: ObservableObject {
             DispatchQueue.main.async {
                 let seconds = item.duration.seconds
                 self?.duration = seconds.isFinite ? max(seconds, 0) : 0
+                self?.updateNowPlayingInfo()
             }
         }
 
@@ -190,6 +403,12 @@ final class AudioPlayer: ObservableObject {
             return false
         }
 
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            debugLog("Audio session activation failed: \(error.localizedDescription)")
+        }
+
         debugLog("Playback start: \(currentTrack?.displayTitle ?? "Unknown Track")")
         player.play()
         if playbackSpeed != 1.0 {
@@ -197,6 +416,7 @@ final class AudioPlayer: ObservableObject {
         }
         isPlaying = true
         playbackErrorMessage = nil
+        updateNowPlayingInfo()
         return true
     }
 
@@ -204,6 +424,7 @@ final class AudioPlayer: ObservableObject {
         debugLog("Pause pressed")
         player?.pause()
         isPlaying = false
+        updateNowPlayingInfo()
     }
 
     func togglePlayPause() {
@@ -259,6 +480,7 @@ final class AudioPlayer: ObservableObject {
         let cmTime = CMTime(seconds: clampedTime, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         player.seek(to: cmTime)
         currentTime = clampedTime
+        updateNowPlayingInfo()
     }
 
     func setVolume(_ newVolume: Float) {
@@ -286,6 +508,8 @@ final class AudioPlayer: ObservableObject {
         if isPlaying {
             player?.rate = playbackSpeed
         }
+
+        updateNowPlayingInfo()
     }
 
     func cyclePlaybackSpeed() {
@@ -324,6 +548,7 @@ final class AudioPlayer: ObservableObject {
         duration = 0
         playerItem = nil
         playbackErrorMessage = nil
+        clearNowPlayingInfo()
     }
 
     func clearPlaybackError() {
@@ -339,6 +564,7 @@ final class AudioPlayer: ObservableObject {
             )
         case .readyToPlay:
             debugLog("Player item ready: \(currentTrack?.displayTitle ?? "Unknown Track")")
+            updateNowPlayingInfo()
         case .unknown:
             break
         @unknown default:
@@ -357,6 +583,7 @@ final class AudioPlayer: ObservableObject {
         playbackErrorMessage = message
         currentTrack = track
         isPlaying = false
+        clearNowPlayingInfo()
     }
 
     private func nextQueuedTrack() -> Track? {
@@ -364,9 +591,25 @@ final class AudioPlayer: ObservableObject {
         return manualQueue.removeFirst()
     }
 
+    private func resolvedArtworkURL(for track: Track) -> URL? {
+        guard let coverArtURL = track.coverArtURL else { return nil }
+
+        guard let parsedURL = URL(string: coverArtURL), parsedURL.scheme != nil else {
+            return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+        }
+
+        let scheme = parsedURL.scheme?.lowercased()
+        if parsedURL.isFileURL || scheme == "http" || scheme == "https" {
+            return parsedURL
+        }
+
+        return nil
+    }
+
     deinit {
         durationObserver = nil
         statusObserver = nil
+        artworkDataTask?.cancel()
         if let player, let timeObserver {
             player.removeTimeObserver(timeObserver)
         }

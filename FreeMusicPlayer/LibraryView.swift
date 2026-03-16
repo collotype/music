@@ -890,15 +890,15 @@ struct TrackArtworkView: View {
 
     private var fallbackArtwork: some View {
         ZStack {
+            Image("PlayerAvatar")
+                .resizable()
+                .scaledToFill()
+
             LinearGradient(
-                colors: [Color.white.opacity(0.12), Color.white.opacity(0.04)],
+                colors: [Color.black.opacity(0.04), Color.black.opacity(0.22)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-
-            Image(systemName: "music.note")
-                .font(.system(size: max(size * 0.34, 18), weight: .medium))
-                .foregroundColor(.white.opacity(0.35))
         }
     }
 

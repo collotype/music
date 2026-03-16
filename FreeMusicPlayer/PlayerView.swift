@@ -87,23 +87,31 @@ struct PlayerView: View {
     var albumArt: some View {
         VStack(spacing: 20) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.8, green: 0.2, blue: 0.2),
-                                Color(red: 0.3, green: 0.1, blue: 0.1)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .aspectRatio(1, contentMode: .fit)
-                    .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
-                
-                Image(systemName: "music.note")
-                    .font(.system(size: 80))
-                    .foregroundColor(.white.opacity(0.3))
+                if let currentTrack = audioPlayer.currentTrack {
+                    TrackArtworkView(track: currentTrack, size: 320, cornerRadius: 24, showsSourceBadge: false)
+                        .aspectRatio(1, contentMode: .fit)
+                        .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 24)
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.8, green: 0.2, blue: 0.2),
+                                        Color(red: 0.3, green: 0.1, blue: 0.1)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .aspectRatio(1, contentMode: .fit)
+                            .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
+
+                        Image(systemName: "music.note")
+                            .font(.system(size: 80))
+                            .foregroundColor(.white.opacity(0.3))
+                    }
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 40)

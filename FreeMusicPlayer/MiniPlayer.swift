@@ -18,19 +18,25 @@ struct MiniPlayer: View {
                 .background(Color.white.opacity(0.1))
             
             HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.red, Color(red: 0.3, green: 0.1, blue: 0.1)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 48, height: 48)
-                    
-                    Image(systemName: "music.note")
-                        .foregroundColor(.white.opacity(0.5))
+                Group {
+                    if let currentTrack = audioPlayer.currentTrack {
+                        TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 8, showsSourceBadge: true)
+                    } else {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.red, Color(red: 0.3, green: 0.1, blue: 0.1)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 48, height: 48)
+
+                            Image(systemName: "music.note")
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                    }
                 }
                 
                 VStack(alignment: .leading, spacing: 2) {
