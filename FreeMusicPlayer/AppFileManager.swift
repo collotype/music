@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UniformTypeIdentifiers
 
 final class AppFileManager {
     static let shared = AppFileManager()
@@ -33,6 +34,11 @@ final class AppFileManager {
     var dataDirectory: URL {
         appDataDirectory.appendingPathComponent("data", isDirectory: true)
     }
+
+    private let supportedAudioExtensions: Set<String> = [
+        "aac", "aif", "aiff", "alac", "caf", "flac", "m4a", "m4b",
+        "mp3", "mp4", "ogg", "opus", "wav", "wma"
+    ]
 
     func prepareDirectories() {
         createDirectoryIfNeeded(appDataDirectory)
@@ -128,6 +134,83 @@ final class AppFileManager {
         return fileManager.fileExists(atPath: resolveStoredFileURL(for: storedPath).path)
     }
 
+    func bookmarkData(for directoryURL: URL) throws -> Data {
+        do {
+            return try directoryURL.bookmarkData(
+                options: [],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            throw AppFileManagerError.bookmarkCreationFailed(error.localizedDescription)
+        }
+    }
+
+    func resolveBookmarkedURL(from bookmarkData: Data) throws -> URL {
+        var isStale = false
+
+        do {
+            let resolvedURL = try URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+
+            if isStale {
+                debugLog("Resolved bookmarked directory with stale bookmark: \(resolvedURL.path)")
+            }
+
+            return resolvedURL
+        } catch {
+            throw AppFileManagerError.bookmarkResolutionFailed(error.localizedDescription)
+        }
+    }
+
+    func withSecurityScopedAccess<T>(to url: URL, perform: (URL) throws -> T) rethrows -> T {
+        let hasSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        return try perform(url)
+    }
+
+    func withBookmarkedDirectoryAccess<T>(bookmarkData: Data, perform: (URL) throws -> T) throws -> T {
+        let directoryURL = try resolveBookmarkedURL(from: bookmarkData)
+        return try withSecurityScopedAccess(to: directoryURL, perform: perform)
+    }
+
+    func audioFiles(in directoryURL: URL) throws -> [URL] {
+        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey]
+        guard let enumerator = fileManager.enumerator(
+            at: directoryURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw AppFileManagerError.directoryEnumerationFailed(directoryURL.lastPathComponent)
+        }
+
+        var discoveredFiles: [URL] = []
+
+        for case let fileURL as URL in enumerator {
+            guard let resourceValues = try? fileURL.resourceValues(forKeys: Set(resourceKeys)),
+                  resourceValues.isRegularFile == true else {
+                continue
+            }
+
+            if isSupportedAudioFile(fileURL, resourceValues: resourceValues) {
+                discoveredFiles.append(fileURL)
+            }
+        }
+
+        return discoveredFiles.sorted {
+            $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending
+        }
+    }
+
     private func createDirectoryIfNeeded(_ directoryURL: URL) {
         guard !fileManager.fileExists(atPath: directoryURL.path) else { return }
         try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
@@ -150,5 +233,31 @@ final class AppFileManager {
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
 
         return filtered.isEmpty ? UUID().uuidString : filtered
+    }
+
+    private func isSupportedAudioFile(_ url: URL, resourceValues: URLResourceValues) -> Bool {
+        if let contentType = resourceValues.contentType,
+           contentType.conforms(to: .audio) {
+            return true
+        }
+
+        return supportedAudioExtensions.contains(url.pathExtension.lowercased())
+    }
+}
+
+enum AppFileManagerError: LocalizedError {
+    case bookmarkCreationFailed(String)
+    case bookmarkResolutionFailed(String)
+    case directoryEnumerationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .bookmarkCreationFailed(let details):
+            return "Failed to save access to the selected folder. \(details)"
+        case .bookmarkResolutionFailed(let details):
+            return "Failed to reopen the selected music folder. \(details)"
+        case .directoryEnumerationFailed(let folderName):
+            return "Failed to scan the folder \"\(folderName)\" for audio files."
+        }
     }
 }

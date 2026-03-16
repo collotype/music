@@ -5,6 +5,7 @@
 //  Local persistence and state updates.
 //
 
+import AVFoundation
 import Foundation
 import SwiftUI
 
@@ -25,6 +26,14 @@ final class DataManager: ObservableObject {
     private var playlistsFileURL: URL { AppFileManager.shared.dataFileURL(named: "playlists.json") }
     private var favoritesFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorites.json") }
     private var settingsFileURL: URL { AppFileManager.shared.dataFileURL(named: "settings.json") }
+
+    var importFolders: [ImportedMusicFolder] {
+        settings.importFolders
+    }
+
+    var hasImportFolders: Bool {
+        !settings.importFolders.isEmpty
+    }
 
     init() {
         loadData()
@@ -89,6 +98,70 @@ final class DataManager: ObservableObject {
         for track in newTracks {
             _ = addTrack(track)
         }
+    }
+
+    @discardableResult
+    func importFiles(from urls: [URL]) -> LibraryImportSummary {
+        importTracks(from: urls, requiresSecurityScope: true)
+    }
+
+    @discardableResult
+    func addImportFolder(_ folderURL: URL) throws -> ImportedMusicFolder {
+        let standardizedPath = folderURL.standardizedFileURL.path
+
+        if let existingFolder = settings.importFolders.first(where: { storedFolder in
+            guard let resolvedURL = try? AppFileManager.shared.resolveBookmarkedURL(from: storedFolder.bookmarkData) else {
+                return false
+            }
+
+            return resolvedURL.standardizedFileURL.path == standardizedPath
+        }) {
+            debugLog("Reuse linked music folder: \(existingFolder.displayName)")
+            return existingFolder
+        }
+
+        let bookmarkData = try AppFileManager.shared.bookmarkData(for: folderURL)
+        let folder = ImportedMusicFolder(name: folderURL.lastPathComponent, bookmarkData: bookmarkData)
+        debugLog("Linked music folder: \(folder.displayName)")
+        settings.importFolders.append(folder)
+        saveData()
+        return folder
+    }
+
+    @discardableResult
+    func refreshImportFolders() -> LibraryImportSummary {
+        guard !settings.importFolders.isEmpty else {
+            debugLog("Refresh import folders ignored because there are no linked folders")
+            return LibraryImportSummary(errors: ["No linked music folders yet."])
+        }
+
+        debugLog("Refresh linked music folders: \(settings.importFolders.count)")
+
+        var summary = LibraryImportSummary()
+        var updatedFolders = settings.importFolders
+
+        for index in updatedFolders.indices {
+            let folder = updatedFolders[index]
+
+            do {
+                let folderSummary = try AppFileManager.shared.withBookmarkedDirectoryAccess(bookmarkData: folder.bookmarkData) { folderURL in
+                    let audioFiles = try AppFileManager.shared.audioFiles(in: folderURL)
+                    debugLog("Scanned linked folder \(folder.displayName): \(audioFiles.count) audio files")
+                    return importTracks(from: audioFiles, requiresSecurityScope: false)
+                }
+
+                updatedFolders[index].lastRefreshedAt = Date()
+                summary.formUnion(with: folderSummary)
+            } catch {
+                let message = "\(folder.displayName): \(error.localizedDescription)"
+                debugLog("Linked folder refresh failed: \(message)")
+                summary.errors.append(message)
+            }
+        }
+
+        settings.importFolders = updatedFolders
+        saveData()
+        return summary
     }
 
     func removeTrack(_ track: Track) {
@@ -363,6 +436,11 @@ final class DataManager: ObservableObject {
             return index
         }
 
+        if let importOriginID = track.importOriginID,
+           let index = tracks.firstIndex(where: { $0.importOriginID == importOriginID && $0.storageLocation == .library }) {
+            return index
+        }
+
         if let fileURL = track.fileURL,
            let index = tracks.firstIndex(where: { $0.fileURL == fileURL && $0.storageLocation == track.storageLocation }) {
             return index
@@ -410,6 +488,93 @@ final class DataManager: ObservableObject {
         guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: .atomic)
     }
+
+    private func importTracks(from urls: [URL], requiresSecurityScope: Bool) -> LibraryImportSummary {
+        var summary = LibraryImportSummary()
+
+        for url in urls {
+            summary.scannedCount += 1
+
+            do {
+                switch try importTrack(from: url, requiresSecurityScope: requiresSecurityScope) {
+                case .imported:
+                    summary.importedCount += 1
+                case .skipped:
+                    summary.skippedCount += 1
+                }
+            } catch {
+                let message = "\(url.lastPathComponent): \(error.localizedDescription)"
+                debugLog("Track import failed: \(message)")
+                summary.errors.append(message)
+            }
+        }
+
+        return summary
+    }
+
+    private func importTrack(from url: URL, requiresSecurityScope: Bool) throws -> ImportedTrackStatus {
+        let accessBlock = {
+            let importOriginID = self.importOriginIdentifier(for: url)
+
+            if self.tracks.contains(where: { $0.importOriginID == importOriginID && $0.storageLocation == .library }) {
+                debugLog("Skip already imported file: \(url.lastPathComponent)")
+                return ImportedTrackStatus.skipped
+            }
+
+            let preferredBaseName = url.deletingPathExtension().lastPathComponent
+            let destinationURL = AppFileManager.shared.uniqueLibraryURL(
+                baseName: preferredBaseName,
+                fileExtension: url.pathExtension
+            )
+
+            do {
+                try FileManager.default.copyItem(at: url, to: destinationURL)
+            } catch {
+                throw LibraryImportError.copyFailed(url.lastPathComponent, error.localizedDescription)
+            }
+
+            let asset = AVURLAsset(url: destinationURL)
+            let title = self.metadataValue(for: asset, identifier: .commonIdentifierTitle)
+                ?? destinationURL.deletingPathExtension().lastPathComponent
+            let artist = self.metadataValue(for: asset, identifier: .commonIdentifierArtist)
+                ?? "Unknown Artist"
+            let album = self.metadataValue(for: asset, identifier: .commonIdentifierAlbumName)
+            let duration = max(CMTimeGetSeconds(asset.duration), 0)
+
+            let track = Track(
+                title: title,
+                artist: artist,
+                album: album,
+                duration: duration,
+                fileURL: AppFileManager.shared.relativePath(for: destinationURL),
+                coverArtURL: nil,
+                source: .local,
+                storageLocation: .library,
+                importOriginID: importOriginID
+            )
+
+            _ = self.addTrack(track)
+            return ImportedTrackStatus.imported
+        }
+
+        if requiresSecurityScope {
+            return try AppFileManager.shared.withSecurityScopedAccess(to: url) { _ in
+                try accessBlock()
+            }
+        }
+
+        return try accessBlock()
+    }
+
+    private func importOriginIdentifier(for url: URL) -> String {
+        url.standardizedFileURL.path.lowercased()
+    }
+
+    private func metadataValue(for asset: AVURLAsset, identifier: AVMetadataIdentifier) -> String? {
+        asset.commonMetadata
+            .first(where: { $0.identifier == identifier })?
+            .stringValue
+    }
 }
 
 struct AppSettings: Codable {
@@ -421,6 +586,7 @@ struct AppSettings: Codable {
     var quality: AudioQuality = .high
     var showLyrics: Bool = true
     var cacheEnabled: Bool = true
+    var importFolders: [ImportedMusicFolder] = []
 
     enum AppTheme: String, Codable {
         case light
@@ -439,5 +605,35 @@ struct AppSettings: Codable {
         case medium
         case high
         case lossless
+    }
+}
+
+struct LibraryImportSummary {
+    var importedCount: Int = 0
+    var skippedCount: Int = 0
+    var scannedCount: Int = 0
+    var errors: [String] = []
+
+    mutating func formUnion(with other: LibraryImportSummary) {
+        importedCount += other.importedCount
+        skippedCount += other.skippedCount
+        scannedCount += other.scannedCount
+        errors.append(contentsOf: other.errors)
+    }
+}
+
+private enum ImportedTrackStatus {
+    case imported
+    case skipped
+}
+
+private enum LibraryImportError: LocalizedError {
+    case copyFailed(String, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .copyFailed(let fileName, let details):
+            return "Failed to copy \"\(fileName)\" into the app library. \(details)"
+        }
     }
 }

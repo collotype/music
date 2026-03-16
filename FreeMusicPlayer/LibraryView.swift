@@ -5,7 +5,6 @@
 //  Library screen.
 //
 
-import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -13,9 +12,16 @@ struct LibraryView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var router: AppRouter
-    @State private var showingImporter = false
+    @State private var showingFileImporter = false
+    @State private var showingFolderImporter = false
+    @State private var showingImportOptions = false
+    @State private var showingLibraryUpdateAlert = false
+    @State private var showingDeleteTrackPrompt = false
     @State private var showingCreatePlaylistPrompt = false
+    @State private var isRefreshingImportFolders = false
+    @State private var libraryUpdateMessage: String = ""
     @State private var newPlaylistName: String = ""
+    @State private var pendingDeleteTrack: Track?
     @State private var selectedFilter: LibraryFilter = .all
     @State private var searchText: String = ""
 
@@ -55,11 +61,18 @@ struct LibraryView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .fileImporter(
-            isPresented: $showingImporter,
+            isPresented: $showingFileImporter,
             allowedContentTypes: [.audio],
             allowsMultipleSelection: true
         ) { result in
             handleFileImport(result)
+        }
+        .fileImporter(
+            isPresented: $showingFolderImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            handleFolderImport(result)
         }
         .alert("Create Playlist", isPresented: $showingCreatePlaylistPrompt) {
             TextField("Playlist name", text: $newPlaylistName)
@@ -71,6 +84,52 @@ struct LibraryView: View {
             }
         } message: {
             Text("Choose a name for the playlist.")
+        }
+        .confirmationDialog(
+            "Remove track from library?",
+            isPresented: $showingDeleteTrackPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                deletePendingTrack()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteTrack = nil
+            }
+        } message: {
+            if let pendingDeleteTrack {
+                Text("\"\(pendingDeleteTrack.displayTitle)\" will be removed from the library and from any playlists.")
+            }
+        }
+        .confirmationDialog(
+            "Import Music",
+            isPresented: $showingImportOptions,
+            titleVisibility: .visible
+        ) {
+            Button("Import Files") {
+                debugLog("Import files option pressed")
+                showingFileImporter = true
+            }
+            Button("Link Music Folder") {
+                debugLog("Link music folder option pressed")
+                showingFolderImporter = true
+            }
+            if dataManager.hasImportFolders {
+                Button("Refresh Linked Folder") {
+                    debugLog("Refresh linked folders option pressed")
+                    refreshLinkedFolders()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Import audio files once or link a music folder that can be refreshed later.")
+        }
+        .alert("Library Update", isPresented: $showingLibraryUpdateAlert) {
+            Button("OK", role: .cancel) {
+                libraryUpdateMessage = ""
+            }
+        } message: {
+            Text(libraryUpdateMessage)
         }
     }
 
@@ -124,8 +183,25 @@ struct LibraryView: View {
                     .padding(.trailing, 16)
 
                     Button {
-                        debugLog("Library import button pressed")
-                        showingImporter = true
+                        if dataManager.hasImportFolders {
+                            debugLog("Library refresh folder button pressed")
+                            refreshLinkedFolders()
+                        } else {
+                            debugLog("Library refresh button pressed without linked folders")
+                            showingFolderImporter = true
+                        }
+                    } label: {
+                        Image(systemName: dataManager.hasImportFolders ? "arrow.clockwise" : "folder.badge.plus")
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRefreshingImportFolders)
+                    .padding(.trailing, 16)
+
+                    Button {
+                        debugLog("Library import menu button pressed")
+                        showingImportOptions = true
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 18))
@@ -145,6 +221,11 @@ struct LibraryView: View {
                     Text(selectedFilter.subtitle(for: dataManager, filteredTracks: filteredTracks))
                         .font(.system(size: 15))
                         .foregroundColor(.white.opacity(0.7))
+                    if dataManager.hasImportFolders {
+                        Text("\(dataManager.importFolders.count) linked folder(s)")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.45))
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
@@ -226,6 +307,13 @@ struct LibraryView: View {
                     LibraryTrackRow(track: track)
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                promptTrackDeletion(track)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
                 }
             }
             .listStyle(.plain)
@@ -369,7 +457,7 @@ struct LibraryView: View {
 
             Button {
                 debugLog("Empty state import button pressed")
-                showingImporter = true
+                showingImportOptions = true
             } label: {
                 HStack {
                     Image(systemName: "square.and.arrow.down")
@@ -421,59 +509,68 @@ struct LibraryView: View {
         switch result {
         case .success(let urls):
             debugLog("Imported file count: \(urls.count)")
-            let importedTracks = urls.compactMap(importTrack)
-            guard !importedTracks.isEmpty else { return }
-            dataManager.addTracks(importedTracks)
+            let summary = dataManager.importFiles(from: urls)
+            presentLibraryUpdate(summary, successTitle: "Imported tracks from selected files.")
         case .failure(let error):
             debugLog("File import failed: \(error.localizedDescription)")
+            libraryUpdateMessage = "File import failed: \(error.localizedDescription)"
+            showingLibraryUpdateAlert = true
         }
     }
 
-    private func importTrack(from url: URL) -> Track? {
-        let hasSecurityScope = url.startAccessingSecurityScopedResource()
-        defer {
-            if hasSecurityScope {
-                url.stopAccessingSecurityScopedResource()
+    private func handleFolderImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let folderURL = urls.first else { return }
+            let hasSecurityScope = folderURL.startAccessingSecurityScopedResource()
+            defer {
+                if hasSecurityScope {
+                    folderURL.stopAccessingSecurityScopedResource()
+                }
             }
+
+            do {
+                let linkedFolder = try dataManager.addImportFolder(folderURL)
+                debugLog("Music folder linked from library: \(linkedFolder.displayName)")
+                refreshLinkedFolders(successPrefix: "Linked folder \"\(linkedFolder.displayName)\".")
+            } catch {
+                debugLog("Link music folder failed: \(error.localizedDescription)")
+                libraryUpdateMessage = "Music folder link failed: \(error.localizedDescription)"
+                showingLibraryUpdateAlert = true
+            }
+        case .failure(let error):
+            debugLog("Folder import failed: \(error.localizedDescription)")
+            libraryUpdateMessage = "Folder selection failed: \(error.localizedDescription)"
+            showingLibraryUpdateAlert = true
         }
-
-        let preferredBaseName = url.deletingPathExtension().lastPathComponent
-        let destinationURL = AppFileManager.shared.uniqueLibraryURL(
-            baseName: preferredBaseName,
-            fileExtension: url.pathExtension
-        )
-
-        do {
-            try FileManager.default.copyItem(at: url, to: destinationURL)
-        } catch {
-            debugLog("Copy imported file failed: \(error.localizedDescription)")
-            return nil
-        }
-
-        let asset = AVURLAsset(url: destinationURL)
-        let title = metadataValue(for: asset, identifier: .commonIdentifierTitle)
-            ?? destinationURL.deletingPathExtension().lastPathComponent
-        let artist = metadataValue(for: asset, identifier: .commonIdentifierArtist)
-            ?? "Unknown Artist"
-        let album = metadataValue(for: asset, identifier: .commonIdentifierAlbumName)
-        let duration = max(CMTimeGetSeconds(asset.duration), 0)
-
-        return Track(
-            title: title,
-            artist: artist,
-            album: album,
-            duration: duration,
-            fileURL: AppFileManager.shared.relativePath(for: destinationURL),
-            coverArtURL: nil,
-            source: .local,
-            storageLocation: .library
-        )
     }
 
-    private func metadataValue(for asset: AVURLAsset, identifier: AVMetadataIdentifier) -> String? {
-        asset.commonMetadata
-            .first(where: { $0.identifier == identifier })?
-            .stringValue
+    private func refreshLinkedFolders(successPrefix: String? = nil) {
+        isRefreshingImportFolders = true
+        let summary = dataManager.refreshImportFolders()
+        isRefreshingImportFolders = false
+        presentLibraryUpdate(summary, successTitle: successPrefix ?? "Linked folders refreshed.")
+    }
+
+    private func presentLibraryUpdate(_ summary: LibraryImportSummary, successTitle: String) {
+        var lines: [String] = []
+
+        if !successTitle.isEmpty {
+            lines.append(successTitle)
+        }
+
+        lines.append("Added \(summary.importedCount) track(s).")
+
+        if summary.skippedCount > 0 {
+            lines.append("Skipped \(summary.skippedCount) already imported track(s).")
+        }
+
+        if !summary.errors.isEmpty {
+            lines.append(summary.errors.joined(separator: "\n"))
+        }
+
+        libraryUpdateMessage = lines.joined(separator: "\n")
+        showingLibraryUpdateAlert = true
     }
 
     private func presentCreatePlaylistPrompt(suggestedName: String? = nil) {
@@ -485,6 +582,24 @@ struct LibraryView: View {
         let playlist = dataManager.createPlaylist(name: newPlaylistName)
         newPlaylistName = ""
         router.openPlaylist(playlist.id)
+    }
+
+    private func promptTrackDeletion(_ track: Track) {
+        debugLog("Track delete requested: \(track.displayTitle)")
+        pendingDeleteTrack = track
+        showingDeleteTrackPrompt = true
+    }
+
+    private func deletePendingTrack() {
+        guard let pendingDeleteTrack else { return }
+
+        debugLog("Track delete confirmed: \(pendingDeleteTrack.displayTitle)")
+        if audioPlayer.currentTrack?.id == pendingDeleteTrack.id {
+            audioPlayer.stop()
+        }
+
+        dataManager.removeTrack(pendingDeleteTrack)
+        self.pendingDeleteTrack = nil
     }
 }
 

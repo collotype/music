@@ -37,6 +37,7 @@ struct Track: Identifiable, Codable, Equatable {
     var sourceID: String?
     var remotePageURL: String?
     var storageLocation: StorageLocation
+    var importOriginID: String?
 
     init(
         id: String = UUID().uuidString,
@@ -53,7 +54,8 @@ struct Track: Identifiable, Codable, Equatable {
         addedAt: Date = Date(),
         sourceID: String? = nil,
         remotePageURL: String? = nil,
-        storageLocation: StorageLocation = .library
+        storageLocation: StorageLocation = .library,
+        importOriginID: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -70,6 +72,7 @@ struct Track: Identifiable, Codable, Equatable {
         self.sourceID = sourceID
         self.remotePageURL = remotePageURL
         self.storageLocation = storageLocation
+        self.importOriginID = importOriginID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -88,6 +91,7 @@ struct Track: Identifiable, Codable, Equatable {
         case sourceID
         case remotePageURL
         case storageLocation
+        case importOriginID
     }
 
     init(from decoder: Decoder) throws {
@@ -108,6 +112,7 @@ struct Track: Identifiable, Codable, Equatable {
         sourceID = try container.decodeIfPresent(String.self, forKey: .sourceID)
         remotePageURL = try container.decodeIfPresent(String.self, forKey: .remotePageURL)
         storageLocation = try container.decodeIfPresent(StorageLocation.self, forKey: .storageLocation) ?? .library
+        importOriginID = try container.decodeIfPresent(String.self, forKey: .importOriginID)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -127,6 +132,7 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(sourceID, forKey: .sourceID)
         try container.encodeIfPresent(remotePageURL, forKey: .remotePageURL)
         try container.encode(storageLocation, forKey: .storageLocation)
+        try container.encodeIfPresent(importOriginID, forKey: .importOriginID)
     }
 
     var formattedDuration: String {
@@ -166,6 +172,18 @@ struct Playlist: Identifiable, Codable, Equatable {
 
     var displayName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "New Playlist" : name
+    }
+}
+
+struct ImportedMusicFolder: Identifiable, Codable, Equatable {
+    var id: String = UUID().uuidString
+    var name: String
+    var bookmarkData: Data
+    var addedAt: Date = Date()
+    var lastRefreshedAt: Date?
+
+    var displayName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Music Folder" : name
     }
 }
 
