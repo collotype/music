@@ -5,6 +5,7 @@
 //  File system layout for library, temp downloads, and persistent data.
 //
 
+import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
 
@@ -35,6 +36,10 @@ final class AppFileManager {
         appDataDirectory.appendingPathComponent("data", isDirectory: true)
     }
 
+    var artworkDirectory: URL {
+        dataDirectory.appendingPathComponent("artwork", isDirectory: true)
+    }
+
     private let supportedAudioExtensions: Set<String> = [
         "aac", "aif", "aiff", "alac", "caf", "flac", "m4a", "m4b",
         "mp3", "mp4", "ogg", "opus", "wav", "wma"
@@ -45,6 +50,7 @@ final class AppFileManager {
         createDirectoryIfNeeded(tempMusicDirectory)
         createDirectoryIfNeeded(musicDirectory)
         createDirectoryIfNeeded(dataDirectory)
+        createDirectoryIfNeeded(artworkDirectory)
         clearDirectoryContents(tempMusicDirectory)
         debugLog("Prepared app storage. Temp music cleared at \(tempMusicDirectory.path)")
     }
@@ -129,6 +135,13 @@ final class AppFileManager {
         return destinationURL
     }
 
+    func saveArtworkData(_ data: Data, preferredName: String) throws -> URL {
+        let destinationURL = uniqueArtworkURL(baseName: preferredName, fileExtension: "jpg")
+        try data.write(to: destinationURL, options: .atomic)
+        debugLog("Stored artwork at \(destinationURL.lastPathComponent)")
+        return destinationURL
+    }
+
     func fileExists(at storedPath: String?) -> Bool {
         guard let storedPath else { return false }
         return fileManager.fileExists(atPath: resolveStoredFileURL(for: storedPath).path)
@@ -137,7 +150,7 @@ final class AppFileManager {
     func bookmarkData(for directoryURL: URL) throws -> Data {
         do {
             return try directoryURL.bookmarkData(
-                options: [],
+                options: [.minimalBookmark],
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
@@ -202,7 +215,10 @@ final class AppFileManager {
             }
 
             if isSupportedAudioFile(fileURL, resourceValues: resourceValues) {
+                debugLog("Folder scan accepted file: \(fileURL.lastPathComponent)")
                 discoveredFiles.append(fileURL)
+            } else {
+                debugLog("Folder scan skipped file: \(fileURL.lastPathComponent) because it is not recognized as playable audio")
             }
         }
 
@@ -238,10 +254,59 @@ final class AppFileManager {
     private func isSupportedAudioFile(_ url: URL, resourceValues: URLResourceValues) -> Bool {
         if let contentType = resourceValues.contentType,
            contentType.conforms(to: .audio) {
+            debugLog("Audio detection accepted \(url.lastPathComponent) via UTType audio")
             return true
         }
 
-        return supportedAudioExtensions.contains(url.pathExtension.lowercased())
+        if supportedAudioExtensions.contains(url.pathExtension.lowercased()) {
+            debugLog("Audio detection accepted \(url.lastPathComponent) via extension \(url.pathExtension.lowercased())")
+            return true
+        }
+
+        if isPlayableAudioByProbe(url) {
+            debugLog("Audio detection accepted \(url.lastPathComponent) via AVFoundation probe")
+            return true
+        }
+
+        return false
+    }
+
+    private func uniqueArtworkURL(baseName: String, fileExtension: String) -> URL {
+        let cleanBaseName = sanitizedFileName(baseName)
+        let initialURL = artworkDirectory
+            .appendingPathComponent(cleanBaseName)
+            .appendingPathExtension(fileExtension)
+
+        guard fileManager.fileExists(atPath: initialURL.path) else {
+            return initialURL
+        }
+
+        for index in 1...999 {
+            let candidateURL = artworkDirectory
+                .appendingPathComponent("\(cleanBaseName)-\(index)")
+                .appendingPathExtension(fileExtension)
+            if !fileManager.fileExists(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        return artworkDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(fileExtension)
+    }
+
+    private func isPlayableAudioByProbe(_ url: URL) -> Bool {
+        let asset = AVURLAsset(url: url)
+        let hasAudioTracks = !asset.tracks(withMediaType: .audio).isEmpty
+        if hasAudioTracks || asset.isPlayable {
+            return true
+        }
+
+        if let player = try? AVAudioPlayer(contentsOf: url) {
+            return player.duration > 0 || player.isPreparedToPlay
+        }
+
+        return false
     }
 }
 

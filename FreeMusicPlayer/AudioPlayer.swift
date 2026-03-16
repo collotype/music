@@ -28,6 +28,7 @@ final class AudioPlayer: ObservableObject {
     private var timeObserver: Any?
     private var durationObserver: NSKeyValueObservation?
     private var statusObserver: NSKeyValueObservation?
+    private var manualQueue: [Track] = []
 
     enum RepeatMode {
         case off
@@ -159,6 +160,7 @@ final class AudioPlayer: ObservableObject {
     @discardableResult
     func playTrack(_ track: Track) -> Bool {
         debugLog("playTrack called for: \(track.displayTitle)")
+        manualQueue.removeAll { $0.id == track.id }
 
         guard load(track: track) else { return false }
 
@@ -214,6 +216,12 @@ final class AudioPlayer: ObservableObject {
     }
 
     func playNext() {
+        if let queuedTrack = nextQueuedTrack() {
+            debugLog("Play queued track next: \(queuedTrack.displayTitle)")
+            playTrack(queuedTrack)
+            return
+        }
+
         guard !tracks.isEmpty else { return }
 
         debugLog("Play next track")
@@ -259,6 +267,18 @@ final class AudioPlayer: ObservableObject {
         player?.volume = volume
     }
 
+    func queueTrackNext(_ track: Track) {
+        debugLog("Queue track next: \(track.displayTitle)")
+        manualQueue.removeAll { $0.id == track.id }
+        manualQueue.insert(track, at: 0)
+    }
+
+    func addTrackToQueue(_ track: Track) {
+        debugLog("Add track to queue: \(track.displayTitle)")
+        manualQueue.removeAll { $0.id == track.id }
+        manualQueue.append(track)
+    }
+
     func setPlaybackSpeed(_ speed: Float) {
         playbackSpeed = max(0.5, min(2.0, speed))
         debugLog("Set playback speed: \(playbackSpeed)")
@@ -297,6 +317,7 @@ final class AudioPlayer: ObservableObject {
         debugLog("Stop playback")
         player?.pause()
         player?.replaceCurrentItem(with: nil)
+        manualQueue.removeAll()
         currentTrack = nil
         isPlaying = false
         currentTime = 0
@@ -336,6 +357,11 @@ final class AudioPlayer: ObservableObject {
         playbackErrorMessage = message
         currentTrack = track
         isPlaying = false
+    }
+
+    private func nextQueuedTrack() -> Track? {
+        guard !manualQueue.isEmpty else { return nil }
+        return manualQueue.removeFirst()
     }
 
     deinit {

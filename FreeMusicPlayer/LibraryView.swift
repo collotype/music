@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct LibraryView: View {
     @EnvironmentObject var dataManager: DataManager
@@ -62,7 +63,7 @@ struct LibraryView: View {
         .toolbar(.hidden, for: .navigationBar)
         .fileImporter(
             isPresented: $showingFileImporter,
-            allowedContentTypes: [.audio],
+            allowedContentTypes: [.audio, .data],
             allowsMultipleSelection: true
         ) { result in
             handleFileImport(result)
@@ -675,33 +676,19 @@ struct LibraryTrackRow: View {
     let track: Track
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
+    @State private var sharePayload: TrackSharePayload?
 
     var isPlaying: Bool {
         audioPlayer.currentTrack?.id == track.id && audioPlayer.isPlaying
     }
 
+    var isFavorite: Bool {
+        dataManager.favorites.contains(track.id)
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.1))
-                    .frame(width: 56, height: 56)
-
-                Image(systemName: "music.note")
-                    .foregroundColor(.white.opacity(0.3))
-
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Image(systemName: track.source == .youtube ? "play.circle.fill" : "cloud.fill")
-                            .font(.system(size: 14))
-                            .foregroundColor(track.source == .youtube ? .red : .orange)
-                            .background(Circle().fill(Color.black))
-                    }
-                    .padding(4)
-                }
-            }
+            TrackArtworkView(track: track, size: 56, cornerRadius: 8, showsSourceBadge: true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
@@ -729,8 +716,8 @@ struct LibraryTrackRow: View {
                 debugLog("Library favorite button pressed: \(track.displayTitle)")
                 dataManager.toggleFavorite(track)
             } label: {
-                Image(systemName: dataManager.favorites.contains(track.id) ? "heart.fill" : "heart")
-                    .foregroundColor(dataManager.favorites.contains(track.id) ? .red : .white.opacity(0.5))
+                Image(systemName: isFavorite ? "heart.fill" : "heart")
+                    .foregroundColor(isFavorite ? .red : .white.opacity(0.5))
             }
             .buttonStyle(.plain)
 
@@ -743,6 +730,253 @@ struct LibraryTrackRow: View {
             debugLog("Library track row tapped: \(track.displayTitle)")
             audioPlayer.playTrack(track)
         }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 1).onEnded { _ in
+                debugLog("Library long press menu presented: \(track.displayTitle)")
+            }
+        )
+        .contextMenu {
+            Button {
+                debugLog("Track context action selected: play next for \(track.displayTitle)")
+                audioPlayer.queueTrackNext(track)
+            } label: {
+                Label("Play Next", systemImage: "forward.fill")
+            }
+
+            Button {
+                debugLog("Track context action selected: add to queue for \(track.displayTitle)")
+                audioPlayer.addTrackToQueue(track)
+            } label: {
+                Label("Add to Queue", systemImage: "list.bullet")
+            }
+
+            Button {
+                debugLog("Track context action selected: favorite toggle for \(track.displayTitle)")
+                dataManager.toggleFavorite(track)
+            } label: {
+                Label(
+                    isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                    systemImage: isFavorite ? "heart.slash" : "heart"
+                )
+            }
+
+            Menu {
+                if dataManager.sortedPlaylists.isEmpty {
+                    Button("No playlists yet") {}
+                        .disabled(true)
+                } else {
+                    ForEach(dataManager.sortedPlaylists) { playlist in
+                        Button {
+                            debugLog("Track context action selected: add \(track.displayTitle) to playlist \(playlist.displayName)")
+                            dataManager.addTrack(track, toPlaylistID: playlist.id)
+                        } label: {
+                            Label(
+                                playlist.displayName,
+                                systemImage: playlist.trackIDs.contains(track.id) ? "checkmark.circle.fill" : "music.note.list"
+                            )
+                        }
+                    }
+                }
+            } label: {
+                Label("Add to Playlist", systemImage: "text.badge.plus")
+            }
+
+            if let shareTarget = track.shareTargetURL {
+                Button {
+                    debugLog("Track context action selected: share \(track.displayTitle)")
+                    sharePayload = TrackSharePayload(items: [shareTarget])
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
+        } preview: {
+            TrackContextPreview(track: track)
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityView(activityItems: payload.items)
+        }
+    }
+}
+
+struct TrackArtworkView: View {
+    let track: Track
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    var showsSourceBadge: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(Color.white.opacity(0.08))
+
+            artworkContent
+
+            if showsSourceBadge {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Image(systemName: sourceBadgeSymbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(sourceBadgeColor)
+                            .padding(5)
+                            .background(Circle().fill(Color.black.opacity(0.85)))
+                    }
+                }
+                .padding(4)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+
+    @ViewBuilder
+    private var artworkContent: some View {
+        if let image = localArtworkImage {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else if let remoteArtworkURL {
+            AsyncImage(url: remoteArtworkURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    fallbackArtwork
+                }
+            }
+        } else {
+            fallbackArtwork
+        }
+    }
+
+    private var fallbackArtwork: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color.white.opacity(0.12), Color.white.opacity(0.04)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Image(systemName: "music.note")
+                .font(.system(size: max(size * 0.34, 18), weight: .medium))
+                .foregroundColor(.white.opacity(0.35))
+        }
+    }
+
+    private var localArtworkImage: UIImage? {
+        guard let localArtworkURL else { return nil }
+        guard let data = try? Data(contentsOf: localArtworkURL),
+              let image = UIImage(data: data) else {
+            return nil
+        }
+
+        return image
+    }
+
+    private var localArtworkURL: URL? {
+        guard let coverArtURL = track.coverArtURL else { return nil }
+        guard let parsedURL = URL(string: coverArtURL), parsedURL.scheme != nil else {
+            return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+        }
+
+        return parsedURL.isFileURL ? parsedURL : nil
+    }
+
+    private var remoteArtworkURL: URL? {
+        guard let coverArtURL = track.coverArtURL,
+              let parsedURL = URL(string: coverArtURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+
+    private var sourceBadgeSymbol: String {
+        switch track.source {
+        case .youtube:
+            return "play.circle.fill"
+        case .soundcloud:
+            return "waveform"
+        case .spotify:
+            return "dot.radiowaves.left.and.right"
+        case .local:
+            return "music.note"
+        }
+    }
+
+    private var sourceBadgeColor: Color {
+        switch track.source {
+        case .youtube:
+            return .red
+        case .soundcloud:
+            return .orange
+        case .spotify:
+            return .green
+        case .local:
+            return .white.opacity(0.85)
+        }
+    }
+}
+
+struct TrackContextPreview: View {
+    let track: Track
+
+    var body: some View {
+        VStack(spacing: 14) {
+            TrackArtworkView(track: track, size: 120, cornerRadius: 18, showsSourceBadge: false)
+
+            VStack(spacing: 4) {
+                Text(track.displayTitle)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                Text(track.displayArtist)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.62))
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.96))
+    }
+}
+
+struct TrackSharePayload: Identifiable {
+    let id = UUID()
+    let items: [Any]
+}
+
+struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private extension Track {
+    var shareTargetURL: URL? {
+        if let remotePageURL,
+           let url = URL(string: remotePageURL) {
+            return url
+        }
+
+        guard let fileURL else { return nil }
+
+        if let parsedURL = URL(string: fileURL),
+           parsedURL.scheme != nil {
+            return parsedURL
+        }
+
+        return AppFileManager.shared.resolveStoredFileURL(for: fileURL)
     }
 }
 

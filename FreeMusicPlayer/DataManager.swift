@@ -60,6 +60,7 @@ final class DataManager: ObservableObject {
             return AppFileManager.shared.fileExists(at: fileURL)
         }
 
+        refreshStoredLocalMetadataIfNeeded()
         saveData()
     }
 
@@ -171,6 +172,12 @@ final class DataManager: ObservableObject {
            track.storageLocation == .library {
             let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
             try? FileManager.default.removeItem(at: resolvedURL)
+        }
+
+        if let coverArtURL = track.coverArtURL,
+           URL(string: coverArtURL)?.scheme == nil {
+            let artworkURL = AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+            try? FileManager.default.removeItem(at: artworkURL)
         }
 
         tracks.removeAll { $0.id == track.id }
@@ -494,6 +501,7 @@ final class DataManager: ObservableObject {
 
         for url in urls {
             summary.scannedCount += 1
+            debugLog("Import pipeline inspecting file: \(url.lastPathComponent)")
 
             do {
                 switch try importTrack(from: url, requiresSecurityScope: requiresSecurityScope) {
@@ -521,6 +529,8 @@ final class DataManager: ObservableObject {
                 return ImportedTrackStatus.skipped
             }
 
+            let probe = try self.probeImportedTrack(at: url)
+
             let preferredBaseName = url.deletingPathExtension().lastPathComponent
             let destinationURL = AppFileManager.shared.uniqueLibraryURL(
                 baseName: preferredBaseName,
@@ -533,21 +543,18 @@ final class DataManager: ObservableObject {
                 throw LibraryImportError.copyFailed(url.lastPathComponent, error.localizedDescription)
             }
 
-            let asset = AVURLAsset(url: destinationURL)
-            let title = self.metadataValue(for: asset, identifier: .commonIdentifierTitle)
-                ?? destinationURL.deletingPathExtension().lastPathComponent
-            let artist = self.metadataValue(for: asset, identifier: .commonIdentifierArtist)
-                ?? "Unknown Artist"
-            let album = self.metadataValue(for: asset, identifier: .commonIdentifierAlbumName)
-            let duration = max(CMTimeGetSeconds(asset.duration), 0)
+            let artworkPath = try self.storeArtworkIfAvailable(
+                data: probe.artworkData,
+                preferredName: importOriginID
+            )
 
             let track = Track(
-                title: title,
-                artist: artist,
-                album: album,
-                duration: duration,
+                title: probe.title,
+                artist: probe.artist,
+                album: probe.album,
+                duration: probe.duration,
                 fileURL: AppFileManager.shared.relativePath(for: destinationURL),
-                coverArtURL: nil,
+                coverArtURL: artworkPath,
                 source: .local,
                 storageLocation: .library,
                 importOriginID: importOriginID
@@ -574,6 +581,146 @@ final class DataManager: ObservableObject {
         asset.commonMetadata
             .first(where: { $0.identifier == identifier })?
             .stringValue
+    }
+
+    private func probeImportedTrack(at url: URL) throws -> ImportedTrackProbe {
+        let asset = AVURLAsset(url: url)
+        let audioTracks = asset.tracks(withMediaType: .audio)
+        let fallbackPlayer = try? AVAudioPlayer(contentsOf: url)
+        let durationSeconds = max(CMTimeGetSeconds(asset.duration), 0)
+        let resolvedDuration = durationSeconds > 0 ? durationSeconds : max(fallbackPlayer?.duration ?? 0, 0)
+
+        guard !audioTracks.isEmpty || asset.isPlayable || fallbackPlayer != nil else {
+            debugLog("Track probe skipped \(url.lastPathComponent): no readable audio stream found")
+            throw LibraryImportError.unplayableFile(url.lastPathComponent)
+        }
+
+        let title = metadataValue(for: asset, identifier: .commonIdentifierTitle)
+            ?? url.deletingPathExtension().lastPathComponent
+        let artist = metadataValue(for: asset, identifier: .commonIdentifierArtist)
+            ?? "Unknown Artist"
+        let album = metadataValue(for: asset, identifier: .commonIdentifierAlbumName)
+        let artworkData = artworkData(for: asset)
+
+        debugLog("Metadata extracted for \(url.lastPathComponent): title=\(title), artist=\(artist), duration=\(resolvedDuration)")
+        debugLog("Artwork extraction for \(url.lastPathComponent): \(artworkData == nil ? "missing" : "embedded artwork found")")
+
+        return ImportedTrackProbe(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: resolvedDuration,
+            artworkData: artworkData
+        )
+    }
+
+    private func artworkData(for asset: AVURLAsset) -> Data? {
+        let artworkItems = asset.commonMetadata.filter {
+            $0.identifier == .commonIdentifierArtwork ||
+            $0.commonKey?.rawValue == AVMetadataKey.commonKeyArtwork.rawValue
+        }
+
+        for item in artworkItems {
+            if let dataValue = item.dataValue {
+                return dataValue
+            }
+
+            if let value = item.value as? Data {
+                return value
+            }
+        }
+
+        for format in asset.availableMetadataFormats {
+            for item in asset.metadata(forFormat: format) {
+                if item.identifier == .commonIdentifierArtwork ||
+                   item.commonKey?.rawValue == AVMetadataKey.commonKeyArtwork.rawValue {
+                    if let dataValue = item.dataValue {
+                        return dataValue
+                    }
+
+                    if let value = item.value as? Data {
+                        return value
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func storeArtworkIfAvailable(data: Data?, preferredName: String) throws -> String? {
+        guard let data else { return nil }
+
+        let artworkURL = try AppFileManager.shared.saveArtworkData(data, preferredName: preferredName)
+        let storedPath = AppFileManager.shared.relativePath(for: artworkURL) ?? artworkURL.path
+        debugLog("Artwork stored for imported track at \(storedPath)")
+        return storedPath
+    }
+
+    private func refreshStoredLocalMetadataIfNeeded() {
+        guard !tracks.isEmpty else { return }
+
+        var didUpdateAnyTrack = false
+
+        for index in tracks.indices {
+            guard shouldRefreshStoredMetadata(for: tracks[index]),
+                  let fileURL = tracks[index].fileURL else {
+                continue
+            }
+
+            let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
+            guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+                continue
+            }
+
+            do {
+                let probe = try probeImportedTrack(at: resolvedURL)
+                let artworkPath = try storeArtworkIfAvailable(
+                    data: probe.artworkData,
+                    preferredName: tracks[index].importOriginID ?? tracks[index].id
+                )
+
+                tracks[index].title = probe.title
+                tracks[index].artist = probe.artist
+                tracks[index].album = probe.album
+                tracks[index].duration = probe.duration
+
+                if let artworkPath {
+                    tracks[index].coverArtURL = artworkPath
+                }
+
+                didUpdateAnyTrack = true
+                debugLog("Refreshed stored metadata for \(tracks[index].displayTitle)")
+            } catch {
+                debugLog("Stored metadata refresh skipped for \(tracks[index].displayTitle): \(error.localizedDescription)")
+            }
+        }
+
+        if didUpdateAnyTrack {
+            saveData()
+        }
+    }
+
+    private func shouldRefreshStoredMetadata(for track: Track) -> Bool {
+        guard track.source == .local,
+              track.storageLocation == .library,
+              track.fileURL != nil else {
+            return false
+        }
+
+        if track.coverArtURL == nil {
+            return true
+        }
+
+        if let coverArtURL = track.coverArtURL,
+           URL(string: coverArtURL)?.scheme == nil,
+           !AppFileManager.shared.fileExists(at: coverArtURL) {
+            return true
+        }
+
+        return track.duration <= 0 ||
+            track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -629,11 +776,22 @@ private enum ImportedTrackStatus {
 
 private enum LibraryImportError: LocalizedError {
     case copyFailed(String, String)
+    case unplayableFile(String)
 
     var errorDescription: String? {
         switch self {
         case .copyFailed(let fileName, let details):
             return "Failed to copy \"\(fileName)\" into the app library. \(details)"
+        case .unplayableFile(let fileName):
+            return "\"\(fileName)\" is not recognized as playable audio."
         }
     }
+}
+
+private struct ImportedTrackProbe {
+    let title: String
+    let artist: String
+    let album: String?
+    let duration: TimeInterval
+    let artworkData: Data?
 }
