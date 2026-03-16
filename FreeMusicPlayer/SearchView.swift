@@ -49,7 +49,7 @@ struct SearchView: View {
                     .foregroundColor(.white)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .onChange(of: searchText) { _, newValue in
+                    .onChange(of: searchText) { newValue in
                         performSearch(newValue)
                     }
                 
