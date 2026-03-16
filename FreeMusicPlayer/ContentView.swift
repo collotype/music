@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  FreeMusicPlayer
 //
-//  Главный экран с навигацией
+//  Root screen with a single navigation container.
 //
 
 import SwiftUI
@@ -10,97 +10,92 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
-    @State private var selectedTab: Tab = .home
+    @EnvironmentObject var router: AppRouter
     @State private var showPlayer: Bool = false
     
     var body: some View {
-        ZStack {
-            // Основной фон
-            Color.black.ignoresSafeArea()
-            
-            VStack(spacing: 0) {
-                // Контент
-                TabView(selection: $selectedTab) {
-                    HomeView()
-                        .tabItem {
-                            Label(Tab.home.title, systemImage: Tab.home.icon)
-                        }
-                        .tag(Tab.home)
+        NavigationStack(path: $router.path) {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    currentTabView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     
-                    LibraryView()
-                        .tabItem {
-                            Label(Tab.library.title, systemImage: Tab.library.icon)
-                        }
-                        .tag(Tab.library)
+                    if audioPlayer.currentTrack != nil {
+                        MiniPlayer(showPlayer: $showPlayer)
+                            .transition(.move(edge: .bottom))
+                    }
                     
-                    SearchView()
-                        .tabItem {
-                            Label(Tab.search.title, systemImage: Tab.search.icon)
-                        }
-                        .tag(Tab.search)
-                    
-                    SettingsView()
-                        .tabItem {
-                            Label(Tab.profile.title, systemImage: Tab.profile.icon)
-                        }
-                        .tag(Tab.profile)
+                    CustomTabBar()
                 }
                 
-                // Мини-плеер
-                if audioPlayer.currentTrack != nil {
-                    MiniPlayer(showPlayer: $showPlayer)
+                if showPlayer {
+                    PlayerView(isPresented: $showPlayer)
                         .transition(.move(edge: .bottom))
+                        .zIndex(1)
                 }
-                
-                // Нижняя навигация
-                CustomTabBar(selectedTab: $selectedTab)
             }
-            
-            // Полноэкранный плеер
-            if showPlayer {
-                PlayerView(isPresented: $showPlayer)
-                    .transition(.move(edge: .bottom))
+            .navigationDestination(for: AppRoute.self) { route in
+                switch route {
+                case .playlist(let playlistId):
+                    PlaylistView(playlistId: playlistId)
+                }
             }
         }
-        .accentColor(Color.red)
+        .accentColor(.red)
+    }
+    
+    @ViewBuilder
+    private var currentTabView: some View {
+        switch router.selectedTab {
+        case .home:
+            HomeView()
+        case .library:
+            LibraryView()
+        case .search:
+            SearchView()
+        case .settings:
+            SettingsView()
+        }
     }
 }
 
-// Кастомная нижняя панель навигации
 struct CustomTabBar: View {
-    @Binding var selectedTab: Tab
+    @EnvironmentObject var router: AppRouter
     
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Tab.allCases, id: \.self) { tab in
-                Button(action: {
+                Button {
+                    debugLog("Tab button pressed: \(tab.rawValue)")
                     withAnimation(.spring(response: 0.3)) {
-                        selectedTab = tab
+                        router.navigate(to: tab)
                     }
-                }) {
+                } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tab.icon)
                             .font(.system(size: 22))
                         Text(tab.title)
                             .font(.system(size: 10))
                     }
-                    .foregroundColor(selectedTab == tab ? .white : .gray)
+                    .foregroundColor(router.selectedTab == tab ? .white : .gray)
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
                 }
+                .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 8)
         .background(
             Color(red: 0.1, green: 0.1, blue: 0.1)
                 .opacity(0.95)
-                .blur(radius: 20)
         )
-        .overlay(
+        .overlay(alignment: .top) {
             Rectangle()
+                .fill(Color.white.opacity(0.1))
                 .frame(height: 0.5)
-                .colorMultiply(Color.white.opacity(0.1)),
-            alignment: .top
-        )
+        }
     }
 }
 
@@ -108,4 +103,5 @@ struct CustomTabBar: View {
     ContentView()
         .environmentObject(AudioPlayer.shared)
         .environmentObject(DataManager.shared)
+        .environmentObject(AppRouter())
 }

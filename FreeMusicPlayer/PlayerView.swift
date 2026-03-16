@@ -2,21 +2,19 @@
 //  PlayerView.swift
 //  FreeMusicPlayer
 //
-//  Полноэкранный плеер
+//  Full screen player.
 //
 
 import SwiftUI
 
 struct PlayerView: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
-    @EnvironmentObject var dataManager: DataManager
     @Binding var isPresented: Bool
     @State private var showLyrics: Bool = false
     @State private var showEQ: Bool = false
     
     var body: some View {
         ZStack {
-            // Градиентный фон
             LinearGradient(
                 gradient: Gradient(colors: [
                     Color(red: 0.7, green: 0.15, blue: 0.15),
@@ -29,57 +27,65 @@ struct PlayerView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Верхняя панель
                 playerHeader
-                
                 Spacer()
-                
-                // Обложка
                 albumArt
-                
                 Spacer()
-                
-                // Информация и контролы
                 playerControls
             }
         }
+        .sheet(isPresented: $showEQ) {
+            PlayerPlaceholderSheet(
+                title: "Equalizer",
+                description: "The button is wired up and ready for a real EQ screen."
+            )
+        }
+        .sheet(isPresented: $showLyrics) {
+            PlayerPlaceholderSheet(
+                title: "Lyrics",
+                description: "Lyrics mode is toggled and ready for future integration."
+            )
+        }
     }
     
-    // Верхняя панель
     var playerHeader: some View {
         HStack {
-            Button(action: {
+            Button {
+                debugLog("Player dismiss button pressed")
                 withAnimation(.spring(response: 0.3)) {
                     isPresented = false
                 }
-            }) {
+            } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundColor(.white)
             }
+            .buttonStyle(.plain)
             
             Spacer()
             
-            Text("СЕЙЧАС ИГРАЕТ")
+            Text("NOW PLAYING")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white.opacity(0.6))
             
             Spacer()
             
-            Button(action: { showEQ = true }) {
+            Button {
+                debugLog("Player EQ button pressed")
+                showEQ = true
+            } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.system(size: 20))
                     .foregroundColor(.white.opacity(0.8))
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
     }
     
-    // Обложка альбома
     var albumArt: some View {
         VStack(spacing: 20) {
-            // Большая обложка
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(
@@ -102,75 +108,70 @@ struct PlayerView: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 40)
             
-            // Информация о треке
             VStack(spacing: 8) {
-                Text(audioPlayer.currentTrack?.displayTitle ?? "Неизвестно")
+                Text(audioPlayer.currentTrack?.displayTitle ?? "Unknown Track")
                     .font(.system(size: 22, weight: .bold))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                 
-                Text(audioPlayer.currentTrack?.displayArtist ?? "")
+                Text(audioPlayer.currentTrack?.displayArtist ?? "Unknown Artist")
                     .font(.system(size: 16))
                     .foregroundColor(.white.opacity(0.6))
             }
             
-            // Кнопка избранного
             HStack(spacing: 24) {
-                Button(action: {
+                Button {
+                    debugLog("Player previous button pressed")
                     audioPlayer.playPrevious()
-                }) {
+                } label: {
                     Image(systemName: "backward.fill")
                         .font(.system(size: 28))
                         .foregroundColor(.white)
                 }
+                .buttonStyle(.plain)
                 
-                Button(action: {
+                Button {
+                    debugLog("Player play/pause button pressed")
                     audioPlayer.togglePlayPause()
-                }) {
+                } label: {
                     Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                         .font(.system(size: 64))
                         .foregroundColor(.white)
                 }
+                .buttonStyle(.plain)
                 
-                Button(action: {
+                Button {
+                    debugLog("Player next button pressed")
                     audioPlayer.playNext()
-                }) {
+                } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 28))
                         .foregroundColor(.white)
                 }
+                .buttonStyle(.plain)
             }
             .padding(.top, 8)
         }
     }
     
-    // Контролы плеера
     var playerControls: some View {
         VStack(spacing: 20) {
-            // Прогресс бар
             progressSection
-            
-            // Дополнительные контролы
             extraControls
-            
             Spacer(minLength: 20)
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 40)
     }
     
-    // Прогресс
     var progressSection: some View {
         VStack(spacing: 8) {
-            // Слайдер
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    // Фон
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.white.opacity(0.2))
                         .frame(height: 4)
                     
-                    // Заполнение
                     RoundedRectangle(cornerRadius: 2)
                         .fill(Color.white)
                         .frame(width: progressWidth(geometry.size.width), height: 4)
@@ -186,7 +187,6 @@ struct PlayerView: View {
             }
             .frame(height: 20)
             
-            // Время
             HStack {
                 Text(formatTime(audioPlayer.currentTime))
                     .font(.system(size: 12))
@@ -207,47 +207,54 @@ struct PlayerView: View {
         return CGFloat(percent) * totalWidth
     }
     
-    // Дополнительные контролы
     var extraControls: some View {
         HStack(spacing: 0) {
-            // Shuffle
-            Button(action: {
+            Button {
+                debugLog("Player shuffle button pressed")
                 audioPlayer.toggleShuffle()
-            }) {
+            } label: {
                 Image(systemName: "shuffle")
                     .font(.system(size: 22))
                     .foregroundColor(audioPlayer.isShuffle ? .red : .white.opacity(0.5))
             }
+            .buttonStyle(.plain)
             .frame(width: 60)
             
-            // Speed
-            Button(action: {}) {
-                Text(String(format: "%.1fx", audioPlayer.playbackSpeed))
+            Button {
+                debugLog("Player speed button pressed")
+                audioPlayer.cyclePlaybackSpeed()
+            } label: {
+                Text(String(format: "%.2gx", audioPlayer.playbackSpeed))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white.opacity(0.7))
             }
+            .buttonStyle(.plain)
             .frame(width: 50)
             
             Spacer()
             
-            // Lyrics
-            Button(action: { showLyrics.toggle() }) {
+            Button {
+                debugLog("Player lyrics button pressed")
+                showLyrics = true
+            } label: {
                 Image(systemName: "text.bubble")
                     .font(.system(size: 20))
                     .foregroundColor(showLyrics ? .red : .white.opacity(0.5))
             }
+            .buttonStyle(.plain)
             .frame(width: 50)
             
             Spacer()
             
-            // Repeat
-            Button(action: {
+            Button {
+                debugLog("Player repeat button pressed")
                 audioPlayer.toggleRepeat()
-            }) {
+            } label: {
                 Image(systemName: repeatIcon)
                     .font(.system(size: 22))
                     .foregroundColor(audioPlayer.repeatMode != .off ? .red : .white.opacity(0.5))
             }
+            .buttonStyle(.plain)
             .frame(width: 60)
         }
     }
@@ -261,14 +268,38 @@ struct PlayerView: View {
     }
     
     func formatTime(_ time: TimeInterval) -> String {
+        guard time.isFinite else { return "0:00" }
         let mins = Int(time) / 60
         let secs = Int(time.truncatingRemainder(dividingBy: 60))
         return String(format: "%d:%02d", mins, secs)
     }
 }
 
+struct PlayerPlaceholderSheet: View {
+    let title: String
+    let description: String
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text(description)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding()
+                Button("Close") {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
 #Preview {
     PlayerView(isPresented: .constant(true))
         .environmentObject(AudioPlayer.shared)
-        .environmentObject(DataManager.shared)
 }

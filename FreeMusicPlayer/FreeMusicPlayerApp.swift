@@ -11,12 +11,14 @@ import SwiftUI
 struct FreeMusicPlayerApp: App {
     @StateObject private var audioPlayer = AudioPlayer.shared
     @StateObject private var dataManager = DataManager.shared
+    @StateObject private var router = AppRouter()
     
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(audioPlayer)
                 .environmentObject(dataManager)
+                .environmentObject(router)
         }
     }
 }

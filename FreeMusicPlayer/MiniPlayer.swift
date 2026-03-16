@@ -2,7 +2,7 @@
 //  MiniPlayer.swift
 //  FreeMusicPlayer
 //
-//  Мини-плеер внизу экрана
+//  Compact player shown above the tab bar.
 //
 
 import SwiftUI
@@ -18,7 +18,6 @@ struct MiniPlayer: View {
                 .background(Color.white.opacity(0.1))
             
             HStack(spacing: 12) {
-                // Обложка
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(
@@ -34,9 +33,8 @@ struct MiniPlayer: View {
                         .foregroundColor(.white.opacity(0.5))
                 }
                 
-                // Информация о треке
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(audioPlayer.currentTrack?.displayTitle ?? "Не выбрано")
+                    Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.white)
                         .lineLimit(1)
@@ -49,12 +47,12 @@ struct MiniPlayer: View {
                 
                 Spacer()
                 
-                // Кнопка избранного
-                Button(action: {
+                Button {
+                    debugLog("Mini player favorite button pressed")
                     if let track = audioPlayer.currentTrack {
                         dataManager.toggleFavorite(track)
                     }
-                }) {
+                } label: {
                     Image(systemName: getHeartIcon())
                         .foregroundColor(getHeartColor())
                         .font(.system(size: 20))
@@ -62,10 +60,10 @@ struct MiniPlayer: View {
                 .buttonStyle(.plain)
                 .padding(.trailing, 8)
                 
-                // Play/Pause
-                Button(action: {
+                Button {
+                    debugLog("Mini player play/pause button pressed")
                     audioPlayer.togglePlayPause()
-                }) {
+                } label: {
                     Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 24))
                         .foregroundColor(.white)
@@ -86,6 +84,7 @@ struct MiniPlayer: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
+            debugLog("Mini player tapped")
             withAnimation(.spring(response: 0.3)) {
                 showPlayer = true
             }

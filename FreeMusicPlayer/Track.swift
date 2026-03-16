@@ -2,7 +2,7 @@
 //  Track.swift
 //  FreeMusicPlayer
 //
-//  Модель трека
+//  Track and navigation models.
 //
 
 import Foundation
@@ -36,15 +36,15 @@ struct Track: Identifiable, Codable, Equatable {
     }
     
     var displayTitle: String {
-        title.isEmpty ? "Неизвестный трек" : title
+        title.isEmpty ? "Unknown Track" : title
     }
     
     var displayArtist: String {
-        artist.isEmpty ? "Неизвестный исполнитель" : artist
+        artist.isEmpty ? "Unknown Artist" : artist
     }
 }
 
-struct Playlist: Identifiable, Codable {
+struct Playlist: Identifiable, Codable, Equatable {
     var id: String = UUID().uuidString
     var name: String
     var description: String?
@@ -63,27 +63,56 @@ struct Playlist: Identifiable, Codable {
     }
 }
 
-enum Tab: String, CaseIterable {
+enum Tab: String, CaseIterable, Hashable {
     case home
     case library
     case search
-    case profile
+    case settings
     
     var icon: String {
         switch self {
         case .home: return "house.fill"
         case .library: return "folder.fill"
         case .search: return "magnifyingglass"
-        case .profile: return "gearshape.fill"
+        case .settings: return "gearshape.fill"
         }
     }
     
     var title: String {
         switch self {
-        case .home: return "Главная"
-        case .library: return "Медиатека"
-        case .search: return "Поиск"
-        case .profile: return "Настройки"
+        case .home: return "Home"
+        case .library: return "Library"
+        case .search: return "Search"
+        case .settings: return "Settings"
         }
     }
+}
+
+enum AppRoute: Hashable {
+    case playlist(String)
+}
+
+final class AppRouter: ObservableObject {
+    @Published var selectedTab: Tab = .home
+    @Published var path = NavigationPath()
+    
+    func navigate(to tab: Tab) {
+        debugLog("Navigate to tab: \(tab.rawValue)")
+        path = NavigationPath()
+        selectedTab = tab
+    }
+    
+    func openPlaylist(_ playlistId: String) {
+        debugLog("Navigate to playlist: \(playlistId)")
+        path.append(AppRoute.playlist(playlistId))
+    }
+    
+    func popToRoot() {
+        debugLog("Pop to root")
+        path = NavigationPath()
+    }
+}
+
+func debugLog(_ message: String) {
+    print("[UI DEBUG] \(message)")
 }

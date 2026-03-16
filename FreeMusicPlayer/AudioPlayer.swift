@@ -2,14 +2,14 @@
 //  AudioPlayer.swift
 //  FreeMusicPlayer
 //
-//  Аудиоплеер с AVFoundation
+//  AVFoundation-backed audio playback.
 //
 
-import Foundation
 import AVFoundation
+import Foundation
 import SwiftUI
 
-class AudioPlayer: ObservableObject {
+final class AudioPlayer: ObservableObject {
     static let shared = AudioPlayer()
     
     @Published var currentTrack: Track?
@@ -37,27 +37,51 @@ class AudioPlayer: ObservableObject {
     }
     
     init() {
-        setupTimeObserver()
+        configureAudioSession()
         setupNotifications()
     }
     
+    private func configureAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
+        } catch {
+            debugLog("Audio session configuration failed: \(error.localizedDescription)")
+        }
+    }
+    
     private func setupTimeObserver() {
+        guard let player else { return }
+        
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
+        
         let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        timeObserver = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            self?.currentTime = time.seconds
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            self?.currentTime = max(time.seconds, 0)
         }
     }
     
     private func setupNotifications() {
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(playerDidFinishPlaying),
+            selector: #selector(playerDidFinishPlaying(_:)),
             name: .AVPlayerItemDidPlayToEndTime,
             object: nil
         )
     }
     
-    @objc private func playerDidFinishPlaying() {
+    @objc private func playerDidFinishPlaying(_ notification: Notification) {
+        guard let finishedItem = notification.object as? AVPlayerItem,
+              finishedItem == playerItem else {
+            return
+        }
+        
+        debugLog("Current item finished playing")
+        
         switch repeatMode {
         case .one:
             seek(to: 0)
@@ -73,41 +97,69 @@ class AudioPlayer: ObservableObject {
         }
     }
     
-    func load(track: Track) {
-        guard let url = resolvedURL(for: track) else { return }
+    @discardableResult
+    func load(track: Track) -> Bool {
+        guard let url = resolvedURL(for: track) else {
+            debugLog("Unable to resolve URL for track: \(track.displayTitle)")
+            currentTrack = nil
+            isPlaying = false
+            return false
+        }
+        
+        debugLog("Load track: \(track.displayTitle) from \(url.lastPathComponent)")
         
         currentTrack = track
+        currentTime = 0
+        duration = 0
+        
         let newPlayerItem = AVPlayerItem(url: url)
-        self.playerItem = newPlayerItem
+        playerItem = newPlayerItem
         durationObserver = nil
         
-        if player == nil {
-            player = AVPlayer(playerItem: newPlayerItem)
+        if let player {
+            player.replaceCurrentItem(with: newPlayerItem)
         } else {
-            player?.replaceCurrentItem(with: newPlayerItem)
+            player = AVPlayer(playerItem: newPlayerItem)
         }
         
-        player?.volume = volume
-        player?.rate = playbackSpeed
+        guard let player else {
+            debugLog("AVPlayer was not created")
+            isPlaying = false
+            return false
+        }
         
-        duration = 0
-        currentTime = 0
+        player.volume = volume
+        player.automaticallyWaitsToMinimizeStalling = true
+        setupTimeObserver()
         
-        // Получение длительности
         durationObserver = newPlayerItem.observe(\.duration, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
-                self?.duration = CMTimeGetSeconds(item.duration)
+                let seconds = item.duration.seconds
+                self?.duration = seconds.isFinite ? max(seconds, 0) : 0
             }
         }
+        
+        return true
+    }
+    
+    func playTrack(_ track: Track) {
+        debugLog("playTrack called for: \(track.displayTitle)")
+        
+        guard load(track: track) else { return }
+        
+        DataManager.shared.markTrackPlayed(track)
+        play()
     }
     
     private func getFileURL(for track: Track) -> URL? {
-        // Поиск файла в документах приложения
-        if let filename = track.fileURL {
-            let docsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            return docsPath?.appendingPathComponent(filename)
+        guard let filename = track.fileURL else { return nil }
+        
+        if filename.hasPrefix("/") {
+            return URL(fileURLWithPath: filename)
         }
-        return nil
+        
+        let docsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        return docsPath?.appendingPathComponent(filename)
     }
 
     private func resolvedURL(for track: Track) -> URL? {
@@ -121,16 +173,27 @@ class AudioPlayer: ObservableObject {
     }
     
     func play() {
-        player?.rate = playbackSpeed
+        guard let player else {
+            debugLog("Play requested without a loaded player")
+            return
+        }
+        
+        debugLog("Play pressed")
+        player.play()
+        if playbackSpeed != 1.0 {
+            player.rate = playbackSpeed
+        }
         isPlaying = true
     }
     
     func pause() {
-        player?.rate = 0
+        debugLog("Pause pressed")
+        player?.pause()
         isPlaying = false
     }
     
     func togglePlayPause() {
+        debugLog("Toggle play/pause")
         if isPlaying {
             pause()
         } else {
@@ -141,6 +204,8 @@ class AudioPlayer: ObservableObject {
     func playNext() {
         guard !tracks.isEmpty else { return }
         
+        debugLog("Play next track")
+        
         if let currentIndex = tracks.firstIndex(where: { $0.id == currentTrack?.id }) {
             let nextIndex: Int
             if isShuffle {
@@ -148,44 +213,59 @@ class AudioPlayer: ObservableObject {
             } else {
                 nextIndex = (currentIndex + 1) % tracks.count
             }
-            load(track: tracks[nextIndex])
-            play()
+            playTrack(tracks[nextIndex])
         } else {
-            load(track: tracks[0])
-            play()
+            playTrack(tracks[0])
         }
     }
     
     func playPrevious() {
         guard !tracks.isEmpty else { return }
         
+        debugLog("Play previous track")
+        
         if currentTime > 3 {
             seek(to: 0)
         } else if let currentIndex = tracks.firstIndex(where: { $0.id == currentTrack?.id }) {
             let prevIndex = currentIndex <= 0 ? tracks.count - 1 : currentIndex - 1
-            load(track: tracks[prevIndex])
-            play()
+            playTrack(tracks[prevIndex])
         }
     }
     
     func seek(to time: TimeInterval) {
-        let cmTime = CMTime(seconds: time, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        player?.seek(to: cmTime)
-        currentTime = time
+        guard let player else { return }
+        let clampedTime = max(0, min(time, duration))
+        debugLog("Seek to time: \(clampedTime)")
+        let cmTime = CMTime(seconds: clampedTime, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        player.seek(to: cmTime)
+        currentTime = clampedTime
     }
     
     func setVolume(_ newVolume: Float) {
         volume = max(0, min(1, newVolume))
+        debugLog("Set volume: \(volume)")
         player?.volume = volume
     }
     
     func setPlaybackSpeed(_ speed: Float) {
         playbackSpeed = max(0.5, min(2.0, speed))
-        player?.rate = isPlaying ? playbackSpeed : 0
+        debugLog("Set playback speed: \(playbackSpeed)")
+        
+        if isPlaying {
+            player?.rate = playbackSpeed
+        }
+    }
+    
+    func cyclePlaybackSpeed() {
+        let availableSpeeds: [Float] = [0.75, 1.0, 1.25, 1.5, 2.0]
+        let currentIndex = availableSpeeds.firstIndex(of: playbackSpeed) ?? 1
+        let nextIndex = (currentIndex + 1) % availableSpeeds.count
+        setPlaybackSpeed(availableSpeeds[nextIndex])
     }
     
     func toggleShuffle() {
         isShuffle.toggle()
+        debugLog("Shuffle set to: \(isShuffle)")
     }
     
     func toggleRepeat() {
@@ -197,19 +277,25 @@ class AudioPlayer: ObservableObject {
         case .one:
             repeatMode = .off
         }
+        
+        debugLog("Repeat mode changed")
     }
     
     func stop() {
-        pause()
+        debugLog("Stop playback")
+        player?.pause()
+        player?.replaceCurrentItem(with: nil)
         currentTrack = nil
+        isPlaying = false
         currentTime = 0
         duration = 0
+        playerItem = nil
     }
     
     deinit {
         durationObserver = nil
-        if let observer = timeObserver {
-            player?.removeTimeObserver(observer)
+        if let player, let timeObserver {
+            player.removeTimeObserver(timeObserver)
         }
         NotificationCenter.default.removeObserver(self)
     }

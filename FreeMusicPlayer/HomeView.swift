@@ -2,7 +2,7 @@
 //  HomeView.swift
 //  FreeMusicPlayer
 //
-//  Главная страница (как на референсе)
+//  Home screen.
 //
 
 import SwiftUI
@@ -10,111 +10,107 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
-    @State private var searchText: String = ""
+    @EnvironmentObject var router: AppRouter
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                // Градиентный фон как на референсе
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color(red: 0.6, green: 0.1, blue: 0.1),
-                        Color(red: 0.3, green: 0.05, blue: 0.05),
-                        Color.black
-                    ]),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
-                
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // Моя волна
-                        WaveCard()
-                        
-                        // Слушай вместе
-                        ListenTogetherCard()
-                        
-                        // Плейлисты
-                        PlaylistsSection()
-                        
-                        // Популярное
-                        PopularSection()
-                        
-                        // Недавние
-                        RecentSection()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
-                    .padding(.bottom, 100)
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [
+                    Color(red: 0.6, green: 0.1, blue: 0.1),
+                    Color(red: 0.3, green: 0.05, blue: 0.05),
+                    Color.black
+                ]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    WaveCard()
+                    ListenTogetherCard()
+                    PlaylistsSection()
+                    PopularSection()
+                    RecentSection()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 100)
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 8, height: 8)
+                    Text("FreeMusic")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.white)
-                            .frame(width: 8, height: 8)
-                        Text("FreeMusic")
-                            .font(.system(size: 18, weight: .semibold))
+            
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 16) {
+                    Button {
+                        debugLog("Home search button pressed")
+                        router.navigate(to: .search)
+                    } label: {
+                        Image(systemName: "magnifyingglass")
                             .foregroundColor(.white)
                     }
-                }
-                
-                ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 16) {
-                        Button(action: {}) {
-                            Image(systemName: "magnifyingglass")
-                                .foregroundColor(.white)
+                    .buttonStyle(.plain)
+                    
+                    Button {
+                        debugLog("Home profile button pressed")
+                        router.navigate(to: .settings)
+                    } label: {
+                        AsyncImage(url: URL(string: "https://via.placeholder.com/40")) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            Circle()
+                                .fill(Color.white.opacity(0.15))
                         }
-                        
-                        Button(action: {}) {
-                            AsyncImage(url: URL(string: "https://via.placeholder.com/40")) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            } placeholder: {
-                                Circle()
-                                    .fill(Color.white.opacity(0.15))
-                            }
-                            .frame(width: 32, height: 32)
-                            .clipShape(Circle())
-                        }
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .navigationBarHidden(true)
     }
 }
 
-// Карточка "Моя волна"
 struct WaveCard: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
+    @EnvironmentObject var dataManager: DataManager
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Моя волна")
+                    Text("My Wave")
                         .font(.system(size: 22, weight: .bold))
                         .foregroundColor(.white)
                     
-                    Text("Зажмите для настройки и нажмите для погружения")
+                    Text("Start a quick mix from the tracks already in your library.")
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.7))
                 }
                 
                 Spacer()
                 
-                Button(action: {
-                    // Запуск волны
-                    if let firstTrack = DataManager.shared.tracks.randomElement() {
-                        audioPlayer.load(track: firstTrack)
-                        audioPlayer.play()
+                Button {
+                    debugLog("Wave play button pressed")
+                    if let firstTrack = dataManager.tracks.randomElement() {
+                        audioPlayer.playTrack(firstTrack)
+                    } else {
+                        debugLog("Wave play ignored because library is empty")
                     }
-                }) {
+                } label: {
                     Circle()
                         .fill(Color.white)
                         .frame(width: 56, height: 56)
@@ -124,9 +120,9 @@ struct WaveCard: View {
                                 .font(.system(size: 20))
                         )
                 }
+                .buttonStyle(.plain)
             }
             
-            // Волнистая линия
             WaveformView()
                 .frame(height: 40)
         }
@@ -134,7 +130,6 @@ struct WaveCard: View {
         .background(
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color.white.opacity(0.05))
-                .blur(radius: 20)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20)
@@ -143,11 +138,10 @@ struct WaveCard: View {
     }
 }
 
-// Волнообразная визуализация
 struct WaveformView: View {
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(0..<40, id: \.self) { i in
+            ForEach(0..<40, id: \.self) { _ in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(Color.white.opacity(0.3))
                     .frame(width: 3, height: CGFloat.random(in: 8...25))
@@ -157,63 +151,74 @@ struct WaveformView: View {
     }
 }
 
-// Карточка "Слушай вместе"
 struct ListenTogetherCard: View {
     var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: "person.2.fill")
-                .font(.system(size: 32))
-                .foregroundColor(.white)
-                .frame(width: 60, height: 60)
-                .background(
-                    Circle()
-                        .fill(Color.white.opacity(0.1))
-                )
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Слушай вместе")
-                    .font(.system(size: 18, weight: .semibold))
+        Button {
+            debugLog("Listen together card pressed")
+        } label: {
+            HStack(spacing: 16) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 32))
                     .foregroundColor(.white)
+                    .frame(width: 60, height: 60)
+                    .background(
+                        Circle()
+                            .fill(Color.white.opacity(0.1))
+                    )
                 
-                Text("Публичные комнаты")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Listen Together")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                    
+                    Text("Public rooms placeholder")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .foregroundColor(.white.opacity(0.5))
             }
-            
-            Spacer()
-            
-            Image(systemName: "chevron.right")
-                .foregroundColor(.white.opacity(0.5))
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.white.opacity(0.05))
+            )
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.05))
-        )
+        .buttonStyle(.plain)
     }
 }
 
-// Секция плейлистов
 struct PlaylistsSection: View {
     @EnvironmentObject var dataManager: DataManager
+    @EnvironmentObject var router: AppRouter
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Плейлисты")
+            Text("Playlists")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(dataManager.playlists.prefix(5)) { playlist in
-                        PlaylistCard(playlist: playlist)
+                    ForEach(Array(dataManager.playlists.prefix(5))) { playlist in
+                        Button {
+                            debugLog("Playlist card pressed: \(playlist.name)")
+                            router.openPlaylist(playlist.id)
+                        } label: {
+                            PlaylistCard(playlist: playlist)
+                        }
+                        .buttonStyle(.plain)
                     }
                     
-                    // Добавить плейлист
-                    Button(action: {
-                        let name = "Новый плейлист \(dataManager.playlists.count + 1)"
-                        _ = dataManager.createPlaylist(name: name)
-                    }) {
+                    Button {
+                        debugLog("Create playlist button pressed")
+                        let name = "New Playlist \(dataManager.playlists.count + 1)"
+                        let playlist = dataManager.createPlaylist(name: name)
+                        router.openPlaylist(playlist.id)
+                    } label: {
                         VStack {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(Color.white.opacity(0.05))
@@ -224,25 +229,24 @@ struct PlaylistsSection: View {
                                         .foregroundColor(.white.opacity(0.5))
                                 )
                             
-                            Text("Создать")
+                            Text("Create")
                                 .font(.system(size: 13))
                                 .foregroundColor(.white.opacity(0.6))
                                 .padding(.top, 8)
                         }
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
     }
 }
 
-// Карточка плейлиста
 struct PlaylistCard: View {
     let playlist: Playlist
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Обложка
             RoundedRectangle(cornerRadius: 12)
                 .fill(
                     LinearGradient(
@@ -266,25 +270,25 @@ struct PlaylistCard: View {
                 .foregroundColor(.white)
                 .lineLimit(1)
             
-            Text("\(playlist.trackCount) треков")
+            Text("\(playlist.trackCount) tracks")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.5))
         }
+        .frame(width: 140, alignment: .leading)
     }
 }
 
-// Секция популярного
 struct PopularSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Популярное")
+            Text("Popular")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(0..<5, id: \.self) { i in
-                        PopularCard(index: i)
+                    ForEach(0..<5, id: \.self) { index in
+                        PopularCard(index: index)
                     }
                 }
             }
@@ -296,30 +300,34 @@ struct PopularCard: View {
     let index: Int
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.1))
-                .frame(width: 140, height: 140)
-            
-            Text("Треки #\(index + 1)")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white)
+        Button {
+            debugLog("Popular card pressed: \(index)")
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.1))
+                    .frame(width: 140, height: 140)
+                
+                Text("Mix #\(index + 1)")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+            }
         }
+        .buttonStyle(.plain)
     }
 }
 
-// Секция недавних
 struct RecentSection: View {
     @EnvironmentObject var dataManager: DataManager
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Недавние")
+            Text("Recent")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
             
             VStack(spacing: 0) {
-                ForEach(dataManager.tracks.prefix(10)) { track in
+                ForEach(Array(dataManager.tracks.prefix(10))) { track in
                     TrackRow(track: track)
                 }
             }
@@ -331,7 +339,6 @@ struct RecentSection: View {
     }
 }
 
-// Строка трека
 struct TrackRow: View {
     let track: Track
     @EnvironmentObject var audioPlayer: AudioPlayer
@@ -343,7 +350,6 @@ struct TrackRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Обложка
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white.opacity(0.1))
                 .frame(width: 50, height: 50)
@@ -352,7 +358,6 @@ struct TrackRow: View {
                         .foregroundColor(.white.opacity(0.3))
                 )
             
-            // Информация
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
@@ -365,7 +370,6 @@ struct TrackRow: View {
             
             Spacer()
             
-            // Длительность
             Text(track.formattedDuration)
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.4))
@@ -376,10 +380,10 @@ struct TrackRow: View {
                         .fill(Color.white.opacity(0.05))
                 )
             
-            // Кнопка избранного
-            Button(action: {
+            Button {
+                debugLog("Recent favorite button pressed: \(track.displayTitle)")
                 dataManager.toggleFavorite(track)
-            }) {
+            } label: {
                 Image(systemName: dataManager.favorites.contains(track.id) ? "heart.fill" : "heart")
                     .foregroundColor(dataManager.favorites.contains(track.id) ? .red : .white.opacity(0.5))
             }
@@ -389,8 +393,8 @@ struct TrackRow: View {
         .padding(.vertical, 12)
         .contentShape(Rectangle())
         .onTapGesture {
-            audioPlayer.load(track: track)
-            audioPlayer.play()
+            debugLog("Recent track row tapped: \(track.displayTitle)")
+            audioPlayer.playTrack(track)
         }
     }
 }
@@ -399,4 +403,5 @@ struct TrackRow: View {
     HomeView()
         .environmentObject(AudioPlayer.shared)
         .environmentObject(DataManager.shared)
+        .environmentObject(AppRouter())
 }

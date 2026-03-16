@@ -2,7 +2,7 @@
 //  SearchView.swift
 //  FreeMusicPlayer
 //
-//  Поиск треков
+//  Search screen.
 //
 
 import SwiftUI
@@ -15,26 +15,24 @@ struct SearchView: View {
     @State private var isSearching: Bool = false
     
     var body: some View {
-        NavigationView {
-            ZStack {
-                Color.black.ignoresSafeArea()
+        ZStack {
+            Color.black.ignoresSafeArea()
+            
+            VStack(spacing: 0) {
+                searchHeader
                 
-                VStack(spacing: 0) {
-                    // Поисковая строка
-                    searchHeader
-                    
-                    // Результаты или пустое состояние
-                    if searchText.isEmpty {
-                        emptyState
-                    } else if searchResults.isEmpty {
-                        noResultsState
-                    } else {
-                        searchResultsList
-                    }
+                if searchText.isEmpty {
+                    emptyState
+                } else if isSearching {
+                    searchingState
+                } else if searchResults.isEmpty {
+                    noResultsState
+                } else {
+                    searchResultsList
                 }
             }
-            .navigationBarHidden(true)
         }
+        .toolbar(.hidden, for: .navigationBar)
     }
     
     var searchHeader: some View {
@@ -42,28 +40,29 @@ struct SearchView: View {
             Spacer()
                 .frame(height: 16)
             
-            // Поисковая строка
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.white.opacity(0.5))
                 
-                TextField("Поиск треков и исполнителей", text: $searchText)
+                TextField("Search tracks and artists", text: $searchText)
                     .font(.system(size: 17))
                     .foregroundColor(.white)
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-                    .onChange(of: searchText) { newValue in
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onChange(of: searchText) { _, newValue in
                         performSearch(newValue)
                     }
                 
                 if !searchText.isEmpty {
-                    Button(action: {
+                    Button {
+                        debugLog("Search clear button pressed")
                         searchText = ""
                         searchResults = []
-                    }) {
+                    } label: {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.white.opacity(0.5))
                     }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(12)
@@ -84,26 +83,26 @@ struct SearchView: View {
                 .font(.system(size: 80))
                 .foregroundColor(.white.opacity(0.1))
             
-            Text("Поиск")
+            Text("Search")
                 .font(.system(size: 24, weight: .bold))
                 .foregroundColor(.white.opacity(0.3))
             
-            Text("Найдите свои любимые треки")
+            Text("Find tracks already in your library.")
                 .font(.system(size: 16))
                 .foregroundColor(.white.opacity(0.2))
             
-            // Популярные запросы
             VStack(alignment: .leading, spacing: 12) {
-                Text("Популярное")
+                Text("Popular")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white.opacity(0.4))
                 
                 FlowLayout {
-                    ForEach(["Рок", "Поп", "Хип-хоп", "Электроника", "Джаз"], id: \.self) { query in
-                        Button(action: {
+                    ForEach(["Rock", "Pop", "Hip-Hop", "Electronic", "Jazz"], id: \.self) { query in
+                        Button {
+                            debugLog("Popular search pressed: \(query)")
                             searchText = query
                             performSearch(query)
-                        }) {
+                        } label: {
                             Text(query)
                                 .font(.system(size: 14))
                                 .foregroundColor(.white)
@@ -114,6 +113,7 @@ struct SearchView: View {
                                         .fill(Color.white.opacity(0.1))
                                 )
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -124,6 +124,17 @@ struct SearchView: View {
         .padding(.horizontal, 20)
     }
     
+    var searchingState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            ProgressView()
+                .tint(.white)
+            Text("Searching...")
+                .foregroundColor(.white.opacity(0.6))
+            Spacer()
+        }
+    }
+    
     var noResultsState: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -132,11 +143,11 @@ struct SearchView: View {
                 .font(.system(size: 60))
                 .foregroundColor(.white.opacity(0.2))
             
-            Text("Ничего не найдено")
+            Text("Nothing found")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(.white.opacity(0.5))
             
-            Text("Попробуйте другой запрос")
+            Text("Try another query.")
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.3))
             
@@ -151,18 +162,20 @@ struct SearchView: View {
                 .listRowInsets(EdgeInsets())
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
         .background(Color.black)
     }
     
     func performSearch(_ query: String) {
         guard !query.isEmpty else {
             searchResults = []
+            isSearching = false
             return
         }
         
+        debugLog("Perform search: \(query)")
         isSearching = true
         
-        // Поиск по локальной библиотеке
         searchResults = dataManager.tracks.filter {
             $0.displayTitle.localizedCaseInsensitiveContains(query) ||
             $0.displayArtist.localizedCaseInsensitiveContains(query) ||
@@ -173,7 +186,6 @@ struct SearchView: View {
     }
 }
 
-// Строка результата поиска
 struct SearchTrackRow: View {
     let track: Track
     @EnvironmentObject var audioPlayer: AudioPlayer
@@ -181,7 +193,6 @@ struct SearchTrackRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Обложка
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.white.opacity(0.1))
                 .frame(width: 50, height: 50)
@@ -190,7 +201,6 @@ struct SearchTrackRow: View {
                         .foregroundColor(.white.opacity(0.3))
                 )
             
-            // Информация
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
@@ -205,27 +215,30 @@ struct SearchTrackRow: View {
             
             Spacer()
             
-            // Длительность
             Text(track.formattedDuration)
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.4))
             
-            // Кнопка воспроизведения
-            Button(action: {
-                audioPlayer.load(track: track)
-                audioPlayer.play()
-            }) {
+            Button {
+                debugLog("Search play button pressed: \(track.displayTitle)")
+                audioPlayer.playTrack(track)
+            } label: {
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 28))
                     .foregroundColor(.red)
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            debugLog("Search result row tapped: \(track.displayTitle)")
+            audioPlayer.playTrack(track)
+        }
     }
 }
 
-// Flow layout для тегов
 struct FlowLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let result = FlowResult(in: proposal.width ?? 0, subviews: subviews)
@@ -236,9 +249,13 @@ struct FlowLayout: Layout {
         let result = FlowResult(in: bounds.width, subviews: subviews)
         
         for (index, subview) in subviews.enumerated() {
-            subview.place(at: CGPoint(x: bounds.minX + result.positions[index].x,
-                                       y: bounds.minY + result.positions[index].y),
-                         proposal: .unspecified)
+            subview.place(
+                at: CGPoint(
+                    x: bounds.minX + result.positions[index].x,
+                    y: bounds.minY + result.positions[index].y
+                ),
+                proposal: .unspecified
+            )
         }
     }
     
