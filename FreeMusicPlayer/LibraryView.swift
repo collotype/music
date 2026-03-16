@@ -380,13 +380,10 @@ struct LibraryView: View {
             }
         }
 
-        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-
-        let destinationURL = uniqueDestinationURL(
-            in: documentsDirectory,
-            originalFilename: url.lastPathComponent
+        let preferredBaseName = url.deletingPathExtension().lastPathComponent
+        let destinationURL = AppFileManager.shared.uniqueLibraryURL(
+            baseName: preferredBaseName,
+            fileExtension: url.pathExtension
         )
 
         do {
@@ -409,9 +406,10 @@ struct LibraryView: View {
             artist: artist,
             album: album,
             duration: duration,
-            fileURL: destinationURL.lastPathComponent,
+            fileURL: AppFileManager.shared.relativePath(for: destinationURL),
             coverArtURL: nil,
-            source: .local
+            source: .local,
+            storageLocation: .library
         )
     }
 
@@ -419,30 +417,6 @@ struct LibraryView: View {
         asset.commonMetadata
             .first(where: { $0.identifier == identifier })?
             .stringValue
-    }
-
-    private func uniqueDestinationURL(in directory: URL, originalFilename: String) -> URL {
-        let sanitizedName = originalFilename.isEmpty ? UUID().uuidString + ".mp3" : originalFilename
-        let baseURL = directory.appendingPathComponent(sanitizedName)
-
-        guard FileManager.default.fileExists(atPath: baseURL.path) else {
-            return baseURL
-        }
-
-        let baseName = baseURL.deletingPathExtension().lastPathComponent
-        let fileExtension = baseURL.pathExtension
-
-        for index in 1...999 {
-            let candidateName = fileExtension.isEmpty
-                ? "\(baseName)-\(index)"
-                : "\(baseName)-\(index).\(fileExtension)"
-            let candidateURL = directory.appendingPathComponent(candidateName)
-            if !FileManager.default.fileExists(atPath: candidateURL.path) {
-                return candidateURL
-            }
-        }
-
-        return directory.appendingPathComponent(UUID().uuidString + "-" + sanitizedName)
     }
 }
 

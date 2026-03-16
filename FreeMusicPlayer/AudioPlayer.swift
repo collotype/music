@@ -153,13 +153,7 @@ final class AudioPlayer: ObservableObject {
     
     private func getFileURL(for track: Track) -> URL? {
         guard let filename = track.fileURL else { return nil }
-        
-        if filename.hasPrefix("/") {
-            return URL(fileURLWithPath: filename)
-        }
-        
-        let docsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        return docsPath?.appendingPathComponent(filename)
+        return AppFileManager.shared.resolveStoredFileURL(for: filename)
     }
 
     private func resolvedURL(for track: Track) -> URL? {

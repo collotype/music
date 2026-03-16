@@ -16,70 +16,90 @@ final class DataManager: ObservableObject {
     @Published var favorites: Set<String> = []
     @Published var settings: AppSettings = AppSettings()
     
-    private let tracksKey = "fmp_tracks"
-    private let playlistsKey = "fmp_playlists"
-    private let favoritesKey = "fmp_favorites"
-    private let settingsKey = "fmp_settings"
+    private let legacyTracksKey = "fmp_tracks"
+    private let legacyPlaylistsKey = "fmp_playlists"
+    private let legacyFavoritesKey = "fmp_favorites"
+    private let legacySettingsKey = "fmp_settings"
+    
+    private var tracksFileURL: URL { AppFileManager.shared.dataFileURL(named: "tracks.json") }
+    private var playlistsFileURL: URL { AppFileManager.shared.dataFileURL(named: "playlists.json") }
+    private var favoritesFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorites.json") }
+    private var settingsFileURL: URL { AppFileManager.shared.dataFileURL(named: "settings.json") }
     
     init() {
         loadData()
     }
     
     func loadData() {
-        if let data = UserDefaults.standard.data(forKey: tracksKey),
-           let decoded = try? JSONDecoder().decode([Track].self, from: data) {
-            tracks = decoded
+        AppFileManager.shared.prepareDirectories()
+        
+        let didLoadFromFiles = loadDataFromFiles()
+        if !didLoadFromFiles {
+            migrateLegacyUserDefaults()
         }
         
-        if let data = UserDefaults.standard.data(forKey: playlistsKey),
-           let decoded = try? JSONDecoder().decode([Playlist].self, from: data) {
-            playlists = decoded
+        // Temp tracks should never survive app relaunch because temp storage is cleared on launch.
+        tracks = tracks.filter { track in
+            track.storageLocation != .temp
         }
         
-        if let data = UserDefaults.standard.data(forKey: favoritesKey),
-           let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
-            favorites = decoded
+        tracks = tracks.filter { track in
+            guard let fileURL = track.fileURL else { return true }
+            if URL(string: fileURL)?.scheme != nil {
+                return true
+            }
+            return AppFileManager.shared.fileExists(at: fileURL)
         }
         
-        if let data = UserDefaults.standard.data(forKey: settingsKey),
-           let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            settings = decoded
-        }
+        saveData()
     }
     
     func saveData() {
-        if let encoded = try? JSONEncoder().encode(tracks) {
-            UserDefaults.standard.set(encoded, forKey: tracksKey)
-        }
-        
-        if let encoded = try? JSONEncoder().encode(playlists) {
-            UserDefaults.standard.set(encoded, forKey: playlistsKey)
-        }
-        
-        if let encoded = try? JSONEncoder().encode(favorites) {
-            UserDefaults.standard.set(encoded, forKey: favoritesKey)
-        }
-        
-        if let encoded = try? JSONEncoder().encode(settings) {
-            UserDefaults.standard.set(encoded, forKey: settingsKey)
-        }
+        let persistedTracks = tracks.filter { $0.storageLocation != .temp }
+        writeJSON(persistedTracks, to: tracksFileURL)
+        writeJSON(playlists, to: playlistsFileURL)
+        writeJSON(favorites, to: favoritesFileURL)
+        writeJSON(settings, to: settingsFileURL)
     }
     
-    func addTrack(_ track: Track) {
+    @discardableResult
+    func addTrack(_ track: Track) -> Track {
         debugLog("Add track: \(track.displayTitle)")
-        tracks.append(track)
+        
+        if let existingIndex = existingTrackIndex(for: track) {
+            var updatedTrack = track
+            updatedTrack.id = tracks[existingIndex].id
+            updatedTrack.isFavorite = favorites.contains(updatedTrack.id)
+            tracks[existingIndex] = updatedTrack
+            saveData()
+            return updatedTrack
+        }
+        
+        var insertedTrack = track
+        insertedTrack.isFavorite = favorites.contains(insertedTrack.id)
+        tracks.insert(insertedTrack, at: 0)
         saveData()
+        return insertedTrack
     }
     
     func addTracks(_ newTracks: [Track]) {
         guard !newTracks.isEmpty else { return }
         debugLog("Add tracks count: \(newTracks.count)")
-        tracks.append(contentsOf: newTracks)
-        saveData()
+        
+        for track in newTracks {
+            _ = addTrack(track)
+        }
     }
     
     func removeTrack(_ track: Track) {
         debugLog("Remove track: \(track.displayTitle)")
+        
+        if let fileURL = track.fileURL,
+           track.storageLocation == .library {
+            let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
+            try? FileManager.default.removeItem(at: resolvedURL)
+        }
+        
         tracks.removeAll { $0.id == track.id }
         favorites.remove(track.id)
         
@@ -94,15 +114,21 @@ final class DataManager: ObservableObject {
     func toggleFavorite(_ track: Track) {
         debugLog("Toggle favorite: \(track.displayTitle)")
         
-        if favorites.contains(track.id) {
-            favorites.remove(track.id)
-        } else {
-            favorites.insert(track.id)
+        guard let trackIndex = tracks.firstIndex(where: { $0.id == track.id })
+            ?? tracks.firstIndex(where: { $0.sourceID != nil && $0.sourceID == track.sourceID }) else {
+            debugLog("Favorite toggle ignored because the track is not stored locally")
+            return
         }
         
-        if let index = tracks.firstIndex(where: { $0.id == track.id }) {
-            tracks[index].isFavorite = favorites.contains(track.id)
+        let trackID = tracks[trackIndex].id
+        
+        if favorites.contains(trackID) {
+            favorites.remove(trackID)
+        } else {
+            favorites.insert(trackID)
         }
+        
+        tracks[trackIndex].isFavorite = favorites.contains(trackID)
         
         saveData()
     }
@@ -156,6 +182,63 @@ final class DataManager: ObservableObject {
         saveData()
     }
     
+    func track(withSourceID sourceID: String) -> Track? {
+        tracks.first { $0.sourceID == sourceID && $0.storageLocation == .library }
+    }
+    
+    func makeTemporaryTrack(from result: OnlineTrackResult, tempFileURL: URL) -> Track {
+        let storedPath = AppFileManager.shared.relativePath(for: tempFileURL) ?? tempFileURL.path
+        
+        return Track(
+            title: result.title,
+            artist: result.artist,
+            album: nil,
+            duration: result.duration,
+            fileURL: storedPath,
+            coverArtURL: result.coverArtURL,
+            source: .youtube,
+            isFavorite: false,
+            playCount: 0,
+            lastPlayed: nil,
+            addedAt: Date(),
+            sourceID: result.id,
+            remotePageURL: result.webpageURL,
+            storageLocation: .temp
+        )
+    }
+    
+    @discardableResult
+    func saveDownloadedOnlineTrack(_ result: OnlineTrackResult, from tempFileURL: URL) throws -> Track {
+        if let existingTrack = track(withSourceID: result.id) {
+            return existingTrack
+        }
+        
+        let destinationURL = try AppFileManager.shared.copyToLibrary(
+            from: tempFileURL,
+            preferredName: "\(result.artist)-\(result.title)"
+        )
+        let storedPath = AppFileManager.shared.relativePath(for: destinationURL) ?? destinationURL.path
+        
+        let track = Track(
+            title: result.title,
+            artist: result.artist,
+            album: nil,
+            duration: result.duration,
+            fileURL: storedPath,
+            coverArtURL: result.coverArtURL,
+            source: .youtube,
+            isFavorite: false,
+            playCount: 0,
+            lastPlayed: nil,
+            addedAt: Date(),
+            sourceID: result.id,
+            remotePageURL: result.webpageURL,
+            storageLocation: .library
+        )
+        
+        return addTrack(track)
+    }
+    
     func markTrackPlayed(_ track: Track) {
         guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
         
@@ -182,10 +265,93 @@ final class DataManager: ObservableObject {
         favorites.removeAll()
         settings = AppSettings()
         
-        UserDefaults.standard.removeObject(forKey: tracksKey)
-        UserDefaults.standard.removeObject(forKey: playlistsKey)
-        UserDefaults.standard.removeObject(forKey: favoritesKey)
-        UserDefaults.standard.removeObject(forKey: settingsKey)
+        UserDefaults.standard.removeObject(forKey: legacyTracksKey)
+        UserDefaults.standard.removeObject(forKey: legacyPlaylistsKey)
+        UserDefaults.standard.removeObject(forKey: legacyFavoritesKey)
+        UserDefaults.standard.removeObject(forKey: legacySettingsKey)
+        
+        AppFileManager.shared.clearAllAppData()
+        saveData()
+    }
+    
+    private func loadDataFromFiles() -> Bool {
+        let loadedTracks: [Track]? = readJSON(from: tracksFileURL)
+        let loadedPlaylists: [Playlist]? = readJSON(from: playlistsFileURL)
+        let loadedFavorites: Set<String>? = readJSON(from: favoritesFileURL)
+        let loadedSettings: AppSettings? = readJSON(from: settingsFileURL)
+        
+        let didLoadAnything = loadedTracks != nil || loadedPlaylists != nil || loadedFavorites != nil || loadedSettings != nil
+        
+        if let loadedTracks {
+            tracks = loadedTracks
+        }
+        
+        if let loadedPlaylists {
+            playlists = loadedPlaylists
+        }
+        
+        if let loadedFavorites {
+            favorites = loadedFavorites
+        }
+        
+        if let loadedSettings {
+            settings = loadedSettings
+        }
+        
+        return didLoadAnything
+    }
+    
+    private func migrateLegacyUserDefaults() {
+        if let data = UserDefaults.standard.data(forKey: legacyTracksKey),
+           let decoded = try? JSONDecoder().decode([Track].self, from: data) {
+            tracks = decoded
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: legacyPlaylistsKey),
+           let decoded = try? JSONDecoder().decode([Playlist].self, from: data) {
+            playlists = decoded
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: legacyFavoritesKey),
+           let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            favorites = decoded
+        }
+        
+        if let data = UserDefaults.standard.data(forKey: legacySettingsKey),
+           let decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            settings = decoded
+        }
+    }
+    
+    private func existingTrackIndex(for track: Track) -> Int? {
+        if let sourceID = track.sourceID,
+           let index = tracks.firstIndex(where: { $0.sourceID == sourceID && $0.storageLocation == .library }) {
+            return index
+        }
+        
+        if let fileURL = track.fileURL,
+           let index = tracks.firstIndex(where: { $0.fileURL == fileURL && $0.storageLocation == track.storageLocation }) {
+            return index
+        }
+        
+        return tracks.firstIndex(where: { $0.id == track.id })
+    }
+    
+    private func readJSON<T: Decodable>(from url: URL) -> T? {
+        guard FileManager.default.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+    
+    private func writeJSON<T: Encodable>(_ value: T, to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        
+        guard let data = try? encoder.encode(value) else { return }
+        try? data.write(to: url, options: .atomic)
     }
 }
 

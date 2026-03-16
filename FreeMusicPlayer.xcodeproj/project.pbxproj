@@ -20,6 +20,8 @@
 		A100000B /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000B; };
 		A100000C /* MiniPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200000C; };
 		A100000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A200000D; };
+		A100000E /* AppFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
+		A100000F /* OnlineMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +40,8 @@
 		A200000D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A200000E /* FreeMusicPlayer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FreeMusicPlayer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A200000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = FreeMusicPlayer/Info.plist; sourceTree = "<group>"; };
+		A2000010 /* AppFileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFileManager.swift; sourceTree = "<group>"; };
+		A2000011 /* OnlineMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineMusicService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +80,8 @@
 				A2000007 /* AudioPlayer.swift */,
 				A2000008 /* Track.swift */,
 				A2000009 /* DataManager.swift */,
+				A2000010 /* AppFileManager.swift */,
+				A2000011 /* OnlineMusicService.swift */,
 			);
 			path = FreeMusicPlayer;
 			sourceTree = "<group>";
@@ -170,6 +176,8 @@
 				A100000A /* PlaylistView.swift in Sources */,
 				A100000B /* SearchView.swift in Sources */,
 				A100000C /* MiniPlayer.swift in Sources */,
+				A100000E /* AppFileManager.swift in Sources */,
+				A100000F /* OnlineMusicService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

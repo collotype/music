@@ -93,12 +93,34 @@ struct MiniPlayer: View {
     
     func getHeartIcon() -> String {
         guard let track = audioPlayer.currentTrack else { return "heart" }
-        return dataManager.favorites.contains(track.id) ? "heart.fill" : "heart"
+        
+        if dataManager.favorites.contains(track.id) {
+            return "heart.fill"
+        }
+        
+        if let sourceID = track.sourceID,
+           let storedTrack = dataManager.track(withSourceID: sourceID),
+           dataManager.favorites.contains(storedTrack.id) {
+            return "heart.fill"
+        }
+        
+        return "heart"
     }
     
     func getHeartColor() -> Color {
         guard let track = audioPlayer.currentTrack else { return .white.opacity(0.5) }
-        return dataManager.favorites.contains(track.id) ? .red : .white.opacity(0.5)
+        
+        if dataManager.favorites.contains(track.id) {
+            return .red
+        }
+        
+        if let sourceID = track.sourceID,
+           let storedTrack = dataManager.track(withSourceID: sourceID),
+           dataManager.favorites.contains(storedTrack.id) {
+            return .red
+        }
+        
+        return .white.opacity(0.5)
     }
 }
 
