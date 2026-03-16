@@ -167,28 +167,7 @@ final class DataManager: ObservableObject {
 
     func removeTrack(_ track: Track) {
         debugLog("Remove track: \(track.displayTitle)")
-
-        if let fileURL = track.fileURL,
-           track.storageLocation == .library {
-            let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
-            try? FileManager.default.removeItem(at: resolvedURL)
-        }
-
-        if let coverArtURL = track.coverArtURL,
-           URL(string: coverArtURL)?.scheme == nil {
-            let artworkURL = AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
-            try? FileManager.default.removeItem(at: artworkURL)
-        }
-
-        tracks.removeAll { $0.id == track.id }
-        favorites.remove(track.id)
-
-        for index in playlists.indices {
-            playlists[index].trackIDs.removeAll { $0 == track.id }
-            playlists[index].updatedAt = Date()
-        }
-
-        saveData()
+        removeTracks([track])
     }
 
     func toggleFavorite(_ track: Track) {
@@ -251,13 +230,25 @@ final class DataManager: ObservableObject {
     }
 
     func addTrack(_ track: Track, toPlaylistID playlistId: String) {
-        guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
-        guard !playlists[index].trackIDs.contains(track.id) else { return }
+        addTracks([track], toPlaylistID: playlistId)
+    }
 
-        debugLog("Add track \(track.displayTitle) to playlist \(playlists[index].name)")
+    func addTracks(_ tracksToAdd: [Track], toPlaylistID playlistId: String) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
 
         var playlist = playlists[index]
-        playlist.trackIDs.append(track.id)
+        var seenTrackIDs = Set(playlist.trackIDs)
+        var didAddTrack = false
+
+        for track in tracksToAdd {
+            guard seenTrackIDs.insert(track.id).inserted else { continue }
+            debugLog("Add track \(track.displayTitle) to playlist \(playlist.name)")
+            playlist.trackIDs.append(track.id)
+            didAddTrack = true
+        }
+
+        guard didAddTrack else { return }
+
         playlist.updatedAt = Date()
         playlists[index] = playlist
         saveData()
@@ -272,6 +263,39 @@ final class DataManager: ObservableObject {
         playlist.trackIDs.removeAll { $0 == track.id }
         playlist.updatedAt = Date()
         playlists[index] = playlist
+        saveData()
+    }
+
+    func removeTracks(_ tracksToRemove: [Track]) {
+        var seenTrackIDs: Set<String> = []
+        var uniqueTracks: [Track] = []
+
+        for track in tracksToRemove where seenTrackIDs.insert(track.id).inserted {
+            uniqueTracks.append(track)
+        }
+
+        guard !uniqueTracks.isEmpty else { return }
+
+        let trackIDs = Set(uniqueTracks.map(\.id))
+        debugLog("Bulk remove tracks count: \(trackIDs.count)")
+
+        for track in uniqueTracks {
+            deleteStoredResources(for: track)
+        }
+
+        tracks.removeAll { trackIDs.contains($0.id) }
+        favorites.subtract(trackIDs)
+
+        let updateDate = Date()
+        for index in playlists.indices {
+            let originalCount = playlists[index].trackIDs.count
+            playlists[index].trackIDs.removeAll { trackIDs.contains($0) }
+
+            if playlists[index].trackIDs.count != originalCount {
+                playlists[index].updatedAt = updateDate
+            }
+        }
+
         saveData()
     }
 
@@ -477,6 +501,20 @@ final class DataManager: ObservableObject {
     private func sanitizedPlaylistName(_ rawName: String) -> String {
         let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmedName.isEmpty ? "New Playlist" : trimmedName
+    }
+
+    private func deleteStoredResources(for track: Track) {
+        if let fileURL = track.fileURL,
+           track.storageLocation == .library {
+            let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
+            try? FileManager.default.removeItem(at: resolvedURL)
+        }
+
+        if let coverArtURL = track.coverArtURL,
+           URL(string: coverArtURL)?.scheme == nil {
+            let artworkURL = AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+            try? FileManager.default.removeItem(at: artworkURL)
+        }
     }
 
     private func readJSON<T: Decodable>(from url: URL) -> T? {

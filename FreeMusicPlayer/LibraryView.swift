@@ -18,6 +18,7 @@ struct LibraryView: View {
     @State private var showingImportOptions = false
     @State private var showingLibraryUpdateAlert = false
     @State private var showingDeleteTrackPrompt = false
+    @State private var showingBulkDeleteSheet = false
     @State private var showingCreatePlaylistPrompt = false
     @State private var isRefreshingImportFolders = false
     @State private var libraryUpdateMessage: String = ""
@@ -75,6 +76,21 @@ struct LibraryView: View {
         ) { result in
             handleFolderImport(result)
         }
+        .sheet(isPresented: $showingBulkDeleteSheet) {
+            TrackSelectionSheet(
+                title: "Delete Tracks",
+                subtitle: "Choose tracks to remove from your library and playlists.",
+                tracks: dataManager.tracks,
+                actionTitle: "Delete Selected",
+                actionSystemImage: "trash.fill",
+                actionTint: .red,
+                actionRole: .destructive,
+                emptyTitle: "Library is empty",
+                emptySubtitle: "Import tracks first, then you can manage or remove them here."
+            ) { selectedTracks in
+                deleteTracks(selectedTracks)
+            }
+        }
         .alert("Create Playlist", isPresented: $showingCreatePlaylistPrompt) {
             TextField("Playlist name", text: $newPlaylistName)
             Button("Cancel", role: .cancel) {
@@ -103,7 +119,7 @@ struct LibraryView: View {
             }
         }
         .confirmationDialog(
-            "Import Music",
+            "Library Actions",
             isPresented: $showingImportOptions,
             titleVisibility: .visible
         ) {
@@ -121,9 +137,15 @@ struct LibraryView: View {
                     refreshLinkedFolders()
                 }
             }
+            if !dataManager.tracks.isEmpty {
+                Button("Select Tracks to Delete", role: .destructive) {
+                    debugLog("Bulk delete selector opened from library menu")
+                    showingBulkDeleteSheet = true
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Import audio files once or link a music folder that can be refreshed later.")
+            Text("Import music, refresh linked folders, or manage tracks already saved in your library.")
         }
         .alert("Library Update", isPresented: $showingLibraryUpdateAlert) {
             Button("OK", role: .cancel) {
@@ -601,6 +623,20 @@ struct LibraryView: View {
 
         dataManager.removeTrack(pendingDeleteTrack)
         self.pendingDeleteTrack = nil
+    }
+
+    private func deleteTracks(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+
+        let trackIDs = Set(tracks.map(\.id))
+        debugLog("Bulk track delete confirmed: \(trackIDs.count) track(s)")
+
+        if let currentTrack = audioPlayer.currentTrack,
+           trackIDs.contains(currentTrack.id) {
+            audioPlayer.stop()
+        }
+
+        dataManager.removeTracks(tracks)
     }
 }
 
