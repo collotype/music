@@ -303,7 +303,7 @@ final class AppFileManager {
         }
 
         if let player = try? AVAudioPlayer(contentsOf: url) {
-            return player.duration > 0 || player.isPreparedToPlay
+            return player.duration > 0 || player.prepareToPlay()
         }
 
         return false
