@@ -70,11 +70,16 @@ struct HomeView: View {
                         }
                         
                         Button(action: {}) {
-                            AsyncImage(url: URL(string: "https://via.placeholder.com/40"))?
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 32, height: 32)
-                                .clipShape(Circle())
+                            AsyncImage(url: URL(string: "https://via.placeholder.com/40")) { image in
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            } placeholder: {
+                                Circle()
+                                    .fill(Color.white.opacity(0.15))
+                            }
+                            .frame(width: 32, height: 32)
+                            .clipShape(Circle())
                         }
                     }
                 }

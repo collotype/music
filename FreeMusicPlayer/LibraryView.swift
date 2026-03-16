@@ -5,6 +5,7 @@
 //  Библиотека (как на референсе "Любимые")
 //
 
+import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -58,7 +59,7 @@ struct LibraryView: View {
         }
         .fileImporter(
             isPresented: $showingImporter,
-            allowedContentTypes: [.audio, .mp3, .wav, .flac],
+            allowedContentTypes: [.audio],
             allowsMultipleSelection: true
         ) { result in
             handleFileImport(result)
@@ -276,6 +277,89 @@ struct LibraryView: View {
         case .playlists:
             return dataManager.playlists.count
         }
+    }
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            let importedTracks = urls.compactMap(importTrack)
+            guard !importedTracks.isEmpty else { return }
+            dataManager.addTracks(importedTracks)
+        case .failure:
+            break
+        }
+    }
+
+    private func importTrack(from url: URL) -> Track? {
+        let hasSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+
+        let destinationURL = uniqueDestinationURL(
+            in: documentsDirectory,
+            originalFilename: url.lastPathComponent
+        )
+
+        do {
+            try FileManager.default.copyItem(at: url, to: destinationURL)
+        } catch {
+            return nil
+        }
+
+        let asset = AVURLAsset(url: destinationURL)
+        let title = metadataValue(for: asset, identifier: .commonIdentifierTitle)
+            ?? destinationURL.deletingPathExtension().lastPathComponent
+        let artist = metadataValue(for: asset, identifier: .commonIdentifierArtist)
+            ?? "Unknown Artist"
+        let album = metadataValue(for: asset, identifier: .commonIdentifierAlbumName)
+        let duration = max(CMTimeGetSeconds(asset.duration), 0)
+
+        return Track(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration,
+            fileURL: destinationURL.lastPathComponent,
+            coverArtURL: nil,
+            source: .local
+        )
+    }
+
+    private func metadataValue(for asset: AVURLAsset, identifier: AVMetadataIdentifier) -> String? {
+        asset.commonMetadata
+            .first(where: { $0.identifier == identifier })?
+            .stringValue
+    }
+
+    private func uniqueDestinationURL(in directory: URL, originalFilename: String) -> URL {
+        let sanitizedName = originalFilename.isEmpty ? UUID().uuidString + ".mp3" : originalFilename
+        let baseURL = directory.appendingPathComponent(sanitizedName)
+
+        guard FileManager.default.fileExists(atPath: baseURL.path) else {
+            return baseURL
+        }
+
+        let baseName = baseURL.deletingPathExtension().lastPathComponent
+        let fileExtension = baseURL.pathExtension
+
+        for index in 1...999 {
+            let candidateName = fileExtension.isEmpty
+                ? "\(baseName)-\(index)"
+                : "\(baseName)-\(index).\(fileExtension)"
+            let candidateURL = directory.appendingPathComponent(candidateName)
+            if !FileManager.default.fileExists(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        return directory.appendingPathComponent(UUID().uuidString + "-" + sanitizedName)
     }
 }
 

@@ -73,7 +73,7 @@ class AudioPlayer: ObservableObject {
     }
     
     func load(track: Track) {
-        guard let url = track.fileURL.flatMap({ URL(string: $0) }) ?? getFileURL(for: track) else { return }
+        guard let url = resolvedURL(for: track) else { return }
         
         currentTrack = track
         let playerItem = AVPlayerItem(url: url)
@@ -106,6 +106,16 @@ class AudioPlayer: ObservableObject {
             return docsPath?.appendingPathComponent(filename)
         }
         return nil
+    }
+
+    private func resolvedURL(for track: Track) -> URL? {
+        if let fileURL = track.fileURL,
+           let remoteURL = URL(string: fileURL),
+           remoteURL.scheme != nil {
+            return remoteURL
+        }
+
+        return getFileURL(for: track)
     }
     
     func play() {

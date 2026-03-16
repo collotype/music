@@ -19,6 +19,14 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Verify project files
+        run: |
+          pwd
+          ls -la
+          test -d Assets.xcassets
+          test -f FreeMusicPlayer/Info.plist
+          test -f FreeMusicPlayer/PlaylistView.swift
+
       - name: Clean
         run: rm -rf build Payload output
 
@@ -29,6 +37,7 @@ jobs:
             -scheme FreeMusicPlayer \
             -configuration Release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
