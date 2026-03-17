@@ -15,6 +15,7 @@ struct MiniPlayer: View {
     private let backgroundCornerRadius: CGFloat = 18
     private let outerHorizontalPadding: CGFloat = 8
     private let rowVerticalPadding: CGFloat = 6
+    private let rowHeight: CGFloat = 60
     
     var body: some View {
         VStack(spacing: 0) {
@@ -25,7 +26,7 @@ struct MiniPlayer: View {
 
             miniPlayerRow
                 .padding(.horizontal, outerHorizontalPadding)
-                .padding(.top, 1)
+                .padding(.top, 2)
                 .padding(.bottom, 2)
                 .background {
                     GeometryReader { proxy in
@@ -43,6 +44,7 @@ struct MiniPlayer: View {
                     }
                 }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .background {
             GeometryReader { proxy in
                 Color.clear
@@ -59,13 +61,6 @@ struct MiniPlayer: View {
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            debugLog("Mini player tapped")
-            withAnimation(.spring(response: 0.3)) {
-                showPlayer = true
-            }
         }
     }
 
@@ -136,7 +131,7 @@ struct MiniPlayer: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, rowVerticalPadding)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .center)
         .background {
             ZStack {
                 TrackArtworkBackdrop(
@@ -157,6 +152,13 @@ struct MiniPlayer: View {
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
+        }
+        .contentShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
+        .onTapGesture {
+            debugLog("Mini player tapped")
+            withAnimation(.spring(response: 0.3)) {
+                showPlayer = true
+            }
         }
     }
     
