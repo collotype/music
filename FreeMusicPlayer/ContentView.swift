@@ -24,6 +24,9 @@ struct ContentView: View {
                     
                     if audioPlayer.currentTrack != nil {
                         MiniPlayer(showPlayer: $showPlayer)
+                            .padding(.horizontal, 12)
+                            .padding(.top, 6)
+                            .padding(.bottom, 8)
                             .transition(.move(edge: .bottom))
                     }
                     
