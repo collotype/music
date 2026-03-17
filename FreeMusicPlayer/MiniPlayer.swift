@@ -13,9 +13,63 @@ struct MiniPlayer: View {
     @Binding var showPlayer: Bool
 
     private let backgroundCornerRadius: CGFloat = 18
+    private let outerHorizontalPadding: CGFloat = 8
     private let rowVerticalPadding: CGFloat = 6
     
     var body: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.horizontal, outerHorizontalPadding)
+
+            miniPlayerRow
+                .padding(.horizontal, outerHorizontalPadding)
+                .padding(.top, 1)
+                .padding(.bottom, 2)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear {
+                                debugLog(
+                                    "Mini player row height: \(Int(proxy.size.height.rounded())) background container height: \(Int(proxy.size.height.rounded())) safe area inset: \(Int(proxy.safeAreaInsets.bottom.rounded()))"
+                                )
+                            }
+                            .onChange(of: audioPlayer.currentTrack?.id) { _ in
+                                debugLog(
+                                    "Mini player row height updated: \(Int(proxy.size.height.rounded())) safe area inset: \(Int(proxy.safeAreaInsets.bottom.rounded()))"
+                                )
+                            }
+                    }
+                }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear {
+                        debugLog(
+                            "Mini player parent container height: \(Int(proxy.size.height.rounded()))"
+                        )
+                    }
+            }
+        }
+        .onAppear {
+            debugLog("Mini player layout state: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
+            debugLog("Mini player background metrics: cornerRadius=\(Int(backgroundCornerRadius)), horizontalPadding=\(Int(outerHorizontalPadding)), verticalPadding=\(Int(rowVerticalPadding))")
+        }
+        .onChange(of: audioPlayer.currentTrack?.id) { _ in
+            debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            debugLog("Mini player tapped")
+            withAnimation(.spring(response: 0.3)) {
+                showPlayer = true
+            }
+        }
+    }
+
+    private var miniPlayerRow: some View {
         HStack(spacing: 12) {
             Group {
                 if let currentTrack = audioPlayer.currentTrack {
@@ -103,45 +157,6 @@ struct MiniPlayer: View {
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
-            .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 2)
-        }
-        .padding(.horizontal, 8)
-        .padding(.top, 2)
-        .padding(.bottom, 2)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 0.5)
-                .padding(.horizontal, 8)
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear {
-                        debugLog(
-                            "Mini player final height: \(Int(proxy.size.height.rounded())) background height: \(Int(proxy.size.height.rounded())) bottom inset: \(Int(proxy.safeAreaInsets.bottom.rounded()))"
-                        )
-                    }
-                    .onChange(of: audioPlayer.currentTrack?.id) { _ in
-                        debugLog(
-                            "Mini player final height updated: \(Int(proxy.size.height.rounded())) bottom inset: \(Int(proxy.safeAreaInsets.bottom.rounded()))"
-                        )
-                    }
-            }
-        }
-        .onAppear {
-            debugLog("Mini player layout state: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
-            debugLog("Mini player background metrics: cornerRadius=\(Int(backgroundCornerRadius)), horizontalPadding=8, verticalPadding=\(Int(rowVerticalPadding))")
-        }
-        .onChange(of: audioPlayer.currentTrack?.id) { _ in
-            debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            debugLog("Mini player tapped")
-            withAnimation(.spring(response: 0.3)) {
-                showPlayer = true
-            }
         }
     }
     
