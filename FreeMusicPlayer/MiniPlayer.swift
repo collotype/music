@@ -11,6 +11,8 @@ struct MiniPlayer: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
     @Binding var showPlayer: Bool
+
+    private let backgroundCornerRadius: CGFloat = 18
     
     var body: some View {
         HStack(spacing: 12) {
@@ -77,32 +79,50 @@ struct MiniPlayer: View {
             }
             .buttonStyle(.plain)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .background {
-            ZStack(alignment: .top) {
-                Color.black.opacity(0.94)
-
+            ZStack {
                 TrackArtworkBackdrop(
                     track: audioPlayer.currentTrack,
-                    fallbackPalette: .cardFallback
+                    fallbackPalette: .cardFallback,
+                    cornerRadius: backgroundCornerRadius
                 )
-                .opacity(0.96)
+                .opacity(0.86)
 
-                Rectangle()
-                    .fill(Color.white.opacity(0.10))
-                    .frame(height: 0.5)
+                RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.82)
+
+                RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
+                    .fill(Color.black.opacity(0.12))
+
+                RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
             }
-            .clipped()
+            .frame(maxWidth: .infinity)
+            .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 3)
         }
-        .contentShape(Rectangle())
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+        .padding(.bottom, 3)
+        .background {
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: 0.5)
+
+                Color.clear
+            }
+        }
         .onAppear {
             debugLog("Mini player layout state: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
+            debugLog("Mini player background metrics: cornerRadius=\(Int(backgroundCornerRadius)), horizontalPadding=8, verticalPadding=8")
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
         }
+        .contentShape(Rectangle())
         .onTapGesture {
             debugLog("Mini player tapped")
             withAnimation(.spring(response: 0.3)) {

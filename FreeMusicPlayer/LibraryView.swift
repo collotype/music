@@ -1271,27 +1271,34 @@ extension View {
         contextName: String,
         playlistContext: TrackActionPlaylistContext?
     ) -> some View {
-        if #available(iOS 16.4, *) {
-            self.popover(isPresented: isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
-                TrackActionSheet(
-                    track: track,
-                    contextTracks: contextTracks,
-                    contextName: contextName,
-                    playlistContext: playlistContext
-                )
-                .presentationCompactAdaptation(.popover)
+        Group {
+            if #available(iOS 16.4, *) {
+                self.popover(isPresented: isPresented, attachmentAnchor: .point(.bottomTrailing), arrowEdge: .trailing) {
+                    TrackActionSheet(
+                        track: track,
+                        contextTracks: contextTracks,
+                        contextName: contextName,
+                        playlistContext: playlistContext
+                    )
+                    .presentationCompactAdaptation(.popover)
+                }
+            } else {
+                self.sheet(isPresented: isPresented) {
+                    TrackActionSheet(
+                        track: track,
+                        contextTracks: contextTracks,
+                        contextName: contextName,
+                        playlistContext: playlistContext
+                    )
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                }
             }
-        } else {
-            self.sheet(isPresented: isPresented) {
-                TrackActionSheet(
-                    track: track,
-                    contextTracks: contextTracks,
-                    contextName: contextName,
-                    playlistContext: playlistContext
-                )
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-            }
+        }
+        .onChange(of: isPresented.wrappedValue) { presented in
+            guard presented else { return }
+            debugLog("Popup anchor position requested: bottomTrailing for \(track.displayTitle)")
+            debugLog("Popup final placement request: trailing for \(track.displayTitle)")
         }
     }
 }
@@ -1307,6 +1314,10 @@ struct TrackActionSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var sharePayload: TrackSharePayload?
+
+    private let popupWidth: CGFloat = 300
+    private let popupMaxHeight: CGFloat = 448
+    private let popupCornerRadius: CGFloat = 20
 
     private var effectiveFavoriteTrack: Track? {
         if dataManager.tracks.contains(where: { $0.id == track.id }) {
@@ -1364,7 +1375,7 @@ struct TrackActionSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     CompactTrackActionHeader(track: track)
 
                     CompactTrackActionSection {
@@ -1536,16 +1547,38 @@ struct TrackActionSheet: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(12)
+                .padding(10)
+                .background {
+                    ZStack {
+                        TrackArtworkBackdrop(
+                            track: track,
+                            fallbackPalette: .cardFallback,
+                            cornerRadius: popupCornerRadius
+                        )
+                        .opacity(0.52)
+
+                        RoundedRectangle(cornerRadius: popupCornerRadius, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                            .opacity(0.88)
+
+                        RoundedRectangle(cornerRadius: popupCornerRadius, style: .continuous)
+                            .fill(Color.black.opacity(0.08))
+
+                        RoundedRectangle(cornerRadius: popupCornerRadius, style: .continuous)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    }
+                }
             }
-            .background(Color.black)
+            .background(Color.clear)
             .scrollIndicators(.hidden)
-            .frame(width: 340)
-            .frame(maxHeight: 520)
+            .frame(width: popupWidth)
+            .frame(maxHeight: popupMaxHeight)
         }
         .preferredColorScheme(.dark)
         .onAppear {
             debugLog("Track action popup presented: \(track.displayTitle)")
+            debugLog("Popup size: width=\(Int(popupWidth)) maxHeight=\(Int(popupMaxHeight))")
+            debugLog("Popup final placement request: trailing from bottomTrailing anchor")
         }
         .sheet(item: $sharePayload) { payload in
             ActivityView(activityItems: payload.items)
@@ -1565,12 +1598,12 @@ struct CompactTrackActionSection<Content: View>: View {
             content
         }
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.045))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.05), lineWidth: 1)
         )
     }
 }
@@ -1585,10 +1618,10 @@ struct CompactTrackActionRow<Content: View>: View {
     var body: some View {
         HStack(spacing: 12) {
             content
-            Spacer(minLength: 12)
+            Spacer(minLength: 10)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
         .contentShape(Rectangle())
     }
 }
@@ -1596,8 +1629,8 @@ struct CompactTrackActionRow<Content: View>: View {
 struct CompactTrackActionDivider: View {
     var body: some View {
         Divider()
-            .overlay(Color.white.opacity(0.06))
-            .padding(.leading, 48)
+            .overlay(Color.white.opacity(0.05))
+            .padding(.leading, 42)
     }
 }
 
@@ -1605,38 +1638,38 @@ struct CompactTrackActionHeader: View {
     let track: Track
 
     var body: some View {
-        HStack(spacing: 12) {
-            TrackArtworkView(track: track, size: 58, cornerRadius: 14, showsSourceBadge: true)
+        HStack(spacing: 10) {
+            TrackArtworkView(track: track, size: 52, cornerRadius: 12, showsSourceBadge: true)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(track.displayTitle)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.white)
                     .lineLimit(2)
 
                 Text(track.displayArtist)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.68))
                     .lineLimit(1)
 
                 if let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !album.isEmpty {
                     Text(album)
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.42))
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.40))
                         .lineLimit(1)
                 }
             }
 
             Spacer(minLength: 0)
         }
-        .padding(14)
+        .padding(12)
         .background(
-            TrackArtworkBackdrop(track: track, fallbackPalette: .cardFallback, cornerRadius: 20)
+            TrackArtworkBackdrop(track: track, fallbackPalette: .cardFallback, cornerRadius: 18)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1)
         )
     }
 }

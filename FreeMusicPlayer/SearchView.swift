@@ -583,17 +583,24 @@ struct SearchView: View {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
 
-        return allArtistResults().filter { result in
-            matchesSearchQuery(
-                normalized,
-                fields: [result.name] + result.tracks.flatMap { track in
-                    [
-                        track.displayTitle,
-                        track.displayArtist,
-                        track.album ?? ""
-                    ]
-                }
-            )
+        var resultsByID: [String: LocalArtistSearchResult] = [:]
+
+        for result in artistResults(from: localMatches(for: normalized)) {
+            resultsByID[result.id] = result
+        }
+
+        for result in allArtistResults() where matchesSearchQuery(normalized, fields: [result.name]) {
+            resultsByID[result.id] = result
+        }
+
+        return resultsByID.values.sorted { left, right in
+            if left.name == "Unknown Artist" {
+                return false
+            }
+            if right.name == "Unknown Artist" {
+                return true
+            }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
         }
     }
 
@@ -601,17 +608,21 @@ struct SearchView: View {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
 
-        return allAlbumResults().filter { result in
-            matchesSearchQuery(
-                normalized,
-                fields: [result.title, result.artist] + result.tracks.flatMap { track in
-                    [
-                        track.displayTitle,
-                        track.displayArtist,
-                        track.album ?? ""
-                    ]
-                }
-            )
+        var resultsByID: [String: LocalAlbumSearchResult] = [:]
+
+        for result in albumResults(from: localMatches(for: normalized)) {
+            resultsByID[result.id] = result
+        }
+
+        for result in allAlbumResults() where matchesSearchQuery(normalized, fields: [result.title, result.artist]) {
+            resultsByID[result.id] = result
+        }
+
+        return resultsByID.values.sorted { left, right in
+            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
+                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
+            }
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
         }
     }
 
@@ -619,6 +630,7 @@ struct SearchView: View {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
 
+        let matchingTrackIDs = Set(localMatches(for: normalized).map(\.id))
         return dataManager.sortedPlaylists.compactMap { playlist in
             let tracks = dataManager.tracks(for: playlist.id)
             let result = LocalPlaylistSearchResult(
@@ -637,7 +649,8 @@ struct SearchView: View {
                 ]
             }
 
-            guard matchesSearchQuery(normalized, fields: searchableFields) else { return nil }
+            let containsMatchingTrack = tracks.contains { matchingTrackIDs.contains($0.id) }
+            guard containsMatchingTrack || matchesSearchQuery(normalized, fields: searchableFields) else { return nil }
             return result
         }
     }
@@ -661,9 +674,11 @@ struct SearchView: View {
 
         let artistCatalogCount = allArtistResults().count
         let albumCatalogCount = allAlbumResults().count
+        let playlistCatalogCount = dataManager.sortedPlaylists.count
         let playlistResultCount = playlistMatches(for: trimmedQuery).count
         debugLog("Artist aggregation count: \(artistCatalogCount)")
         debugLog("Album aggregation count: \(albumCatalogCount)")
+        debugLog("Playlist aggregation count: \(playlistCatalogCount)")
         debugLog("Playlist search result count: \(playlistResultCount)")
         debugLog(
             "Search result counts for \(trimmedQuery): tracks=\(localMatches(for: trimmedQuery).count), artists=\(artistMatches(for: trimmedQuery).count), albums=\(albumMatches(for: trimmedQuery).count), playlists=\(playlistMatches(for: trimmedQuery).count)"
@@ -671,7 +686,15 @@ struct SearchView: View {
     }
 
     private func allArtistResults() -> [LocalArtistSearchResult] {
-        let groupedTracks = Dictionary(grouping: dataManager.tracks) { track in
+        artistResults(from: dataManager.tracks)
+    }
+
+    private func allAlbumResults() -> [LocalAlbumSearchResult] {
+        albumResults(from: dataManager.tracks)
+    }
+
+    private func artistResults(from tracks: [Track]) -> [LocalArtistSearchResult] {
+        let groupedTracks = Dictionary(grouping: tracks) { track in
             normalizedArtistName(for: track)
         }
 
@@ -685,19 +708,10 @@ struct SearchView: View {
                 tracks: sortedTracks
             )
         }
-        .sorted { left, right in
-            if left.name == "Unknown Artist" {
-                return false
-            }
-            if right.name == "Unknown Artist" {
-                return true
-            }
-            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
-        }
     }
 
-    private func allAlbumResults() -> [LocalAlbumSearchResult] {
-        let albumTracks = dataManager.tracks.filter { track in
+    private func albumResults(from tracks: [Track]) -> [LocalAlbumSearchResult] {
+        let albumTracks = tracks.filter { track in
             let albumTitle = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return !albumTitle.isEmpty
         }
@@ -721,12 +735,6 @@ struct SearchView: View {
                 representativeTrack: representativeTrack(from: sortedTracks),
                 tracks: sortedTracks
             )
-        }
-        .sorted { left, right in
-            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
-                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
-            }
-            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
         }
     }
 
