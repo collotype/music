@@ -16,11 +16,7 @@ struct PlayerView: View {
     
     var body: some View {
         ZStack {
-            TrackArtworkBackdrop(
-                track: audioPlayer.currentTrack,
-                fallbackPalette: .playerFallback
-            )
-            .ignoresSafeArea()
+            playerBackground
             
             VStack(spacing: 0) {
                 playerHeader
@@ -29,6 +25,12 @@ struct PlayerView: View {
                 Spacer()
                 playerControls
             }
+        }
+        .onAppear {
+            debugLog("Player background stack composed: artwork backdrop -> blur -> dark tint -> foreground UI")
+        }
+        .onChange(of: audioPlayer.currentTrack?.id) { _ in
+            debugLog("Player background updated for track: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
         }
         .sheet(isPresented: $showEQ) {
             PlayerPlaceholderSheet(
@@ -39,6 +41,39 @@ struct PlayerView: View {
         .sheet(isPresented: $showLyrics) {
             PlayerLyricsSheet(track: audioPlayer.currentTrack)
         }
+    }
+
+    private var playerBackground: some View {
+        ZStack {
+            TrackArtworkBackdrop(
+                track: audioPlayer.currentTrack,
+                fallbackPalette: .playerFallback
+            )
+            .scaleEffect(1.08)
+            .blur(radius: 34)
+            .opacity(0.96)
+
+            TrackArtworkBackdrop(
+                track: audioPlayer.currentTrack,
+                fallbackPalette: .playerFallback
+            )
+            .opacity(0.34)
+
+            Rectangle()
+                .fill(Color.black.opacity(0.18))
+
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.22),
+                    Color.black.opacity(0.34),
+                    Color.black.opacity(0.58),
+                    Color.black.opacity(0.74)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .ignoresSafeArea()
     }
     
     var playerHeader: some View {
