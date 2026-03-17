@@ -825,7 +825,7 @@ final class DataManager: ObservableObject {
         } else if let stringKey = item.key as? NSString {
             keyValue = stringKey as String
         } else {
-            keyValue = String(describing: item.key ?? "")
+            keyValue = item.key.map { String(describing: $0) } ?? ""
         }
 
         return MetadataDescriptor(
