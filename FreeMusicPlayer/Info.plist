@@ -26,6 +26,8 @@
 	<string>The app needs access to your media library to play music.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>The app needs access to your photos so you can choose cover art.</string>
+	<key>SoundCloudClientID</key>
+	<string>GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

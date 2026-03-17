@@ -143,6 +143,9 @@ final class OnlineMusicService {
     private let runtimeState = SoundCloudRuntimeState()
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
     private let soundCloudSearchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
+    private let bundledFallbackClientIDs = [
+        "GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7",
+    ]
 
     private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     private let soundCloudAssetPattern = #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#
@@ -167,30 +170,67 @@ final class OnlineMusicService {
         }
 
         debugLog("Online query entered: \(trimmedQuery)")
-        debugLog("Provider start: SoundCloud for query \(trimmedQuery)")
 
-        do {
-            let clientID = try await soundCloudClientID()
-            let results = try await searchViaSoundCloud(query: trimmedQuery, clientID: clientID)
-            let finalResults = Array(results.prefix(20))
+        let initialCandidates = await initialSoundCloudClientIDs()
+        var attemptedClientIDs: [String] = []
+        var lastExplicitError: OnlineMusicServiceError?
 
-            debugLog("Provider finish: SoundCloud with \(finalResults.count) results")
-            debugLog("Online result count: \(finalResults.count)")
-
-            if finalResults.isEmpty {
-                throw OnlineMusicServiceError.noResults(trimmedQuery)
+        for clientID in initialCandidates {
+            do {
+                return try await executeSearch(query: trimmedQuery, clientID: clientID)
+            } catch let error as OnlineMusicServiceError {
+                attemptedClientIDs.append(clientID)
+                lastExplicitError = error
+                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
+            } catch {
+                attemptedClientIDs.append(clientID)
+                let wrappedError = OnlineMusicServiceError.networkFailure(
+                    "SoundCloud search failed because the provider request could not be completed."
+                )
+                lastExplicitError = wrappedError
+                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
             }
-
-            return finalResults
-        } catch let error as OnlineMusicServiceError {
-            debugLog("Provider error: SoundCloud - \(error.localizedDescription)")
-            throw error
-        } catch {
-            debugLog("Provider error: SoundCloud - \(error.localizedDescription)")
-            throw OnlineMusicServiceError.networkFailure(
-                "SoundCloud search failed because the provider request could not be completed."
-            )
         }
+
+        if let discoveredClientID = try? await discoverSoundCloudClientID(),
+           !attemptedClientIDs.contains(discoveredClientID) {
+            do {
+                return try await executeSearch(query: trimmedQuery, clientID: discoveredClientID)
+            } catch let error as OnlineMusicServiceError {
+                lastExplicitError = error
+                debugLog("Provider error: SoundCloud using discovered client_id \(maskedClientID(discoveredClientID)) - \(error.localizedDescription)")
+            } catch {
+                let wrappedError = OnlineMusicServiceError.networkFailure(
+                    "SoundCloud search failed because the provider request could not be completed."
+                )
+                lastExplicitError = wrappedError
+                debugLog("Provider error: SoundCloud using discovered client_id \(maskedClientID(discoveredClientID)) - \(error.localizedDescription)")
+            }
+        }
+
+        if let lastExplicitError {
+            throw lastExplicitError
+        }
+
+        debugLog("Provider error: SoundCloud - unavailable sources")
+        throw OnlineMusicServiceError.unavailableSources
+    }
+
+    private func executeSearch(query: String, clientID: String) async throws -> [OnlineTrackResult] {
+        debugLog("Provider start: SoundCloud for query \(query) using client_id \(maskedClientID(clientID))")
+
+        let results = try await searchViaSoundCloud(query: query, clientID: clientID)
+        let finalResults = Array(results.prefix(20))
+        await runtimeState.setClientID(clientID)
+
+        debugLog("Provider finish: SoundCloud with \(finalResults.count) results")
+        debugLog("Online result count: \(finalResults.count)")
+
+        if finalResults.isEmpty {
+            throw OnlineMusicServiceError.noResults(query)
+        }
+
+        return finalResults
     }
 
     func resolvePlaybackStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
@@ -526,13 +566,43 @@ final class OnlineMusicService {
             return cleanedConfiguredClientID
         }
 
+        if let bundledClientID = bundledFallbackClientIDs.compactMap(cleanedText).first {
+            await runtimeState.setClientID(bundledClientID)
+            debugLog("Using bundled SoundCloud client_id fallback")
+            return bundledClientID
+        }
+
+        let discoveredClientID = try await discoverSoundCloudClientID()
+        await runtimeState.setClientID(discoveredClientID)
+        return discoveredClientID
+    }
+
+    private func initialSoundCloudClientIDs() async -> [String] {
+        var candidateIDs: [String] = []
+
+        if let cachedClientID = await runtimeState.clientID {
+            candidateIDs.append(cachedClientID)
+        }
+
+        if let configuredClientID = Bundle.main.object(forInfoDictionaryKey: "SoundCloudClientID") as? String,
+           let cleanedConfiguredClientID = cleanedText(configuredClientID) {
+            candidateIDs.append(cleanedConfiguredClientID)
+        }
+
+        candidateIDs.append(contentsOf: bundledFallbackClientIDs)
+
+        return orderedUniqueValues(candidateIDs.compactMap(cleanedText))
+    }
+
+    private func discoverSoundCloudClientID() async throws -> String {
+        debugLog("Provider start: SoundCloud client_id discovery")
+
         let homepageHTML = try await fetchText(
             from: soundCloudHomepageURL,
             accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         )
 
         if let inlineClientID = extractFirstMatch(in: homepageHTML, patterns: soundCloudClientIDPatterns) {
-            await runtimeState.setClientID(inlineClientID)
             debugLog("Resolved SoundCloud client_id from homepage markup")
             return inlineClientID
         }
@@ -547,7 +617,6 @@ final class OnlineMusicService {
             do {
                 let assetText = try await fetchText(from: assetURL, accept: "*/*")
                 if let extractedClientID = extractFirstMatch(in: assetText, patterns: soundCloudClientIDPatterns) {
-                    await runtimeState.setClientID(extractedClientID)
                     debugLog("Resolved SoundCloud client_id from \(assetURL.lastPathComponent)")
                     return extractedClientID
                 }
@@ -706,6 +775,13 @@ final class OnlineMusicService {
         }
 
         return orderedValues
+    }
+
+    private func maskedClientID(_ clientID: String) -> String {
+        guard clientID.count > 8 else { return clientID }
+        let prefix = clientID.prefix(4)
+        let suffix = clientID.suffix(4)
+        return "\(prefix)...\(suffix)"
     }
 }
 
