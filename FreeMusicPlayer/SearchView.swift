@@ -12,6 +12,7 @@ struct SearchView: View {
 
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
+    @EnvironmentObject var router: AppRouter
 
     @State private var searchText: String = ""
     @State private var localResults: [Track] = []
@@ -21,6 +22,23 @@ struct SearchView: View {
     @State private var searchTask: Task<Void, Never>?
     @State private var downloadingIDs: Set<String> = []
     @State private var savingIDs: Set<String> = []
+    @State private var selectedCategory: SearchCategory = .tracks
+
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var artistResults: [LocalArtistSearchResult] {
+        artistMatches(for: searchText)
+    }
+
+    private var albumResults: [LocalAlbumSearchResult] {
+        albumMatches(for: searchText)
+    }
+
+    private var playlistResults: [LocalPlaylistSearchResult] {
+        playlistMatches(for: searchText)
+    }
 
     var body: some View {
         ZStack {
@@ -41,6 +59,21 @@ struct SearchView: View {
             guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             localResults = localMatches(for: searchText)
             debugLog("Local result count updated: \(localResults.count)")
+            logResultCounts(for: searchText)
+        }
+        .onChange(of: selectedCategory) { newValue in
+            debugLog("Search selected tab: \(newValue.title)")
+            debugLog("Search query text: \(trimmedSearchText)")
+            debugLog("\(newValue.title) result count: \(resultCount(for: newValue, query: searchText))")
+
+            guard !trimmedSearchText.isEmpty else { return }
+
+            if newValue == .tracks {
+                performSearch(searchText, shouldSearchOnline: true)
+            } else {
+                searchTask?.cancel()
+                isSearchingOnline = false
+            }
         }
         .onChange(of: audioPlayer.playbackErrorMessage) { newValue in
             guard let newValue,
@@ -53,7 +86,7 @@ struct SearchView: View {
     }
 
     var searchHeader: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 10) {
             Spacer()
                 .frame(height: 16)
 
@@ -61,13 +94,13 @@ struct SearchView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.white.opacity(0.5))
 
-                TextField("Search tracks or artists", text: $searchText)
+                TextField("Search music", text: $searchText)
                     .font(.system(size: 17))
                     .foregroundColor(.white)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onChange(of: searchText) { newValue in
-                        performSearch(newValue)
+                        performSearch(newValue, shouldSearchOnline: selectedCategory == .tracks)
                     }
 
                 if !searchText.isEmpty {
@@ -91,9 +124,50 @@ struct SearchView: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(0.1))
             )
+
+            searchCategoryTabs
         }
         .padding(.horizontal, 16)
         .padding(.top, 16)
+    }
+
+    var searchCategoryTabs: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(SearchCategory.allCases) { category in
+                    Button {
+                        selectedCategory = category
+                    } label: {
+                        Text(category.title)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(selectedCategory == category ? .black : .white.opacity(0.88))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(
+                                Capsule()
+                                    .fill(selectedCategory == category ? Color.white : Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(
+                                        selectedCategory == category ? Color.white.opacity(0.0) : Color.white.opacity(0.08),
+                                        lineWidth: 1
+                                    )
+                            )
+                            .shadow(
+                                color: selectedCategory == category ? Color.black.opacity(0.18) : .clear,
+                                radius: 10,
+                                x: 0,
+                                y: 4
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: selectedCategory)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+        }
     }
 
     var emptyState: some View {
@@ -108,7 +182,7 @@ struct SearchView: View {
                 .font(.system(size: 24, weight: .bold))
                 .foregroundColor(.white.opacity(0.3))
 
-            Text("Find tracks in your library or fetch them online.")
+            Text("Find tracks, artists, albums, or playlists.")
                 .font(.system(size: 16))
                 .foregroundColor(.white.opacity(0.2))
 
@@ -147,57 +221,15 @@ struct SearchView: View {
     var searchResultsContent: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
-                if !localResults.isEmpty {
-                    SearchSectionCard(title: "Library") {
-                        ForEach(localResults) { track in
-                            SearchTrackRow(
-                                track: track,
-                                contextTracks: localResults,
-                                contextName: "search:local:\(searchText)"
-                            )
-                            if track.id != localResults.last?.id {
-                                Divider()
-                                    .background(Color.white.opacity(0.06))
-                            }
-                        }
-                    }
-                }
-
-                SearchSectionCard(title: "Online") {
-                    if isSearchingOnline && onlineResults.isEmpty {
-                        SearchStatusRow(
-                            icon: "arrow.triangle.2.circlepath",
-                            title: "Searching online...",
-                            subtitle: "Looking up matching tracks on SoundCloud."
-                        )
-                    } else if !onlineResults.isEmpty {
-                        ForEach(onlineResults) { result in
-                            OnlineSearchTrackRow(
-                                result: result,
-                                isDownloading: downloadingIDs.contains(result.id),
-                                isSaving: savingIDs.contains(result.id),
-                                isSaved: dataManager.track(withSourceID: result.id) != nil,
-                                playAction: { playOnlineResult(result) },
-                                saveAction: { saveOnlineResult(result) }
-                            )
-                            if result.id != onlineResults.last?.id {
-                                Divider()
-                                    .background(Color.white.opacity(0.06))
-                            }
-                        }
-                    } else if let onlineStatusMessage {
-                        SearchStatusRow(
-                            icon: "wifi.exclamationmark",
-                            title: "Online search unavailable",
-                            subtitle: onlineStatusMessage
-                        )
-                    } else {
-                        SearchStatusRow(
-                            icon: "note.slash",
-                            title: "No online matches",
-                            subtitle: "Try another query or save a track to your library."
-                        )
-                    }
+                switch selectedCategory {
+                case .tracks:
+                    trackSearchResults
+                case .artists:
+                    artistSearchResults
+                case .albums:
+                    albumSearchResults
+                case .playlists:
+                    playlistSearchResults
                 }
             }
             .padding(.horizontal, 16)
@@ -206,7 +238,152 @@ struct SearchView: View {
         }
     }
 
-    private func performSearch(_ query: String) {
+    @ViewBuilder
+    var trackSearchResults: some View {
+        if !localResults.isEmpty {
+            SearchSectionCard(title: "Library") {
+                ForEach(localResults) { track in
+                    SearchTrackRow(
+                        track: track,
+                        contextTracks: localResults,
+                        contextName: "search:local:\(searchText)"
+                    )
+                    if track.id != localResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            }
+        }
+
+        SearchSectionCard(title: "Online") {
+            if isSearchingOnline && onlineResults.isEmpty {
+                SearchStatusRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Searching online...",
+                    subtitle: "Looking up matching tracks on SoundCloud."
+                )
+            } else if !onlineResults.isEmpty {
+                ForEach(onlineResults) { result in
+                    OnlineSearchTrackRow(
+                        result: result,
+                        isDownloading: downloadingIDs.contains(result.id),
+                        isSaving: savingIDs.contains(result.id),
+                        isSaved: dataManager.track(withSourceID: result.id) != nil,
+                        playAction: { playOnlineResult(result) },
+                        saveAction: { saveOnlineResult(result) }
+                    )
+                    if result.id != onlineResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            } else if let onlineStatusMessage {
+                SearchStatusRow(
+                    icon: "wifi.exclamationmark",
+                    title: "Online search unavailable",
+                    subtitle: onlineStatusMessage
+                )
+            } else {
+                SearchStatusRow(
+                    icon: "note.slash",
+                    title: "No online matches",
+                    subtitle: "Try another query or save a track to your library."
+                )
+            }
+        }
+    }
+
+    var artistSearchResults: some View {
+        SearchSectionCard(title: "Artists") {
+            if artistResults.isEmpty {
+                SearchStatusRow(
+                    icon: "person.crop.circle.badge.questionmark",
+                    title: "No artists found",
+                    subtitle: "Try a different artist name from your library."
+                )
+            } else {
+                ForEach(artistResults) { result in
+                    NavigationLink {
+                        TrackCollectionView(
+                            title: result.name,
+                            subtitle: "Artist",
+                            tracks: result.tracks,
+                            contextName: "search:artist:\(result.name)"
+                        )
+                    } label: {
+                        SearchArtistRow(result: result)
+                    }
+                    .buttonStyle(.plain)
+
+                    if result.id != artistResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            }
+        }
+    }
+
+    var albumSearchResults: some View {
+        SearchSectionCard(title: "Albums") {
+            if albumResults.isEmpty {
+                SearchStatusRow(
+                    icon: "square.stack.badge.minus",
+                    title: "No albums found",
+                    subtitle: "Try a different album title from your library."
+                )
+            } else {
+                ForEach(albumResults) { result in
+                    NavigationLink {
+                        TrackCollectionView(
+                            title: result.title,
+                            subtitle: result.artist,
+                            tracks: result.tracks,
+                            contextName: "search:album:\(result.id)"
+                        )
+                    } label: {
+                        SearchAlbumRow(result: result)
+                    }
+                    .buttonStyle(.plain)
+
+                    if result.id != albumResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            }
+        }
+    }
+
+    var playlistSearchResults: some View {
+        SearchSectionCard(title: "Playlists") {
+            if playlistResults.isEmpty {
+                SearchStatusRow(
+                    icon: "music.note.list",
+                    title: "No playlists found",
+                    subtitle: "Try a different playlist name from your library."
+                )
+            } else {
+                ForEach(playlistResults) { result in
+                    Button {
+                        debugLog("Search playlist row tapped: \(result.playlist.displayName)")
+                        router.openPlaylist(result.playlist.id)
+                    } label: {
+                        SearchPlaylistRow(result: result)
+                    }
+                    .buttonStyle(.plain)
+
+                    if result.id != playlistResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            }
+        }
+    }
+
+    private func performSearch(_ query: String, shouldSearchOnline: Bool) {
         searchTask?.cancel()
 
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -221,8 +398,15 @@ struct SearchView: View {
         debugLog("Query entered: \(trimmedQuery)")
         localResults = localMatches(for: trimmedQuery)
         debugLog("Local result count: \(localResults.count)")
+        logResultCounts(for: trimmedQuery)
         onlineResults = []
         onlineStatusMessage = nil
+
+        guard shouldSearchOnline else {
+            isSearchingOnline = false
+            return
+        }
+
         isSearchingOnline = true
         debugLog("Online search start: \(trimmedQuery)")
 
@@ -394,6 +578,162 @@ struct SearchView: View {
             ($0.album?.localizedCaseInsensitiveContains(normalized) ?? false)
         }
     }
+
+    private func artistMatches(for query: String) -> [LocalArtistSearchResult] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+
+        let groupedTracks = Dictionary(grouping: dataManager.tracks) { track in
+            track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return groupedTracks.compactMap { artistName, tracks in
+            guard !artistName.isEmpty,
+                  artistName != "Unknown Artist",
+                  artistName.localizedCaseInsensitiveContains(normalized),
+                  let representativeTrack = tracks.sorted(by: { $0.displayTitle < $1.displayTitle }).first else {
+                return nil
+            }
+
+            return LocalArtistSearchResult(
+                name: artistName,
+                representativeTrack: representativeTrack,
+                tracks: tracks.sorted(by: { $0.displayTitle < $1.displayTitle })
+            )
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func albumMatches(for query: String) -> [LocalAlbumSearchResult] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+
+        let albumTracks = dataManager.tracks.filter { track in
+            guard let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !album.isEmpty else {
+                return false
+            }
+
+            return album.localizedCaseInsensitiveContains(normalized) ||
+                track.displayArtist.localizedCaseInsensitiveContains(normalized)
+        }
+
+        let groupedTracks = Dictionary(grouping: albumTracks) { track in
+            let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return "\(album.lowercased())::\(track.displayArtist.lowercased())"
+        }
+
+        return groupedTracks.compactMap { _, tracks in
+            guard let firstTrack = tracks.first,
+                  let albumTitle = firstTrack.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !albumTitle.isEmpty else {
+                return nil
+            }
+
+            return LocalAlbumSearchResult(
+                title: albumTitle,
+                artist: firstTrack.displayArtist,
+                representativeTrack: firstTrack,
+                tracks: tracks.sorted(by: { $0.displayTitle < $1.displayTitle })
+            )
+        }
+        .sorted { left, right in
+            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
+                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
+            }
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
+    }
+
+    private func playlistMatches(for query: String) -> [LocalPlaylistSearchResult] {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return [] }
+
+        return dataManager.sortedPlaylists.compactMap { playlist in
+            guard playlist.displayName.localizedCaseInsensitiveContains(normalized) else { return nil }
+            let tracks = dataManager.tracks(for: playlist.id)
+            return LocalPlaylistSearchResult(
+                playlist: playlist,
+                representativeTrack: tracks.first,
+                trackCount: tracks.count
+            )
+        }
+    }
+
+    private func resultCount(for category: SearchCategory, query: String) -> Int {
+        switch category {
+        case .tracks:
+            return localMatches(for: query).count
+        case .artists:
+            return artistMatches(for: query).count
+        case .albums:
+            return albumMatches(for: query).count
+        case .playlists:
+            return playlistMatches(for: query).count
+        }
+    }
+
+    private func logResultCounts(for query: String) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return }
+
+        debugLog(
+            "Search result counts for \(trimmedQuery): tracks=\(localMatches(for: trimmedQuery).count), artists=\(artistMatches(for: trimmedQuery).count), albums=\(albumMatches(for: trimmedQuery).count), playlists=\(playlistMatches(for: trimmedQuery).count)"
+        )
+    }
+}
+
+enum SearchCategory: String, CaseIterable, Identifiable {
+    case tracks
+    case artists
+    case albums
+    case playlists
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .tracks:
+            return "Tracks"
+        case .artists:
+            return "Artists"
+        case .albums:
+            return "Albums"
+        case .playlists:
+            return "Playlists"
+        }
+    }
+}
+
+struct LocalArtistSearchResult: Identifiable {
+    let name: String
+    let representativeTrack: Track
+    let tracks: [Track]
+
+    var id: String {
+        name.lowercased()
+    }
+}
+
+struct LocalAlbumSearchResult: Identifiable {
+    let title: String
+    let artist: String
+    let representativeTrack: Track
+    let tracks: [Track]
+
+    var id: String {
+        "\(title.lowercased())::\(artist.lowercased())"
+    }
+}
+
+struct LocalPlaylistSearchResult: Identifiable {
+    let playlist: Playlist
+    let representativeTrack: Track?
+    let trackCount: Int
+
+    var id: String {
+        playlist.id
+    }
 }
 
 struct SearchSectionCard<Content: View>: View {
@@ -448,6 +788,118 @@ struct SearchStatusRow: View {
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 12)
+    }
+}
+
+struct SearchArtistRow: View {
+    let result: LocalArtistSearchResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            TrackArtworkView(
+                track: result.representativeTrack,
+                size: 54,
+                cornerRadius: 27,
+                showsSourceBadge: false
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.name)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text("\(result.tracks.count) track\(result.tracks.count == 1 ? "" : "s")")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.52))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+struct SearchAlbumRow: View {
+    let result: LocalAlbumSearchResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            TrackArtworkView(
+                track: result.representativeTrack,
+                size: 54,
+                cornerRadius: 12,
+                showsSourceBadge: false
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(result.artist)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+
+                Text("\(result.tracks.count) track\(result.tracks.count == 1 ? "" : "s")")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.42))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+struct SearchPlaylistRow: View {
+    let result: LocalPlaylistSearchResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SearchPlaylistArtworkView(
+                representativeTrack: result.representativeTrack,
+                fallbackTitle: result.playlist.displayName,
+                size: 54
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.playlist.displayName)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text("\(result.trackCount) track\(result.trackCount == 1 ? "" : "s")")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.52))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
     }
 }
 
@@ -512,6 +964,49 @@ struct SearchTrackRow: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+    }
+}
+
+struct SearchPlaylistArtworkView: View {
+    let representativeTrack: Track?
+    let fallbackTitle: String
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let representativeTrack {
+                TrackArtworkView(
+                    track: representativeTrack,
+                    size: size,
+                    cornerRadius: 12,
+                    showsSourceBadge: false
+                )
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(0.12),
+                                Color.white.opacity(0.04)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay {
+                        VStack(spacing: 4) {
+                            Image(systemName: "music.note.list")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.72))
+                            Text(String(fallbackTitle.prefix(1)).uppercased())
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.white.opacity(0.42))
+                        }
+                    }
+                    .frame(width: size, height: size)
+            }
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -707,4 +1202,5 @@ struct FlowLayout: Layout {
     SearchView()
         .environmentObject(AudioPlayer.shared)
         .environmentObject(DataManager.shared)
+        .environmentObject(AppRouter())
 }
