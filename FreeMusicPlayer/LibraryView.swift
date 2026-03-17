@@ -1540,7 +1540,8 @@ struct TrackActionSheet: View {
             }
             .background(Color.black)
             .scrollIndicators(.hidden)
-            .frame(width: 340, maxHeight: 520)
+            .frame(width: 340)
+            .frame(maxHeight: 520)
         }
         .preferredColorScheme(.dark)
         .onAppear {
