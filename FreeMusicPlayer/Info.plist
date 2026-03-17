@@ -23,9 +23,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
-	<string>Приложению нужен доступ к вашей медиатеке для воспроизведения музыки</string>
+	<string>The app needs access to your media library to play music.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Приложению нужен доступ к фото для выбора обложек</string>
+	<string>The app needs access to your photos so you can choose cover art.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

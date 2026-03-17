@@ -495,7 +495,7 @@ struct OnlineSearchTrackRow: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
 
-                Text("\(result.artist) • \(result.providerDisplayName)")
+                Text("\(result.artist) - \(result.providerDisplayName)")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)
