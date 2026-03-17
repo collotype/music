@@ -934,6 +934,8 @@ struct TrackArtworkView: View {
 
     private var sourceBadgeSymbol: String {
         switch track.source {
+        case .appleMusicPreview:
+            return "apple.logo"
         case .youtube:
             return "play.circle.fill"
         case .soundcloud:
@@ -947,6 +949,8 @@ struct TrackArtworkView: View {
 
     private var sourceBadgeColor: Color {
         switch track.source {
+        case .appleMusicPreview:
+            return .white.opacity(0.9)
         case .youtube:
             return .red
         case .soundcloud:

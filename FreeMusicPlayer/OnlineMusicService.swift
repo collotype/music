@@ -2,24 +2,63 @@
 //  OnlineMusicService.swift
 //  FreeMusicPlayer
 //
-//  YouTube-first online music search and audio retrieval inspired by
-//  YukkiMusicBot's search + extraction flow, adapted for a native iOS app.
+//  Foreground-only online music search and retrieval that runs directly inside
+//  the app process with provider-specific search and download handling.
 //
 
 import Foundation
 
+enum OnlineTrackProvider: String, Equatable {
+    case appleMusicPreview = "apple_music_preview"
+    case youtubeMirror = "youtube_mirror"
+
+    var displayName: String {
+        switch self {
+        case .appleMusicPreview:
+            return "Apple Preview"
+        case .youtubeMirror:
+            return "YouTube"
+        }
+    }
+
+    var trackSource: Track.TrackSource {
+        switch self {
+        case .appleMusicPreview:
+            return .appleMusicPreview
+        case .youtubeMirror:
+            return .youtube
+        }
+    }
+}
+
 struct OnlineTrackResult: Identifiable, Equatable {
-    let id: String
+    let provider: OnlineTrackProvider
+    let providerTrackID: String
     let title: String
     let artist: String
+    let album: String?
     let duration: TimeInterval
     let coverArtURL: String?
     let webpageURL: String
+    let directAudioURL: String?
+    let directFileExtension: String?
+
+    var id: String {
+        "\(provider.rawValue):\(providerTrackID)"
+    }
 
     var formattedDuration: String {
         let mins = Int(duration) / 60
         let secs = Int(duration) % 60
         return String(format: "%d:%02d", mins, secs)
+    }
+
+    var providerDisplayName: String {
+        provider.displayName
+    }
+
+    var trackSource: Track.TrackSource {
+        provider.trackSource
     }
 }
 
@@ -94,40 +133,56 @@ final class OnlineMusicService {
 
         debugLog("Online query entered: \(trimmedQuery)")
 
+        var aggregatedResults: [OnlineTrackResult] = []
         var reachedHealthyProvider = false
         var failures: [String] = []
 
         do {
-            let attempt = try await searchYouTubeHTML(query: trimmedQuery)
+            let attempt = try await searchViaAppleMusicPreview(query: trimmedQuery)
             reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-            if !attempt.results.isEmpty {
-                return Array(attempt.results.prefix(20))
-            }
+            aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
         } catch {
             failures.append(error.localizedDescription)
-            debugLog("YouTube HTML search failed: \(error.localizedDescription)")
+            debugLog("Apple preview search failed: \(error.localizedDescription)")
         }
 
-        do {
-            let attempt = try await searchViaPiped(query: trimmedQuery)
-            reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-            if !attempt.results.isEmpty {
-                return Array(attempt.results.prefix(20))
+        if aggregatedResults.count < 20 {
+            do {
+                let attempt = try await searchYouTubeHTML(query: trimmedQuery)
+                reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
+                aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
+            } catch {
+                failures.append(error.localizedDescription)
+                debugLog("YouTube HTML search failed: \(error.localizedDescription)")
             }
-        } catch {
-            failures.append(error.localizedDescription)
-            debugLog("Piped search failed: \(error.localizedDescription)")
         }
 
-        do {
-            let attempt = try await searchViaInvidious(query: trimmedQuery)
-            reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-            if !attempt.results.isEmpty {
-                return Array(attempt.results.prefix(20))
+        if aggregatedResults.count < 20 {
+            do {
+                let attempt = try await searchViaPiped(query: trimmedQuery)
+                reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
+                aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
+            } catch {
+                failures.append(error.localizedDescription)
+                debugLog("Piped search failed: \(error.localizedDescription)")
             }
-        } catch {
-            failures.append(error.localizedDescription)
-            debugLog("Invidious search failed: \(error.localizedDescription)")
+        }
+
+        if aggregatedResults.count < 20 {
+            do {
+                let attempt = try await searchViaInvidious(query: trimmedQuery)
+                reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
+                aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
+            } catch {
+                failures.append(error.localizedDescription)
+                debugLog("Invidious search failed: \(error.localizedDescription)")
+            }
+        }
+
+        if !aggregatedResults.isEmpty {
+            let finalResults = Array(aggregatedResults.prefix(20))
+            debugLog("Online query finished with \(finalResults.count) total results")
+            return finalResults
         }
 
         if reachedHealthyProvider {
@@ -138,7 +193,7 @@ final class OnlineMusicService {
             throw OnlineMusicServiceError.networkFailure(
                 summarizedFailureMessage(
                     from: failures,
-                    fallback: "Online search failed because public music providers could not be reached."
+                    fallback: "Online search failed because the in-app providers could not be reached."
                 )
             )
         }
@@ -147,15 +202,9 @@ final class OnlineMusicService {
     }
 
     func downloadAudio(for result: OnlineTrackResult) async throws -> URL {
-        guard isSupportedWebpageURL(result.webpageURL) else {
+        guard !result.providerTrackID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OnlineMusicServiceError.unsupportedSource(
-                "Unsupported source. Only YouTube-backed online results can be downloaded right now."
-            )
-        }
-
-        guard !result.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw OnlineMusicServiceError.unsupportedSource(
-                "Unsupported source. The selected result does not contain a valid video ID."
+                "Unsupported source. The selected result does not contain a valid provider identifier."
             )
         }
 
@@ -164,13 +213,16 @@ final class OnlineMusicService {
             return cachedURL
         }
 
-        let stream = try await resolveAudioStream(for: result.id)
+        debugLog("Resolution start for \(result.id) via \(result.providerDisplayName)")
+
+        let stream = try await resolveAudioStream(for: result)
         guard isValidDownloadURL(stream.url) else {
             throw OnlineMusicServiceError.invalidAudioURL(
                 "The selected audio source returned an invalid media URL."
             )
         }
 
+        debugLog("Resolution end for \(result.id) via \(stream.providerName): \(stream.url.absoluteString)")
         debugLog("Download start for \(result.id) via \(stream.providerName): \(stream.url.absoluteString)")
 
         var request = URLRequest(url: stream.url)
@@ -234,9 +286,76 @@ final class OnlineMusicService {
             )
         }
 
+        debugLog("Download end for \(result.id): \(fileSize) bytes")
         debugLog("Temp file path: \(destinationURL.path)")
 
         return destinationURL
+    }
+
+    private func searchViaAppleMusicPreview(query: String) async throws -> SearchAttempt {
+        var components = URLComponents(string: "https://itunes.apple.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "term", value: query),
+            URLQueryItem(name: "media", value: "music"),
+            URLQueryItem(name: "entity", value: "song"),
+            URLQueryItem(name: "limit", value: "20"),
+            URLQueryItem(name: "country", value: "US"),
+        ]
+
+        guard let url = components?.url else {
+            throw OnlineMusicServiceError.extractionFailure("The Apple preview search URL could not be created.")
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data = try await fetchData(for: request)
+
+        let payload: AppleMusicPreviewSearchResponse
+        do {
+            payload = try JSONDecoder().decode(AppleMusicPreviewSearchResponse.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("Apple preview search returned malformed JSON.")
+        }
+
+        let results = deduplicatedResults(
+            from: payload.results.compactMap { item in
+                onlineResult(fromApplePreviewItem: item)
+            }
+        )
+
+        debugLog("Provider selected: Apple Music Preview with \(results.count) results")
+
+        return SearchAttempt(results: results, reachedProvider: true)
+    }
+
+    private func onlineResult(fromApplePreviewItem item: AppleMusicPreviewItem) -> OnlineTrackResult? {
+        guard let trackID = item.trackID,
+              let previewURL = cleanedText(item.previewURL),
+              !previewURL.isEmpty else {
+            return nil
+        }
+
+        let title = cleanedText(item.trackName) ?? "Unknown Track"
+        let artist = cleanedText(item.artistName) ?? "Unknown Artist"
+        let album = cleanedText(item.collectionName)
+        let coverArtURL = normalizedAppleArtworkURL(from: item.artworkURL100)
+        let webpageURL = cleanedText(item.trackViewURL) ?? previewURL
+        let duration = preferredApplePreviewDuration(trackTimeMillis: item.trackTimeMillis)
+
+        return OnlineTrackResult(
+            provider: .appleMusicPreview,
+            providerTrackID: String(trackID),
+            title: title,
+            artist: artist,
+            album: album,
+            duration: duration,
+            coverArtURL: coverArtURL,
+            webpageURL: webpageURL,
+            directAudioURL: previewURL,
+            directFileExtension: fileExtension(fromDownloadURLString: previewURL, fallback: "m4a")
+        )
     }
 
     private func searchYouTubeHTML(query: String) async throws -> SearchAttempt {
@@ -400,18 +519,48 @@ final class OnlineMusicService {
                 guard item.type.lowercased() == "video", !item.videoID.isEmpty else { return nil }
 
                 return OnlineTrackResult(
-                    id: item.videoID,
+                    provider: .youtubeMirror,
+                    providerTrackID: item.videoID,
                     title: cleanedText(item.title) ?? "Unknown Track",
                     artist: cleanedText(item.author) ?? "Unknown Artist",
+                    album: nil,
                     duration: item.lengthSeconds,
                     coverArtURL: normalizedMediaURL(item.thumbnails.last?.url, host: host)?.absoluteString,
-                    webpageURL: "https://www.youtube.com/watch?v=\(item.videoID)"
+                    webpageURL: "https://www.youtube.com/watch?v=\(item.videoID)",
+                    directAudioURL: nil,
+                    directFileExtension: nil
                 )
             }
         )
     }
 
-    private func resolveAudioStream(for videoID: String) async throws -> ResolvedAudioStream {
+    private func resolveAudioStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
+        switch result.provider {
+        case .appleMusicPreview:
+            return try resolveApplePreviewStream(for: result)
+        case .youtubeMirror:
+            return try await resolveYouTubeAudioStream(for: result.providerTrackID)
+        }
+    }
+
+    private func resolveApplePreviewStream(for result: OnlineTrackResult) throws -> ResolvedAudioStream {
+        guard let rawURL = cleanedText(result.directAudioURL),
+              let streamURL = URL(string: rawURL) else {
+            throw OnlineMusicServiceError.invalidAudioURL(
+                "The Apple preview result did not contain a valid audio URL."
+            )
+        }
+
+        return ResolvedAudioStream(
+            url: streamURL,
+            fileExtension: result.directFileExtension ?? fileExtension(fromDownloadURLString: rawURL, fallback: "m4a"),
+            bitrate: 256_000,
+            mimeType: "audio/mp4",
+            providerName: result.providerDisplayName
+        )
+    }
+
+    private func resolveYouTubeAudioStream(for videoID: String) async throws -> ResolvedAudioStream {
         var errors: [OnlineMusicServiceError] = []
 
         do {
@@ -640,6 +789,10 @@ final class OnlineMusicService {
             return "mp3"
         }
 
+        if cleanedContainer == "aac" {
+            return "aac"
+        }
+
         if mimeType.contains("audio/mp4") || mimeType.contains("mp4a") {
             return "m4a"
         }
@@ -670,12 +823,16 @@ final class OnlineMusicService {
         let coverArtURL = extractThumbnailURL(from: renderer["thumbnail"], host: youtubeBaseURL)?.absoluteString
 
         return OnlineTrackResult(
-            id: videoID,
+            provider: .youtubeMirror,
+            providerTrackID: videoID,
             title: title,
             artist: artist,
+            album: nil,
             duration: duration,
             coverArtURL: coverArtURL,
-            webpageURL: "https://www.youtube.com/watch?v=\(videoID)"
+            webpageURL: "https://www.youtube.com/watch?v=\(videoID)",
+            directAudioURL: nil,
+            directFileExtension: nil
         )
     }
 
@@ -710,22 +867,34 @@ final class OnlineMusicService {
         )?.absoluteString
 
         return OnlineTrackResult(
-            id: videoID,
+            provider: .youtubeMirror,
+            providerTrackID: videoID,
             title: title,
             artist: artist,
+            album: nil,
             duration: duration,
             coverArtURL: coverArtURL,
-            webpageURL: "https://www.youtube.com/watch?v=\(videoID)"
+            webpageURL: "https://www.youtube.com/watch?v=\(videoID)",
+            directAudioURL: nil,
+            directFileExtension: nil
         )
     }
 
     private func deduplicatedResults(from results: [OnlineTrackResult]) -> [OnlineTrackResult] {
         var seenIDs = Set<String>()
+        var seenMetadataKeys = Set<String>()
 
         return results.filter { result in
             guard !result.id.isEmpty else { return false }
             guard !seenIDs.contains(result.id) else { return false }
+            let metadataKey = normalizedMetadataKey(for: result)
+            if !metadataKey.isEmpty, seenMetadataKeys.contains(metadataKey) {
+                return false
+            }
             seenIDs.insert(result.id)
+            if !metadataKey.isEmpty {
+                seenMetadataKeys.insert(metadataKey)
+            }
             return true
         }
     }
@@ -739,15 +908,6 @@ final class OnlineMusicService {
         }
 
         return nil
-    }
-
-    private func isSupportedWebpageURL(_ rawValue: String) -> Bool {
-        guard let url = URL(string: rawValue),
-              let host = url.host?.lowercased() else {
-            return false
-        }
-
-        return host.contains("youtube.com") || host.contains("youtu.be")
     }
 
     private func fetchData(for request: URLRequest) async throws -> Data {
@@ -1138,6 +1298,49 @@ final class OnlineMusicService {
         return uniqueURLs
     }
 
+    private func normalizedMetadataKey(for result: OnlineTrackResult) -> String {
+        let title = normalizedComparisonValue(result.title)
+        let artist = normalizedComparisonValue(result.artist)
+
+        guard !title.isEmpty || !artist.isEmpty else { return "" }
+        return "\(title)|\(artist)"
+    }
+
+    private func normalizedComparisonValue(_ value: String) -> String {
+        value
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .components(separatedBy: CharacterSet.alphanumerics.union(.whitespaces).inverted)
+            .joined(separator: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private func normalizedAppleArtworkURL(from rawValue: String?) -> String? {
+        guard let rawValue = cleanedText(rawValue) else { return nil }
+
+        return rawValue
+            .replacingOccurrences(of: "100x100bb", with: "600x600bb")
+            .replacingOccurrences(of: "60x60bb", with: "600x600bb")
+    }
+
+    private func preferredApplePreviewDuration(trackTimeMillis: Int?) -> TimeInterval {
+        guard let trackTimeMillis, trackTimeMillis > 0 else {
+            return 30
+        }
+
+        return min(TimeInterval(trackTimeMillis) / 1000, 30)
+    }
+
+    private func fileExtension(fromDownloadURLString rawValue: String, fallback: String) -> String {
+        guard let url = URL(string: rawValue) else {
+            return fallback
+        }
+
+        let pathExtension = url.pathExtension.lowercased()
+        return pathExtension.isEmpty ? fallback : preferredFileExtension(mimeType: "", container: pathExtension)
+    }
+
     private func cleanedText(_ value: String?) -> String? {
         guard let value else { return nil }
 
@@ -1154,7 +1357,7 @@ final class OnlineMusicService {
     }
 
     private var supportedFileExtensions: [String] {
-        ["m4a", "mp4", "webm", "mp3"]
+        ["m4a", "mp4", "aac", "webm", "mp3"]
     }
 }
 
@@ -1169,6 +1372,44 @@ private struct ResolvedAudioStream {
     let bitrate: Int
     let mimeType: String
     let providerName: String
+}
+
+private struct AppleMusicPreviewSearchResponse: Decodable {
+    let results: [AppleMusicPreviewItem]
+}
+
+private struct AppleMusicPreviewItem: Decodable {
+    let trackID: Int?
+    let trackName: String?
+    let artistName: String?
+    let collectionName: String?
+    let trackTimeMillis: Int?
+    let artworkURL100: String?
+    let trackViewURL: String?
+    let previewURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case trackID = "trackId"
+        case trackName
+        case artistName
+        case collectionName
+        case trackTimeMillis
+        case artworkURL100 = "artworkUrl100"
+        case trackViewURL = "trackViewUrl"
+        case previewURL = "previewUrl"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        trackID = container.decodeLossyInt(forKey: .trackID)
+        trackName = try container.decodeIfPresent(String.self, forKey: .trackName)
+        artistName = try container.decodeIfPresent(String.self, forKey: .artistName)
+        collectionName = try container.decodeIfPresent(String.self, forKey: .collectionName)
+        trackTimeMillis = container.decodeLossyInt(forKey: .trackTimeMillis)
+        artworkURL100 = try container.decodeIfPresent(String.self, forKey: .artworkURL100)
+        trackViewURL = try container.decodeIfPresent(String.self, forKey: .trackViewURL)
+        previewURL = try container.decodeIfPresent(String.self, forKey: .previewURL)
+    }
 }
 
 private struct PipedStreamPayload: Decodable {

@@ -12,6 +12,7 @@ struct Track: Identifiable, Codable, Equatable {
     enum TrackSource: String, Codable {
         case local
         case youtube
+        case appleMusicPreview
         case soundcloud
         case spotify
     }

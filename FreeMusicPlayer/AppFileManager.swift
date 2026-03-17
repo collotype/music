@@ -45,14 +45,19 @@ final class AppFileManager {
         "mp3", "mp4", "ogg", "opus", "wav", "wma"
     ]
 
-    func prepareDirectories() {
+    func prepareDirectories(resetTemporaryStorage: Bool = false) {
         createDirectoryIfNeeded(appDataDirectory)
         createDirectoryIfNeeded(tempMusicDirectory)
         createDirectoryIfNeeded(musicDirectory)
         createDirectoryIfNeeded(dataDirectory)
         createDirectoryIfNeeded(artworkDirectory)
-        clearDirectoryContents(tempMusicDirectory)
-        debugLog("Prepared app storage. Temp music cleared at \(tempMusicDirectory.path)")
+
+        if resetTemporaryStorage {
+            clearDirectoryContents(tempMusicDirectory)
+            debugLog("Prepared app storage. Temp music cleared at \(tempMusicDirectory.path)")
+        } else {
+            debugLog("Prepared app storage at \(appDataDirectory.path)")
+        }
     }
 
     func clearAllAppData() {
@@ -93,7 +98,7 @@ final class AppFileManager {
         let sanitizedID = sanitizedFileName(sourceID)
         let finalExtension = fileExtension.isEmpty ? "m4a" : fileExtension
         return tempMusicDirectory
-            .appendingPathComponent("youtube_\(sanitizedID)")
+            .appendingPathComponent("online_\(sanitizedID)")
             .appendingPathExtension(finalExtension)
     }
 

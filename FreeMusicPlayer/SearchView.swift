@@ -325,11 +325,12 @@ struct SearchView: View {
 
             do {
                 let tempURL = try await OnlineMusicService.shared.downloadAudio(for: result)
-                _ = try await MainActor.run {
+                let savedTrack = try await MainActor.run {
                     try dataManager.saveDownloadedOnlineTrack(result, from: tempURL)
                 }
 
                 await MainActor.run {
+                    audioPlayer.syncCurrentTrackReference(with: savedTrack)
                     localResults = localMatches(for: searchText)
                     debugLog("Local result count after save: \(localResults.count)")
                 }
@@ -494,8 +495,8 @@ struct OnlineSearchTrackRow: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
 
-                Text(result.artist)
-                    .font(.system(size: 13))
+                Text("\(result.artist) • \(result.providerDisplayName)")
+                    .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)
             }

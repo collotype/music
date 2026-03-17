@@ -40,7 +40,7 @@ final class DataManager: ObservableObject {
     }
 
     func loadData() {
-        AppFileManager.shared.prepareDirectories()
+        AppFileManager.shared.prepareDirectories(resetTemporaryStorage: true)
 
         let didLoadFromFiles = loadDataFromFiles()
         if !didLoadFromFiles {
@@ -305,16 +305,17 @@ final class DataManager: ObservableObject {
 
     func makeTemporaryTrack(from result: OnlineTrackResult, tempFileURL: URL) -> Track {
         let storedPath = AppFileManager.shared.relativePath(for: tempFileURL) ?? tempFileURL.path
+        let metadata = resolvedDownloadedTrackMetadata(from: result, localFileURL: tempFileURL)
         debugLog("Create temporary track entry for \(result.title) at \(storedPath)")
 
         return Track(
-            title: result.title,
-            artist: result.artist,
-            album: nil,
-            duration: result.duration,
+            title: metadata.title,
+            artist: metadata.artist,
+            album: metadata.album,
+            duration: metadata.duration,
             fileURL: storedPath,
             coverArtURL: result.coverArtURL,
-            source: .youtube,
+            source: result.trackSource,
             isFavorite: false,
             playCount: 0,
             lastPlayed: nil,
@@ -337,16 +338,17 @@ final class DataManager: ObservableObject {
             preferredName: "\(result.artist)-\(result.title)"
         )
         let storedPath = AppFileManager.shared.relativePath(for: destinationURL) ?? destinationURL.path
+        let metadata = resolvedDownloadedTrackMetadata(from: result, localFileURL: destinationURL)
         debugLog("Register saved online track in library: \(result.title) at \(storedPath)")
 
         let track = Track(
-            title: result.title,
-            artist: result.artist,
-            album: nil,
-            duration: result.duration,
+            title: metadata.title,
+            artist: metadata.artist,
+            album: metadata.album,
+            duration: metadata.duration,
             fileURL: storedPath,
             coverArtURL: result.coverArtURL,
-            source: .youtube,
+            source: result.trackSource,
             isFavorite: false,
             playCount: 0,
             lastPlayed: nil,
@@ -357,6 +359,28 @@ final class DataManager: ObservableObject {
         )
 
         return addTrack(track)
+    }
+
+    private func resolvedDownloadedTrackMetadata(from result: OnlineTrackResult, localFileURL: URL) -> DownloadedTrackMetadata {
+        let asset = AVURLAsset(url: localFileURL)
+        let fallbackPlayer = try? AVAudioPlayer(contentsOf: localFileURL)
+        let assetDuration = max(CMTimeGetSeconds(asset.duration), 0)
+        let fallbackDuration = max(fallbackPlayer?.duration ?? 0, 0)
+        let resolvedDuration = [assetDuration, fallbackDuration, max(result.duration, 0)]
+            .first(where: { $0 > 0 }) ?? 0
+
+        let title = metadataValue(for: asset, identifier: .commonIdentifierTitle) ?? result.title
+        let artist = metadataValue(for: asset, identifier: .commonIdentifierArtist) ?? result.artist
+        let album = metadataValue(for: asset, identifier: .commonIdentifierAlbumName) ?? result.album
+
+        debugLog("Downloaded metadata resolved for \(result.title): title=\(title), artist=\(artist), duration=\(resolvedDuration)")
+
+        return DownloadedTrackMetadata(
+            title: title,
+            artist: artist,
+            album: album,
+            duration: resolvedDuration
+        )
     }
 
     func markTrackPlayed(_ track: Track) {
@@ -832,4 +856,11 @@ private struct ImportedTrackProbe {
     let album: String?
     let duration: TimeInterval
     let artworkData: Data?
+}
+
+private struct DownloadedTrackMetadata {
+    let title: String
+    let artist: String
+    let album: String?
+    let duration: TimeInterval
 }

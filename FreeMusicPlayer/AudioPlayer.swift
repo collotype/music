@@ -314,8 +314,16 @@ final class AudioPlayer: ObservableObject {
 
     @discardableResult
     func load(track: Track) -> Bool {
+        if track.storageLocation == .remote {
+            failPlayback(
+                "Playback failed because this track has not been downloaded into local app storage yet.",
+                track: track
+            )
+            return false
+        }
+
         guard let url = resolvedURL(for: track) else {
-            failPlayback("Playback failed because the track URL could not be resolved.", track: track)
+            failPlayback("Playback failed because the local track URL could not be resolved.", track: track)
             return false
         }
 
@@ -381,6 +389,17 @@ final class AudioPlayer: ObservableObject {
         return play()
     }
 
+    func syncCurrentTrackReference(with track: Track) {
+        guard currentTrack?.sourceID != nil,
+              currentTrack?.sourceID == track.sourceID else {
+            return
+        }
+
+        currentTrack = track
+        debugLog("Current track reference synced to saved library track: \(track.displayTitle)")
+        updateNowPlayingInfo(refreshArtwork: true)
+    }
+
     private func getFileURL(for track: Track) -> URL? {
         guard let filename = track.fileURL else { return nil }
         return AppFileManager.shared.resolveStoredFileURL(for: filename)
@@ -388,9 +407,14 @@ final class AudioPlayer: ObservableObject {
 
     private func resolvedURL(for track: Track) -> URL? {
         if let fileURL = track.fileURL,
-           let remoteURL = URL(string: fileURL),
-           remoteURL.scheme != nil {
-            return remoteURL
+           let parsedURL = URL(string: fileURL),
+           parsedURL.scheme != nil {
+            if parsedURL.isFileURL {
+                return parsedURL
+            }
+
+            debugLog("Rejected non-local playback URL for \(track.displayTitle): \(parsedURL.absoluteString)")
+            return nil
         }
 
         return getFileURL(for: track)
