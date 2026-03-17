@@ -271,7 +271,7 @@ struct SearchView: View {
     private func searchOnlineResultsWithTimeout(for query: String) async throws -> [OnlineTrackResult] {
         let timeoutNanoseconds = onlineSearchTimeoutNanoseconds
 
-        try await withThrowingTaskGroup(of: [OnlineTrackResult].self) { group in
+        return try await withThrowingTaskGroup(of: [OnlineTrackResult].self) { group in
             group.addTask {
                 try await OnlineMusicService.shared.search(query)
             }
