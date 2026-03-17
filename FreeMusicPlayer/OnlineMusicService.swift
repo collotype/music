@@ -65,6 +65,7 @@ struct OnlineTrackResult: Identifiable, Equatable {
 enum OnlineMusicServiceError: LocalizedError, Equatable {
     case invalidQuery
     case noResults(String)
+    case timedOut(String)
     case networkFailure(String)
     case unsupportedSource(String)
     case invalidAudioURL(String)
@@ -78,6 +79,8 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
             return "Enter a search query first."
         case .noResults(let query):
             return "No online results were found for \"\(query)\"."
+        case .timedOut(let message):
+            return message
         case .networkFailure(let message):
             return message
         case .unsupportedSource(let message):
@@ -119,9 +122,9 @@ final class OnlineMusicService {
 
     private init() {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 20
-        configuration.timeoutIntervalForResource = 180
-        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = 12
+        configuration.timeoutIntervalForResource = 45
+        configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration)
     }
 
@@ -133,71 +136,86 @@ final class OnlineMusicService {
 
         debugLog("Online query entered: \(trimmedQuery)")
 
-        var aggregatedResults: [OnlineTrackResult] = []
         var reachedHealthyProvider = false
         var failures: [String] = []
 
+        debugLog("Provider start: Apple Music Preview for query \(trimmedQuery)")
         do {
             let attempt = try await searchViaAppleMusicPreview(query: trimmedQuery)
             reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-            aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
+            debugLog("Provider finish: Apple Music Preview with \(attempt.results.count) results")
+            if !attempt.results.isEmpty {
+                let finalResults = Array(attempt.results.prefix(20))
+                debugLog("Online result count: \(finalResults.count)")
+                return finalResults
+            }
         } catch {
             failures.append(error.localizedDescription)
-            debugLog("Apple preview search failed: \(error.localizedDescription)")
+            debugLog("Provider error: Apple Music Preview - \(error.localizedDescription)")
         }
 
-        if aggregatedResults.count < 20 {
-            do {
-                let attempt = try await searchYouTubeHTML(query: trimmedQuery)
-                reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-                aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
-            } catch {
-                failures.append(error.localizedDescription)
-                debugLog("YouTube HTML search failed: \(error.localizedDescription)")
+        debugLog("Provider start: YouTube HTML for query \(trimmedQuery)")
+        do {
+            let attempt = try await searchYouTubeHTML(query: trimmedQuery)
+            reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
+            debugLog("Provider finish: YouTube HTML with \(attempt.results.count) results")
+            if !attempt.results.isEmpty {
+                let finalResults = Array(attempt.results.prefix(20))
+                debugLog("Online result count: \(finalResults.count)")
+                return finalResults
             }
+        } catch {
+            failures.append(error.localizedDescription)
+            debugLog("Provider error: YouTube HTML - \(error.localizedDescription)")
         }
 
-        if aggregatedResults.count < 20 {
-            do {
-                let attempt = try await searchViaPiped(query: trimmedQuery)
-                reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-                aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
-            } catch {
-                failures.append(error.localizedDescription)
-                debugLog("Piped search failed: \(error.localizedDescription)")
+        debugLog("Provider start: Piped for query \(trimmedQuery)")
+        do {
+            let attempt = try await searchViaPiped(query: trimmedQuery)
+            reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
+            debugLog("Provider finish: Piped with \(attempt.results.count) results")
+            if !attempt.results.isEmpty {
+                let finalResults = Array(attempt.results.prefix(20))
+                debugLog("Online result count: \(finalResults.count)")
+                return finalResults
             }
+        } catch {
+            failures.append(error.localizedDescription)
+            debugLog("Provider error: Piped - \(error.localizedDescription)")
         }
 
-        if aggregatedResults.count < 20 {
-            do {
-                let attempt = try await searchViaInvidious(query: trimmedQuery)
-                reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
-                aggregatedResults = deduplicatedResults(from: aggregatedResults + attempt.results)
-            } catch {
-                failures.append(error.localizedDescription)
-                debugLog("Invidious search failed: \(error.localizedDescription)")
+        debugLog("Provider start: Invidious for query \(trimmedQuery)")
+        do {
+            let attempt = try await searchViaInvidious(query: trimmedQuery)
+            reachedHealthyProvider = reachedHealthyProvider || attempt.reachedProvider
+            debugLog("Provider finish: Invidious with \(attempt.results.count) results")
+            if !attempt.results.isEmpty {
+                let finalResults = Array(attempt.results.prefix(20))
+                debugLog("Online result count: \(finalResults.count)")
+                return finalResults
             }
-        }
-
-        if !aggregatedResults.isEmpty {
-            let finalResults = Array(aggregatedResults.prefix(20))
-            debugLog("Online query finished with \(finalResults.count) total results")
-            return finalResults
+        } catch {
+            failures.append(error.localizedDescription)
+            debugLog("Provider error: Invidious - \(error.localizedDescription)")
         }
 
         if reachedHealthyProvider {
+            debugLog("Online result count: 0")
             throw OnlineMusicServiceError.noResults(trimmedQuery)
         }
 
         if !failures.isEmpty {
+            let message = summarizedFailureMessage(
+                from: failures,
+                fallback: "Online search failed because the in-app providers could not be reached."
+            )
+            debugLog("Online search error: \(message)")
             throw OnlineMusicServiceError.networkFailure(
-                summarizedFailureMessage(
-                    from: failures,
-                    fallback: "Online search failed because the in-app providers could not be reached."
-                )
+                message
             )
         }
 
+        debugLog("Online search error: unavailable sources")
         throw OnlineMusicServiceError.unavailableSources
     }
 

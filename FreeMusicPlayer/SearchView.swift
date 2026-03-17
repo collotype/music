@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct SearchView: View {
+    private let onlineSearchTimeoutNanoseconds: UInt64 = 15_000_000_000
+
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
 
@@ -218,13 +220,14 @@ struct SearchView: View {
         onlineResults = []
         onlineStatusMessage = nil
         isSearchingOnline = true
+        debugLog("Online search start: \(trimmedQuery)")
 
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
 
             do {
-                let fetchedResults = try await OnlineMusicService.shared.search(trimmedQuery)
+                let fetchedResults = try await searchOnlineResultsWithTimeout(for: trimmedQuery)
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
@@ -246,6 +249,8 @@ struct SearchView: View {
                     case .noResults(_):
                         onlineStatusMessage = nil
                         debugLog("Online result count: 0")
+                    case .timedOut(let message):
+                        onlineStatusMessage = message
                     default:
                         onlineStatusMessage = onlineError.localizedDescription
                     }
@@ -259,6 +264,35 @@ struct SearchView: View {
                     isSearchingOnline = false
                     onlineStatusMessage = error.localizedDescription
                 }
+            }
+        }
+    }
+
+    private func searchOnlineResultsWithTimeout(for query: String) async throws -> [OnlineTrackResult] {
+        let timeoutNanoseconds = onlineSearchTimeoutNanoseconds
+
+        try await withThrowingTaskGroup(of: [OnlineTrackResult].self) { group in
+            group.addTask {
+                try await OnlineMusicService.shared.search(query)
+            }
+
+            group.addTask {
+                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                debugLog("Online search timeout: \(query)")
+                throw OnlineMusicServiceError.timedOut(
+                    "Online search timed out. Try another query or try again."
+                )
+            }
+
+            do {
+                guard let result = try await group.next() else {
+                    throw OnlineMusicServiceError.networkFailure("Online search ended unexpectedly.")
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
             }
         }
     }
