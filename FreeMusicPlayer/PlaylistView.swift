@@ -97,7 +97,11 @@ struct PlaylistView: View {
                                     Button {
                                         debugLog("Playlist play button pressed: \(playlist.name)")
                                         if let firstTrack = playlistTracks.first {
-                                            audioPlayer.playTrack(firstTrack)
+                                            audioPlayer.playTrack(
+                                                firstTrack,
+                                                in: playlistTracks,
+                                                contextName: "playlist:\(playlist.id)"
+                                            )
                                         }
                                     } label: {
                                         HStack {
@@ -185,7 +189,12 @@ struct PlaylistView: View {
                     } else {
                         Section("Tracks") {
                             ForEach(playlistTracks) { track in
-                                PlaylistTrackRow(track: track, playlistName: playlist.name)
+                                PlaylistTrackRow(
+                                    track: track,
+                                    playlistName: playlist.name,
+                                    playlistTracks: playlistTracks,
+                                    playlistID: playlist.id
+                                )
                                     .listRowBackground(Color.clear)
                                     .listRowInsets(EdgeInsets())
                             }
@@ -231,6 +240,8 @@ struct PlaylistView: View {
 struct PlaylistTrackRow: View {
     let track: Track
     let playlistName: String
+    let playlistTracks: [Track]
+    let playlistID: String
 
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
@@ -265,7 +276,11 @@ struct PlaylistTrackRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             debugLog("Playlist track tapped: \(track.displayTitle) from \(playlistName)")
-            audioPlayer.playTrack(track)
+            audioPlayer.playTrack(
+                track,
+                in: playlistTracks,
+                contextName: "playlist:\(playlistID)"
+            )
         }
     }
 }

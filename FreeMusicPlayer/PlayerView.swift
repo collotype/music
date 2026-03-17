@@ -5,6 +5,7 @@
 //  Full screen player.
 //
 
+import AVFoundation
 import SwiftUI
 
 struct PlayerView: View {
@@ -41,10 +42,7 @@ struct PlayerView: View {
             )
         }
         .sheet(isPresented: $showLyrics) {
-            PlayerPlaceholderSheet(
-                title: "Lyrics",
-                description: "Lyrics mode is toggled and ready for future integration."
-            )
+            PlayerLyricsSheet(track: audioPlayer.currentTrack)
         }
     }
     
@@ -304,6 +302,169 @@ struct PlayerPlaceholderSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+struct PlayerLyricsSheet: View {
+    let track: Track?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var lyricsText: String?
+    @State private var isLoadingLyrics = false
+
+    private var trackIdentity: String {
+        track?.sourceID ?? track?.id ?? "no-track"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(track?.displayTitle ?? "Nothing playing")
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundColor(.white)
+                            Text(track?.displayArtist ?? "")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+
+                        if isLoadingLyrics {
+                            HStack(spacing: 12) {
+                                ProgressView()
+                                    .tint(.white)
+                                Text("Loading lyrics...")
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                            .padding(.top, 12)
+                        } else if let lyricsText {
+                            Text(lyricsText)
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.9))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 4)
+                        } else {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Lyrics unavailable")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.white)
+                                Text("No embedded lyrics were found for this track yet.")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.white.opacity(0.58))
+                            }
+                            .padding(.top, 12)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+                }
+            }
+            .navigationTitle("Lyrics")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+            .task(id: trackIdentity) {
+                await loadLyrics()
+            }
+        }
+    }
+
+    @MainActor
+    private func loadLyrics() async {
+        guard let track else {
+            lyricsText = nil
+            isLoadingLyrics = false
+            debugLog("Lyrics unavailable because there is no current track")
+            return
+        }
+
+        isLoadingLyrics = true
+        let currentIdentity = trackIdentity
+        let resolvedLyrics = await LyricsMetadataResolver.shared.lyrics(for: track)
+
+        guard currentIdentity == trackIdentity else { return }
+
+        lyricsText = resolvedLyrics
+        isLoadingLyrics = false
+        debugLog("Lyrics \(resolvedLyrics == nil ? "unavailable" : "loaded") for \(track.displayTitle)")
+    }
+}
+
+private actor LyricsMetadataResolver {
+    static let shared = LyricsMetadataResolver()
+
+    func lyrics(for track: Track) -> String? {
+        guard let fileURL = localFileURL(for: track),
+              FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+
+        let asset = AVURLAsset(url: fileURL)
+        return metadataLyrics(from: asset)
+    }
+
+    private func localFileURL(for track: Track) -> URL? {
+        guard let fileURL = track.fileURL else { return nil }
+
+        if let parsedURL = URL(string: fileURL),
+           parsedURL.isFileURL {
+            return parsedURL
+        }
+
+        if URL(string: fileURL)?.scheme != nil {
+            return nil
+        }
+
+        return AppFileManager.shared.resolveStoredFileURL(for: fileURL)
+    }
+
+    private func metadataLyrics(from asset: AVURLAsset) -> String? {
+        let metadataCollections = [asset.commonMetadata] + asset.availableMetadataFormats.map { asset.metadata(forFormat: $0) }
+
+        for items in metadataCollections {
+            for item in items {
+                let identifier = item.identifier?.rawValue.lowercased() ?? ""
+                let commonKey = item.commonKey?.rawValue.lowercased() ?? ""
+
+                guard identifier.contains("lyric") || commonKey.contains("lyric") else {
+                    continue
+                }
+
+                if let cleanedString = cleanedLyricsText(item.stringValue) {
+                    return cleanedString
+                }
+
+                if let value = item.value as? String,
+                   let cleanedValue = cleanedLyricsText(value) {
+                    return cleanedValue
+                }
+
+                if let dataValue = item.dataValue {
+                    for encoding in [String.Encoding.utf8, .utf16, .unicode, .isoLatin1] {
+                        if let decodedValue = String(data: dataValue, encoding: encoding),
+                           let cleanedValue = cleanedLyricsText(decodedValue) {
+                            return cleanedValue
+                        }
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func cleanedLyricsText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
     }
 }
 

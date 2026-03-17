@@ -327,7 +327,11 @@ struct LibraryView: View {
         } else {
             List {
                 ForEach(filteredTracks) { track in
-                    LibraryTrackRow(track: track)
+                    LibraryTrackRow(
+                        track: track,
+                        contextTracks: filteredTracks,
+                        contextName: "library:\(selectedFilter.title):\(searchText)"
+                    )
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets())
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -520,11 +524,19 @@ struct LibraryView: View {
                   let track = dataManager.tracks(for: playlist.id).first else {
                 return
             }
-            audioPlayer.playTrack(track)
+            audioPlayer.playTrack(
+                track,
+                in: dataManager.tracks(for: playlist.id),
+                contextName: "playlist:\(playlist.id)"
+            )
             router.openPlaylist(playlist.id)
         default:
             guard let first = filteredTracks.first else { return }
-            audioPlayer.playTrack(first)
+            audioPlayer.playTrack(
+                first,
+                in: filteredTracks,
+                contextName: "library:\(selectedFilter.title):\(searchText)"
+            )
         }
     }
 
@@ -710,6 +722,8 @@ struct FilterChip: View {
 
 struct LibraryTrackRow: View {
     let track: Track
+    let contextTracks: [Track]
+    let contextName: String
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
     @State private var sharePayload: TrackSharePayload?
@@ -764,7 +778,7 @@ struct LibraryTrackRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             debugLog("Library track row tapped: \(track.displayTitle)")
-            audioPlayer.playTrack(track)
+            audioPlayer.playTrack(track, in: contextTracks, contextName: contextName)
         }
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 1).onEnded { _ in

@@ -33,11 +33,17 @@ final class AudioPlayer: ObservableObject {
     private var manualQueue: [Track] = []
     private var artworkDataTask: URLSessionDataTask?
     private var nowPlayingArtworkIdentifier: String?
+    private var playbackContext: PlaybackContext?
 
     enum RepeatMode {
         case off
         case all
         case one
+    }
+
+    private struct PlaybackContext {
+        let name: String
+        let tracks: [Track]
     }
 
     private var tracks: [Track] {
@@ -294,18 +300,15 @@ final class AudioPlayer: ObservableObject {
             return
         }
 
-        debugLog("Current item finished playing")
+        debugLog("Current track ended: \(currentTrack?.displayTitle ?? "Unknown Track")")
 
         switch repeatMode {
         case .one:
             seek(to: 0)
             play()
-        case .all:
-            playNext()
-        case .off:
-            if isShuffle {
-                playNext()
-            } else {
+        case .all, .off:
+            let didAdvance = playNext(reason: "track-ended")
+            if !didAdvance {
                 isPlaying = false
                 updateNowPlayingInfo()
             }
@@ -373,13 +376,40 @@ final class AudioPlayer: ObservableObject {
 
     @discardableResult
     func playTrack(_ track: Track) -> Bool {
+        return playTrack(track, contextTracks: nil, contextName: nil, updateContext: true)
+    }
+
+    @discardableResult
+    func playTrack(_ track: Track, in contextTracks: [Track], contextName: String) -> Bool {
+        return playTrack(track, contextTracks: contextTracks, contextName: contextName, updateContext: true)
+    }
+
+    @discardableResult
+    private func playTrack(
+        _ track: Track,
+        contextTracks: [Track]?,
+        contextName: String?,
+        updateContext: Bool
+    ) -> Bool {
         debugLog("playTrack called for: \(track.displayTitle)")
+
+        if updateContext {
+            if let contextTracks,
+               let contextName {
+                updatePlaybackContext(with: contextTracks, name: contextName)
+            } else {
+                clearPlaybackContext()
+            }
+        }
+
         manualQueue.removeAll { $0.id == track.id }
 
         guard load(track: track) else { return false }
 
         DataManager.shared.markTrackPlayed(track)
-        return play()
+        let didStartPlayback = play()
+        debugLog("Playback \(didStartPlayback ? "success" : "failure") for track: \(track.displayTitle)")
+        return didStartPlayback
     }
 
     func syncCurrentTrackReference(with track: Track) {
@@ -454,41 +484,70 @@ final class AudioPlayer: ObservableObject {
         }
     }
 
-    func playNext() {
+    @discardableResult
+    func playNext(reason: String = "manual-next") -> Bool {
+        debugLog("Play next track requested: \(reason)")
+
+        if let contextTrack = nextTrackInPlaybackContext() {
+            debugLog("Next track selected from context \(playbackContext?.name ?? "unknown"): \(contextTrack.displayTitle)")
+            let didStartPlayback = playTrack(
+                contextTrack,
+                contextTracks: playbackContext?.tracks,
+                contextName: playbackContext?.name,
+                updateContext: false
+            )
+            debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(contextTrack.displayTitle)")
+            return didStartPlayback
+        }
+
         if let queuedTrack = nextQueuedTrack() {
-            debugLog("Play queued track next: \(queuedTrack.displayTitle)")
-            playTrack(queuedTrack)
-            return
+            debugLog("Next track selected from queue: \(queuedTrack.displayTitle)")
+            let didStartPlayback = playTrack(queuedTrack, contextTracks: nil, contextName: nil, updateContext: false)
+            debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(queuedTrack.displayTitle)")
+            return didStartPlayback
         }
 
-        guard !tracks.isEmpty else { return }
-
-        debugLog("Play next track")
-
-        if let currentIndex = tracks.firstIndex(where: { $0.id == currentTrack?.id }) {
-            let nextIndex: Int
-            if isShuffle {
-                nextIndex = Int.random(in: 0..<tracks.count)
-            } else {
-                nextIndex = (currentIndex + 1) % tracks.count
-            }
-            playTrack(tracks[nextIndex])
-        } else {
-            playTrack(tracks[0])
+        if let libraryTrack = fallbackNextLibraryTrack() {
+            debugLog("Next track selected from library fallback: \(libraryTrack.displayTitle)")
+            let didStartPlayback = playTrack(libraryTrack, contextTracks: nil, contextName: nil, updateContext: false)
+            debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(libraryTrack.displayTitle)")
+            return didStartPlayback
         }
+
+        debugLog("No next track available after \(reason)")
+        return false
     }
 
-    func playPrevious() {
-        guard !tracks.isEmpty else { return }
-
+    @discardableResult
+    func playPrevious() -> Bool {
         debugLog("Play previous track")
 
         if currentTime > 3 {
             seek(to: 0)
-        } else if let currentIndex = tracks.firstIndex(where: { $0.id == currentTrack?.id }) {
-            let prevIndex = currentIndex <= 0 ? tracks.count - 1 : currentIndex - 1
-            playTrack(tracks[prevIndex])
+            return true
         }
+
+        if let contextTrack = previousTrackInPlaybackContext() {
+            debugLog("Previous track selected from context \(playbackContext?.name ?? "unknown"): \(contextTrack.displayTitle)")
+            let didStartPlayback = playTrack(
+                contextTrack,
+                contextTracks: playbackContext?.tracks,
+                contextName: playbackContext?.name,
+                updateContext: false
+            )
+            debugLog("Playback of previous track \(didStartPlayback ? "succeeded" : "failed"): \(contextTrack.displayTitle)")
+            return didStartPlayback
+        }
+
+        guard let libraryTrack = fallbackPreviousLibraryTrack() else {
+            debugLog("No previous track available")
+            return false
+        }
+
+        debugLog("Previous track selected from library fallback: \(libraryTrack.displayTitle)")
+        let didStartPlayback = playTrack(libraryTrack, contextTracks: nil, contextName: nil, updateContext: false)
+        debugLog("Playback of previous track \(didStartPlayback ? "succeeded" : "failed"): \(libraryTrack.displayTitle)")
+        return didStartPlayback
     }
 
     func seek(to time: TimeInterval) {
@@ -560,6 +619,7 @@ final class AudioPlayer: ObservableObject {
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         manualQueue.removeAll()
+        clearPlaybackContext()
         currentTrack = nil
         isPlaying = false
         currentTime = 0
@@ -606,7 +666,111 @@ final class AudioPlayer: ObservableObject {
 
     private func nextQueuedTrack() -> Track? {
         guard !manualQueue.isEmpty else { return nil }
-        return manualQueue.removeFirst()
+        return resolvedTrackForPlayback(manualQueue.removeFirst())
+    }
+
+    private func updatePlaybackContext(with tracks: [Track], name: String) {
+        let contextTracks = deduplicatedTracks(from: tracks)
+        guard !contextTracks.isEmpty else {
+            clearPlaybackContext()
+            return
+        }
+
+        playbackContext = PlaybackContext(name: name, tracks: contextTracks)
+        debugLog("Playback context updated: \(name) with \(contextTracks.count) tracks")
+    }
+
+    private func clearPlaybackContext() {
+        guard playbackContext != nil else { return }
+        debugLog("Playback context cleared")
+        playbackContext = nil
+    }
+
+    private func nextTrackInPlaybackContext() -> Track? {
+        guard let playbackContext else { return nil }
+        return adjacentTrack(in: playbackContext.tracks, step: 1)
+    }
+
+    private func previousTrackInPlaybackContext() -> Track? {
+        guard let playbackContext else { return nil }
+        return adjacentTrack(in: playbackContext.tracks, step: -1)
+    }
+
+    private func fallbackNextLibraryTrack() -> Track? {
+        adjacentTrack(in: tracks, step: 1)
+    }
+
+    private func fallbackPreviousLibraryTrack() -> Track? {
+        adjacentTrack(in: tracks, step: -1)
+    }
+
+    private func adjacentTrack(in trackList: [Track], step: Int) -> Track? {
+        let resolvedTracks = deduplicatedTracks(from: trackList)
+        guard !resolvedTracks.isEmpty else { return nil }
+
+        if isShuffle {
+            let candidates = resolvedTracks.filter { candidate in
+                guard let currentTrack else { return true }
+                return !matchesPlaybackIdentity(candidate, currentTrack)
+            }
+
+            if let shuffledTrack = candidates.randomElement() {
+                return resolvedTrackForPlayback(shuffledTrack)
+            }
+
+            return repeatMode == .all ? resolvedTrackForPlayback(resolvedTracks.first!) : nil
+        }
+
+        guard let currentTrack else {
+            return resolvedTrackForPlayback(step >= 0 ? resolvedTracks.first! : resolvedTracks.last!)
+        }
+
+        guard let currentIndex = resolvedTracks.firstIndex(where: { matchesPlaybackIdentity($0, currentTrack) }) else {
+            return resolvedTrackForPlayback(step >= 0 ? resolvedTracks.first! : resolvedTracks.last!)
+        }
+
+        let nextIndex = currentIndex + step
+        if resolvedTracks.indices.contains(nextIndex) {
+            return resolvedTrackForPlayback(resolvedTracks[nextIndex])
+        }
+
+        guard repeatMode == .all else { return nil }
+        return resolvedTrackForPlayback(step >= 0 ? resolvedTracks.first! : resolvedTracks.last!)
+    }
+
+    private func resolvedTrackForPlayback(_ track: Track) -> Track {
+        if let resolvedTrack = tracks.first(where: { matchesPlaybackIdentity($0, track) }) {
+            return resolvedTrack
+        }
+
+        return track
+    }
+
+    private func deduplicatedTracks(from tracks: [Track]) -> [Track] {
+        var seenTrackIDs: Set<String> = []
+        var uniqueTracks: [Track] = []
+
+        for track in tracks {
+            let identity = track.sourceID ?? track.id
+            guard seenTrackIDs.insert(identity).inserted else { continue }
+            uniqueTracks.append(track)
+        }
+
+        return uniqueTracks
+    }
+
+    private func matchesPlaybackIdentity(_ left: Track, _ right: Track) -> Bool {
+        if left.id == right.id {
+            return true
+        }
+
+        if let leftSourceID = left.sourceID,
+           let rightSourceID = right.sourceID,
+           leftSourceID == rightSourceID {
+            return true
+        }
+
+        return false
     }
 
     private func resolvedArtworkURL(for track: Track) -> URL? {

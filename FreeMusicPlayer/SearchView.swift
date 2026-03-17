@@ -150,7 +150,11 @@ struct SearchView: View {
                 if !localResults.isEmpty {
                     SearchSectionCard(title: "Library") {
                         ForEach(localResults) { track in
-                            SearchTrackRow(track: track)
+                            SearchTrackRow(
+                                track: track,
+                                contextTracks: localResults,
+                                contextName: "search:local:\(searchText)"
+                            )
                             if track.id != localResults.last?.id {
                                 Divider()
                                     .background(Color.white.opacity(0.06))
@@ -449,18 +453,14 @@ struct SearchStatusRow: View {
 
 struct SearchTrackRow: View {
     let track: Track
+    let contextTracks: [Track]
+    let contextName: String
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
 
     var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.1))
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Image(systemName: "music.note")
-                        .foregroundColor(.white.opacity(0.3))
-                )
+            TrackArtworkView(track: track, size: 50, cornerRadius: 8, showsSourceBadge: true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
@@ -482,7 +482,7 @@ struct SearchTrackRow: View {
 
             Button {
                 debugLog("Search play button pressed: \(track.displayTitle)")
-                audioPlayer.playTrack(track)
+                audioPlayer.playTrack(track, in: contextTracks, contextName: contextName)
             } label: {
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 28))
@@ -495,7 +495,7 @@ struct SearchTrackRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             debugLog("Search result row tapped: \(track.displayTitle)")
-            audioPlayer.playTrack(track)
+            audioPlayer.playTrack(track, in: contextTracks, contextName: contextName)
         }
     }
 }
@@ -510,22 +510,7 @@ struct OnlineSearchTrackRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.75, green: 0.2, blue: 0.2),
-                            Color(red: 0.25, green: 0.08, blue: 0.08)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Image(systemName: "dot.radiowaves.left.and.right")
-                        .foregroundColor(.white.opacity(0.65))
-                )
+            OnlineTrackArtworkView(result: result, size: 50)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.title)
@@ -576,6 +561,82 @@ struct OnlineSearchTrackRow: View {
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onTapGesture(perform: playAction)
+    }
+}
+
+struct OnlineTrackArtworkView: View {
+    let result: OnlineTrackResult
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.75, green: 0.2, blue: 0.2),
+                            Color(red: 0.25, green: 0.08, blue: 0.08)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            artworkContent
+
+            Image(systemName: "waveform")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.orange.opacity(0.95))
+                .padding(5)
+                .background(Circle().fill(Color.black.opacity(0.82)))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(4)
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var artworkContent: some View {
+        if let artworkURL = artworkURL {
+            AsyncImage(url: artworkURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    fallbackArtwork
+                }
+            }
+        } else {
+            fallbackArtwork
+        }
+    }
+
+    private var artworkURL: URL? {
+        guard let coverArtURL = result.coverArtURL,
+              let parsedURL = URL(string: coverArtURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+
+    private var fallbackArtwork: some View {
+        ZStack {
+            Image("PlayerAvatar")
+                .resizable()
+                .scaledToFill()
+
+            LinearGradient(
+                colors: [Color.black.opacity(0.08), Color.black.opacity(0.28)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
     }
 }
 

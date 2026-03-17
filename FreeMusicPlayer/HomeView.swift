@@ -106,7 +106,7 @@ struct WaveCard: View {
                 Button {
                     debugLog("Wave play button pressed")
                     if let firstTrack = dataManager.tracks.randomElement() {
-                        audioPlayer.playTrack(firstTrack)
+                        audioPlayer.playTrack(firstTrack, in: dataManager.tracks, contextName: "home:wave")
                     } else {
                         debugLog("Wave play ignored because library is empty")
                     }
@@ -371,7 +371,7 @@ struct RecentSection: View {
 
             VStack(spacing: 0) {
                 ForEach(Array(dataManager.tracks.prefix(10))) { track in
-                    TrackRow(track: track)
+                    TrackRow(track: track, contextTracks: Array(dataManager.tracks.prefix(10)))
                 }
             }
             .background(
@@ -384,6 +384,7 @@ struct RecentSection: View {
 
 struct TrackRow: View {
     let track: Track
+    let contextTracks: [Track]
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
 
@@ -437,7 +438,7 @@ struct TrackRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             debugLog("Recent track row tapped: \(track.displayTitle)")
-            audioPlayer.playTrack(track)
+            audioPlayer.playTrack(track, in: contextTracks, contextName: "home:recent")
         }
     }
 }
