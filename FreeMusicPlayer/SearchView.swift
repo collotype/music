@@ -44,7 +44,7 @@ struct SearchView: View {
         }
         .onChange(of: audioPlayer.playbackErrorMessage) { newValue in
             guard let newValue,
-                  audioPlayer.currentTrack?.storageLocation == .temp else { return }
+                  audioPlayer.currentTrack?.source != .local else { return }
             onlineStatusMessage = newValue
         }
         .onDisappear {
@@ -61,7 +61,7 @@ struct SearchView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.white.opacity(0.5))
 
-                TextField("Search tracks, artists, or videos", text: $searchText)
+                TextField("Search tracks or artists", text: $searchText)
                     .font(.system(size: 17))
                     .foregroundColor(.white)
                     .textInputAutocapitalization(.never)
@@ -164,7 +164,7 @@ struct SearchView: View {
                         SearchStatusRow(
                             icon: "arrow.triangle.2.circlepath",
                             title: "Searching online...",
-                            subtitle: "Looking up matching tracks from internet sources."
+                            subtitle: "Looking up matching tracks on SoundCloud."
                         )
                     } else if !onlineResults.isEmpty {
                         ForEach(onlineResults) { result in
@@ -300,7 +300,7 @@ struct SearchView: View {
     private func playOnlineResult(_ result: OnlineTrackResult) {
         guard !downloadingIDs.contains(result.id) else { return }
 
-        debugLog("Online result play pressed: \(result.title)")
+        debugLog("Online result play pressed: \(result.title) [\(result.providerTrackID)]")
         downloadingIDs.insert(result.id)
         onlineStatusMessage = nil
         audioPlayer.clearPlaybackError()
@@ -313,20 +313,23 @@ struct SearchView: View {
             }
 
             do {
-                let tempURL = try await OnlineMusicService.shared.downloadAudio(for: result)
-                let temporaryTrack = await MainActor.run {
-                    dataManager.makeTemporaryTrack(from: result, tempFileURL: tempURL)
+                let resolvedStream = try await OnlineMusicService.shared.resolvePlaybackStream(for: result)
+                let streamingTrack = await MainActor.run {
+                    dataManager.makeStreamingTrack(from: result, streamURL: resolvedStream.url)
                 }
 
                 await MainActor.run {
-                    let didStartPlayback = audioPlayer.playTrack(temporaryTrack)
+                    let didStartPlayback = audioPlayer.playTrack(streamingTrack)
                     if didStartPlayback {
-                        debugLog("Playback start confirmed for temp track: \(temporaryTrack.displayTitle)")
+                        debugLog(
+                            "Playback success for \(result.providerTrackID) via \(resolvedStream.streamType)"
+                        )
                     } else {
-                        onlineStatusMessage = audioPlayer.playbackErrorMessage ?? "Playback failed for the downloaded track."
+                        onlineStatusMessage = audioPlayer.playbackErrorMessage ?? "Playback failed for the selected SoundCloud track."
                     }
                 }
             } catch {
+                debugLog("Playback error for \(result.providerTrackID): \(error.localizedDescription)")
                 await MainActor.run {
                     onlineStatusMessage = error.localizedDescription
                 }
@@ -338,7 +341,7 @@ struct SearchView: View {
         guard !savingIDs.contains(result.id) else { return }
 
         if let savedTrack = dataManager.track(withSourceID: result.id) {
-            debugLog("Saved online result tapped again: \(result.title)")
+            debugLog("Saved online result tapped again: \(result.title) [\(result.providerTrackID)]")
             let didStartPlayback = audioPlayer.playTrack(savedTrack)
             if !didStartPlayback {
                 onlineStatusMessage = audioPlayer.playbackErrorMessage ?? "Playback failed for the saved track."
@@ -346,7 +349,7 @@ struct SearchView: View {
             return
         }
 
-        debugLog("Online result save pressed: \(result.title)")
+        debugLog("Online result save pressed: \(result.title) [\(result.providerTrackID)]")
         savingIDs.insert(result.id)
         onlineStatusMessage = nil
 
@@ -369,6 +372,7 @@ struct SearchView: View {
                     debugLog("Local result count after save: \(localResults.count)")
                 }
             } catch {
+                debugLog("Save error for \(result.providerTrackID): \(error.localizedDescription)")
                 await MainActor.run {
                     onlineStatusMessage = error.localizedDescription
                 }

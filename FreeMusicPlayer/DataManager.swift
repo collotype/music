@@ -326,6 +326,27 @@ final class DataManager: ObservableObject {
         )
     }
 
+    func makeStreamingTrack(from result: OnlineTrackResult, streamURL: URL) -> Track {
+        debugLog("Create streaming track entry for \(result.title) at \(streamURL.absoluteString)")
+
+        return Track(
+            title: result.title,
+            artist: result.artist,
+            album: result.album,
+            duration: result.duration,
+            fileURL: streamURL.absoluteString,
+            coverArtURL: result.coverArtURL,
+            source: result.trackSource,
+            isFavorite: false,
+            playCount: 0,
+            lastPlayed: nil,
+            addedAt: Date(),
+            sourceID: result.id,
+            remotePageURL: result.webpageURL,
+            storageLocation: .remote
+        )
+    }
+
     @discardableResult
     func saveDownloadedOnlineTrack(_ result: OnlineTrackResult, from tempFileURL: URL) throws -> Track {
         if let existingTrack = track(withSourceID: result.id) {
