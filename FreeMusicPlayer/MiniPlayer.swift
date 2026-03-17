@@ -13,6 +13,7 @@ struct MiniPlayer: View {
     @Binding var showPlayer: Bool
 
     private let backgroundCornerRadius: CGFloat = 18
+    private let rowVerticalPadding: CGFloat = 6
     
     var body: some View {
         HStack(spacing: 12) {
@@ -80,7 +81,8 @@ struct MiniPlayer: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, rowVerticalPadding)
+        .fixedSize(horizontal: false, vertical: true)
         .background {
             ZStack {
                 TrackArtworkBackdrop(
@@ -100,24 +102,36 @@ struct MiniPlayer: View {
                 RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             }
-            .frame(maxWidth: .infinity)
-            .shadow(color: .black.opacity(0.12), radius: 10, x: 0, y: 3)
+            .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
+            .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 2)
         }
         .padding(.horizontal, 8)
-        .padding(.top, 4)
-        .padding(.bottom, 3)
+        .padding(.top, 2)
+        .padding(.bottom, 2)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.horizontal, 8)
+        }
         .background {
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 0.5)
-
+            GeometryReader { proxy in
                 Color.clear
+                    .onAppear {
+                        debugLog(
+                            "Mini player final height: \(Int(proxy.size.height.rounded())) background height: \(Int(proxy.size.height.rounded())) bottom inset: \(Int(proxy.safeAreaInsets.bottom.rounded()))"
+                        )
+                    }
+                    .onChange(of: audioPlayer.currentTrack?.id) { _ in
+                        debugLog(
+                            "Mini player final height updated: \(Int(proxy.size.height.rounded())) bottom inset: \(Int(proxy.safeAreaInsets.bottom.rounded()))"
+                        )
+                    }
             }
         }
         .onAppear {
             debugLog("Mini player layout state: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
-            debugLog("Mini player background metrics: cornerRadius=\(Int(backgroundCornerRadius)), horizontalPadding=8, verticalPadding=8")
+            debugLog("Mini player background metrics: cornerRadius=\(Int(backgroundCornerRadius)), horizontalPadding=8, verticalPadding=\(Int(rowVerticalPadding))")
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
