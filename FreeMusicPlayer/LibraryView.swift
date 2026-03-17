@@ -784,16 +784,13 @@ struct LibraryTrackRow: View {
             debugLog("Long press menu opened: \(track.displayTitle)")
             showingTrackActions = true
         }
-        .sheet(isPresented: $showingTrackActions) {
-            TrackActionSheet(
-                track: track,
-                contextTracks: contextTracks,
-                contextName: contextName,
-                playlistContext: nil
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
+        .trackActionPopup(
+            isPresented: $showingTrackActions,
+            track: track,
+            contextTracks: contextTracks,
+            contextName: contextName,
+            playlistContext: nil
+        )
     }
 }
 
@@ -1265,6 +1262,40 @@ struct TrackActionPlaylistContext: Equatable {
     let name: String
 }
 
+extension View {
+    @ViewBuilder
+    func trackActionPopup(
+        isPresented: Binding<Bool>,
+        track: Track,
+        contextTracks: [Track],
+        contextName: String,
+        playlistContext: TrackActionPlaylistContext?
+    ) -> some View {
+        if #available(iOS 16.4, *) {
+            self.popover(isPresented: isPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                TrackActionSheet(
+                    track: track,
+                    contextTracks: contextTracks,
+                    contextName: contextName,
+                    playlistContext: playlistContext
+                )
+                .presentationCompactAdaptation(.popover)
+            }
+        } else {
+            self.sheet(isPresented: isPresented) {
+                TrackActionSheet(
+                    track: track,
+                    contextTracks: contextTracks,
+                    contextName: contextName,
+                    playlistContext: playlistContext
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+    }
+}
+
 struct TrackActionSheet: View {
     let track: Track
     let contextTracks: [Track]
@@ -1332,150 +1363,280 @@ struct TrackActionSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    TrackActionHeader(track: track)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                        .listRowBackground(Color.clear)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    CompactTrackActionHeader(track: track)
 
-                Section("Playback") {
-                    Button {
-                        debugLog("Track context action selected: play next for \(track.displayTitle)")
-                        audioPlayer.queueTrackNext(track)
-                        dismiss()
-                    } label: {
-                        TrackActionRowLabel(title: "Play Next", systemImage: "text.insert")
-                    }
-
-                    Button {
-                        debugLog("Track context action selected: add to queue for \(track.displayTitle)")
-                        audioPlayer.addTrackToQueue(track)
-                        dismiss()
-                    } label: {
-                        TrackActionRowLabel(title: "Add to Queue", systemImage: "list.bullet")
-                    }
-
-                    if let effectiveFavoriteTrack {
+                    CompactTrackActionSection {
                         Button {
-                            debugLog("Track context action selected: favorite toggle for \(track.displayTitle)")
-                            dataManager.toggleFavorite(effectiveFavoriteTrack)
+                            debugLog("Track context action selected: play next for \(track.displayTitle)")
+                            audioPlayer.queueTrackNext(track)
                             dismiss()
                         } label: {
-                            TrackActionRowLabel(
-                                title: isFavorite ? "Unlike" : "Like",
-                                systemImage: isFavorite ? "heart.slash" : "heart"
-                            )
+                            CompactTrackActionRow {
+                                TrackActionRowLabel(title: "Play Next", systemImage: "text.insert")
+                            }
                         }
-                    }
+                        .buttonStyle(.plain)
 
-                    NavigationLink {
-                        TrackLyricsView(track: track)
-                            .navigationTitle("Lyrics")
-                            .navigationBarTitleDisplayMode(.inline)
-                            .onAppear {
-                                debugLog("Track context action selected: show lyrics for \(track.displayTitle)")
+                        if let effectiveFavoriteTrack {
+                            CompactTrackActionDivider()
+
+                            Button {
+                                debugLog("Track context action selected: favorite toggle for \(track.displayTitle)")
+                                dataManager.toggleFavorite(effectiveFavoriteTrack)
+                                dismiss()
+                            } label: {
+                                CompactTrackActionRow {
+                                    TrackActionRowLabel(
+                                        title: isFavorite ? "Unlike" : "Like",
+                                        systemImage: isFavorite ? "heart.slash" : "heart"
+                                    )
+                                }
                             }
-                    } label: {
-                        TrackActionRowLabel(title: "Show Lyrics", systemImage: "text.quote")
-                    }
-                }
+                            .buttonStyle(.plain)
+                        }
 
-                Section("Library") {
-                    NavigationLink {
-                        TrackPlaylistPickerView(track: track)
-                            .onAppear {
-                                debugLog("Track context action selected: add to playlist for \(track.displayTitle)")
-                            }
-                    } label: {
-                        TrackActionRowLabel(title: "Add to Playlist", systemImage: "text.badge.plus")
-                    }
+                        CompactTrackActionDivider()
 
-                    if let playlistContext {
-                        Button(role: .destructive) {
-                            debugLog("Track context action selected: remove from playlist \(playlistContext.name) for \(track.displayTitle)")
-                            dataManager.removeTrack(track, fromPlaylistID: playlistContext.id)
+                        Button {
+                            debugLog("Track context action selected: add to queue for \(track.displayTitle)")
+                            audioPlayer.addTrackToQueue(track)
                             dismiss()
                         } label: {
-                            TrackActionRowLabel(
-                                title: "Remove from Playlist",
-                                systemImage: "minus.circle",
-                                tint: .red
-                            )
+                            CompactTrackActionRow {
+                                TrackActionRowLabel(title: "Add to Queue", systemImage: "list.bullet")
+                            }
                         }
-                    }
-                }
+                        .buttonStyle(.plain)
 
-                Section("Browse") {
-                    if canShowArtist {
+                        CompactTrackActionDivider()
+
                         NavigationLink {
-                            TrackCollectionView(
-                                title: track.displayArtist,
-                                subtitle: "Artist",
-                                tracks: artistTracks,
-                                contextName: "artist:\(track.displayArtist)"
-                            )
-                            .onAppear {
-                                debugLog("Track context action selected: go to artist for \(track.displayTitle)")
-                            }
+                            TrackLyricsView(track: track)
+                                .navigationTitle("Lyrics")
+                                .navigationBarTitleDisplayMode(.inline)
+                                .onAppear {
+                                    debugLog("Track context action selected: show lyrics for \(track.displayTitle)")
+                                }
                         } label: {
-                            TrackActionRowLabel(title: "Go to Artist", systemImage: "person.fill")
+                            CompactTrackActionRow {
+                                TrackActionRowLabel(title: "Show Lyrics", systemImage: "text.quote")
+                            }
                         }
+                        .buttonStyle(.plain)
                     }
 
-                    if canShowAlbum, let trimmedAlbum {
+                    CompactTrackActionSection {
                         NavigationLink {
-                            TrackCollectionView(
-                                title: trimmedAlbum,
-                                subtitle: track.displayArtist,
-                                tracks: albumTracks,
-                                contextName: "album:\(trimmedAlbum)"
-                            )
-                            .onAppear {
-                                debugLog("Track context action selected: go to album for \(track.displayTitle)")
-                            }
+                            TrackPlaylistPickerView(track: track)
+                                .onAppear {
+                                    debugLog("Track context action selected: add to playlist for \(track.displayTitle)")
+                                }
                         } label: {
-                            TrackActionRowLabel(title: "Go to Album", systemImage: "square.stack.fill")
+                            CompactTrackActionRow {
+                                TrackActionRowLabel(title: "Add to Playlist", systemImage: "text.badge.plus")
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        if let playlistContext {
+                            CompactTrackActionDivider()
+
+                            Button(role: .destructive) {
+                                debugLog("Track context action selected: remove from playlist \(playlistContext.name) for \(track.displayTitle)")
+                                dataManager.removeTrack(track, fromPlaylistID: playlistContext.id)
+                                dismiss()
+                            } label: {
+                                CompactTrackActionRow {
+                                    TrackActionRowLabel(
+                                        title: "Remove from Playlist",
+                                        systemImage: "minus.circle",
+                                        tint: .red
+                                    )
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
 
-                    NavigationLink {
-                        TrackDetailsView(track: track)
-                            .onAppear {
-                                debugLog("Track context action selected: about track for \(track.displayTitle)")
+                    if canShowArtist || canShowAlbum || track.shareTargetURL != nil {
+                        CompactTrackActionSection {
+                            if canShowArtist {
+                                NavigationLink {
+                                    TrackCollectionView(
+                                        title: track.displayArtist,
+                                        subtitle: "Artist",
+                                        tracks: artistTracks,
+                                        contextName: "artist:\(track.displayArtist)"
+                                    )
+                                    .onAppear {
+                                        debugLog("Track context action selected: go to artist for \(track.displayTitle)")
+                                    }
+                                } label: {
+                                    CompactTrackActionRow {
+                                        TrackActionRowLabel(title: "Go to Artist", systemImage: "person.fill")
+                                    }
+                                }
+                                .buttonStyle(.plain)
                             }
-                    } label: {
-                        TrackActionRowLabel(title: "About Track", systemImage: "info.circle")
-                    }
-                }
 
-                if let shareTarget = track.shareTargetURL {
-                    Section("Share") {
-                        Button {
-                            debugLog("Track context action selected: share \(track.displayTitle)")
-                            sharePayload = TrackSharePayload(items: [shareTarget])
-                        } label: {
-                            TrackActionRowLabel(title: "Share", systemImage: "square.and.arrow.up")
+                            if canShowArtist && (canShowAlbum || track.shareTargetURL != nil) {
+                                CompactTrackActionDivider()
+                            }
+
+                            if canShowAlbum, let trimmedAlbum {
+                                NavigationLink {
+                                    TrackCollectionView(
+                                        title: trimmedAlbum,
+                                        subtitle: track.displayArtist,
+                                        tracks: albumTracks,
+                                        contextName: "album:\(trimmedAlbum)"
+                                    )
+                                    .onAppear {
+                                        debugLog("Track context action selected: go to album for \(track.displayTitle)")
+                                    }
+                                } label: {
+                                    CompactTrackActionRow {
+                                        TrackActionRowLabel(title: "Go to Album", systemImage: "square.stack.fill")
+                                    }
+                                }
+                                .buttonStyle(.plain)
+
+                                if track.shareTargetURL != nil {
+                                    CompactTrackActionDivider()
+                                }
+                            }
+
+                            if let shareTarget = track.shareTargetURL {
+                                Button {
+                                    debugLog("Track context action selected: share \(track.displayTitle)")
+                                    sharePayload = TrackSharePayload(items: [shareTarget])
+                                } label: {
+                                    CompactTrackActionRow {
+                                        TrackActionRowLabel(title: "Share", systemImage: "square.and.arrow.up")
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
+
+                    CompactTrackActionSection {
+                        NavigationLink {
+                            TrackDetailsView(track: track)
+                                .onAppear {
+                                    debugLog("Track context action selected: about track for \(track.displayTitle)")
+                                }
+                        } label: {
+                            CompactTrackActionRow {
+                                TrackActionRowLabel(title: "About Track", systemImage: "info.circle")
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
+                .padding(12)
             }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
             .background(Color.black)
-            .navigationTitle("Track Actions")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") {
-                        dismiss()
-                    }
-                }
-            }
+            .scrollIndicators(.hidden)
+            .frame(width: 340, maxHeight: 520)
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            debugLog("Track action popup presented: \(track.displayTitle)")
         }
         .sheet(item: $sharePayload) { payload in
             ActivityView(activityItems: payload.items)
         }
+    }
+}
+
+struct CompactTrackActionSection<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+}
+
+struct CompactTrackActionRow<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            content
+            Spacer(minLength: 12)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .contentShape(Rectangle())
+    }
+}
+
+struct CompactTrackActionDivider: View {
+    var body: some View {
+        Divider()
+            .overlay(Color.white.opacity(0.06))
+            .padding(.leading, 48)
+    }
+}
+
+struct CompactTrackActionHeader: View {
+    let track: Track
+
+    var body: some View {
+        HStack(spacing: 12) {
+            TrackArtworkView(track: track, size: 58, cornerRadius: 14, showsSourceBadge: true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(track.displayTitle)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+
+                Text(track.displayArtist)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.68))
+                    .lineLimit(1)
+
+                if let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !album.isEmpty {
+                    Text(album)
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.42))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            TrackArtworkBackdrop(track: track, fallbackPalette: .cardFallback, cornerRadius: 20)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 

@@ -445,16 +445,13 @@ struct TrackRow: View {
             debugLog("Long press menu opened: \(track.displayTitle)")
             showingTrackActions = true
         }
-        .sheet(isPresented: $showingTrackActions) {
-            TrackActionSheet(
-                track: track,
-                contextTracks: contextTracks,
-                contextName: "home:recent",
-                playlistContext: nil
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
+        .trackActionPopup(
+            isPresented: $showingTrackActions,
+            track: track,
+            contextTracks: contextTracks,
+            contextName: "home:recent",
+            playlistContext: nil
+        )
     }
 }
 

@@ -287,16 +287,13 @@ struct PlaylistTrackRow: View {
             debugLog("Long press menu opened: \(track.displayTitle)")
             showingTrackActions = true
         }
-        .sheet(isPresented: $showingTrackActions) {
-            TrackActionSheet(
-                track: track,
-                contextTracks: playlistTracks,
-                contextName: "playlist:\(playlistID)",
-                playlistContext: TrackActionPlaylistContext(id: playlistID, name: playlistName)
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
+        .trackActionPopup(
+            isPresented: $showingTrackActions,
+            track: track,
+            contextTracks: playlistTracks,
+            contextName: "playlist:\(playlistID)",
+            playlistContext: TrackActionPlaylistContext(id: playlistID, name: playlistName)
+        )
     }
 }
 

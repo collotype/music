@@ -583,65 +583,35 @@ struct SearchView: View {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
 
-        let groupedTracks = Dictionary(grouping: dataManager.tracks) { track in
-            track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        return groupedTracks.compactMap { artistName, tracks in
-            guard !artistName.isEmpty,
-                  artistName != "Unknown Artist",
-                  artistName.localizedCaseInsensitiveContains(normalized),
-                  let representativeTrack = tracks.sorted(by: { $0.displayTitle < $1.displayTitle }).first else {
-                return nil
-            }
-
-            return LocalArtistSearchResult(
-                name: artistName,
-                representativeTrack: representativeTrack,
-                tracks: tracks.sorted(by: { $0.displayTitle < $1.displayTitle })
+        return allArtistResults().filter { result in
+            matchesSearchQuery(
+                normalized,
+                fields: [result.name] + result.tracks.flatMap { track in
+                    [
+                        track.displayTitle,
+                        track.displayArtist,
+                        track.album ?? ""
+                    ]
+                }
             )
         }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private func albumMatches(for query: String) -> [LocalAlbumSearchResult] {
         let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return [] }
 
-        let albumTracks = dataManager.tracks.filter { track in
-            guard let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !album.isEmpty else {
-                return false
-            }
-
-            return album.localizedCaseInsensitiveContains(normalized) ||
-                track.displayArtist.localizedCaseInsensitiveContains(normalized)
-        }
-
-        let groupedTracks = Dictionary(grouping: albumTracks) { track in
-            let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return "\(album.lowercased())::\(track.displayArtist.lowercased())"
-        }
-
-        return groupedTracks.compactMap { _, tracks in
-            guard let firstTrack = tracks.first,
-                  let albumTitle = firstTrack.album?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !albumTitle.isEmpty else {
-                return nil
-            }
-
-            return LocalAlbumSearchResult(
-                title: albumTitle,
-                artist: firstTrack.displayArtist,
-                representativeTrack: firstTrack,
-                tracks: tracks.sorted(by: { $0.displayTitle < $1.displayTitle })
+        return allAlbumResults().filter { result in
+            matchesSearchQuery(
+                normalized,
+                fields: [result.title, result.artist] + result.tracks.flatMap { track in
+                    [
+                        track.displayTitle,
+                        track.displayArtist,
+                        track.album ?? ""
+                    ]
+                }
             )
-        }
-        .sorted { left, right in
-            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
-                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
-            }
-            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
         }
     }
 
@@ -650,13 +620,25 @@ struct SearchView: View {
         guard !normalized.isEmpty else { return [] }
 
         return dataManager.sortedPlaylists.compactMap { playlist in
-            guard playlist.displayName.localizedCaseInsensitiveContains(normalized) else { return nil }
             let tracks = dataManager.tracks(for: playlist.id)
-            return LocalPlaylistSearchResult(
+            let result = LocalPlaylistSearchResult(
                 playlist: playlist,
-                representativeTrack: tracks.first,
-                trackCount: tracks.count
+                representativeTrack: representativeTrackOrNil(from: tracks),
+                trackCount: tracks.count,
+                coverArtURL: playlist.coverArtURL,
+                tracks: tracks
             )
+
+            let searchableFields = [playlist.displayName] + tracks.flatMap { track in
+                [
+                    track.displayTitle,
+                    track.displayArtist,
+                    track.album ?? ""
+                ]
+            }
+
+            guard matchesSearchQuery(normalized, fields: searchableFields) else { return nil }
+            return result
         }
     }
 
@@ -677,9 +659,127 @@ struct SearchView: View {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return }
 
+        let artistCatalogCount = allArtistResults().count
+        let albumCatalogCount = allAlbumResults().count
+        let playlistResultCount = playlistMatches(for: trimmedQuery).count
+        debugLog("Artist aggregation count: \(artistCatalogCount)")
+        debugLog("Album aggregation count: \(albumCatalogCount)")
+        debugLog("Playlist search result count: \(playlistResultCount)")
         debugLog(
             "Search result counts for \(trimmedQuery): tracks=\(localMatches(for: trimmedQuery).count), artists=\(artistMatches(for: trimmedQuery).count), albums=\(albumMatches(for: trimmedQuery).count), playlists=\(playlistMatches(for: trimmedQuery).count)"
         )
+    }
+
+    private func allArtistResults() -> [LocalArtistSearchResult] {
+        let groupedTracks = Dictionary(grouping: dataManager.tracks) { track in
+            normalizedArtistName(for: track)
+        }
+
+        return groupedTracks.compactMap { _, tracks in
+            let sortedTracks = tracks.sorted(by: trackSortOrder)
+            guard let firstTrack = sortedTracks.first else { return nil }
+
+            return LocalArtistSearchResult(
+                name: displayArtistName(for: firstTrack),
+                representativeTrack: representativeTrack(from: sortedTracks),
+                tracks: sortedTracks
+            )
+        }
+        .sorted { left, right in
+            if left.name == "Unknown Artist" {
+                return false
+            }
+            if right.name == "Unknown Artist" {
+                return true
+            }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        }
+    }
+
+    private func allAlbumResults() -> [LocalAlbumSearchResult] {
+        let albumTracks = dataManager.tracks.filter { track in
+            let albumTitle = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return !albumTitle.isEmpty
+        }
+
+        let groupedTracks = Dictionary(grouping: albumTracks) { track in
+            let albumTitle = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return "\(albumTitle.lowercased())::\(normalizedArtistName(for: track))"
+        }
+
+        return groupedTracks.compactMap { _, tracks in
+            let sortedTracks = tracks.sorted(by: trackSortOrder)
+            guard let firstTrack = sortedTracks.first,
+                  let albumTitle = firstTrack.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !albumTitle.isEmpty else {
+                return nil
+            }
+
+            return LocalAlbumSearchResult(
+                title: albumTitle,
+                artist: displayArtistName(for: firstTrack),
+                representativeTrack: representativeTrack(from: sortedTracks),
+                tracks: sortedTracks
+            )
+        }
+        .sorted { left, right in
+            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
+                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
+            }
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
+    }
+
+    private func normalizedArtistName(for track: Track) -> String {
+        let artistName = track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return artistName.isEmpty ? "unknown artist" : artistName.lowercased()
+    }
+
+    private func displayArtistName(for track: Track) -> String {
+        let artistName = track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return artistName.isEmpty ? "Unknown Artist" : artistName
+    }
+
+    private func representativeTrack(from tracks: [Track]) -> Track {
+        tracks.first(where: hasArtwork) ?? tracks.first!
+    }
+
+    private func representativeTrackOrNil(from tracks: [Track]) -> Track? {
+        tracks.first(where: hasArtwork) ?? tracks.first
+    }
+
+    private func hasArtwork(for track: Track) -> Bool {
+        !(track.coverArtURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    private func trackSortOrder(_ left: Track, _ right: Track) -> Bool {
+        if left.displayTitle.caseInsensitiveCompare(right.displayTitle) == .orderedSame {
+            return left.addedAt > right.addedAt
+        }
+        return left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
+    }
+
+    private func matchesSearchQuery(_ query: String, fields: [String]) -> Bool {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedQuery.isEmpty else { return false }
+
+        let searchableFields = fields
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !searchableFields.isEmpty else { return false }
+
+        let loweredQuery = normalizedQuery.lowercased()
+        let combinedFields = searchableFields.joined(separator: " ").lowercased()
+        if combinedFields.contains(loweredQuery) {
+            return true
+        }
+
+        let queryTokens = loweredQuery.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !queryTokens.isEmpty else { return false }
+
+        return queryTokens.allSatisfy { token in
+            searchableFields.contains(where: { $0.lowercased().contains(token) })
+        }
     }
 }
 
@@ -730,6 +830,8 @@ struct LocalPlaylistSearchResult: Identifiable {
     let playlist: Playlist
     let representativeTrack: Track?
     let trackCount: Int
+    let coverArtURL: String?
+    let tracks: [Track]
 
     var id: String {
         playlist.id
@@ -874,6 +976,7 @@ struct SearchPlaylistRow: View {
     var body: some View {
         HStack(spacing: 12) {
             SearchPlaylistArtworkView(
+                coverArtURL: result.coverArtURL,
                 representativeTrack: result.representativeTrack,
                 fallbackTitle: result.playlist.displayName,
                 size: 54
@@ -954,27 +1057,38 @@ struct SearchTrackRow: View {
             debugLog("Long press menu opened: \(track.displayTitle)")
             showingTrackActions = true
         }
-        .sheet(isPresented: $showingTrackActions) {
-            TrackActionSheet(
-                track: track,
-                contextTracks: contextTracks,
-                contextName: contextName,
-                playlistContext: nil
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
+        .trackActionPopup(
+            isPresented: $showingTrackActions,
+            track: track,
+            contextTracks: contextTracks,
+            contextName: contextName,
+            playlistContext: nil
+        )
     }
 }
 
 struct SearchPlaylistArtworkView: View {
+    let coverArtURL: String?
     let representativeTrack: Track?
     let fallbackTitle: String
     let size: CGFloat
 
     var body: some View {
         Group {
-            if let representativeTrack {
+            if let artworkURL = artworkURL {
+                AsyncImage(url: artworkURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        fallbackArtwork
+                    }
+                }
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else if let representativeTrack {
                 TrackArtworkView(
                     track: representativeTrack,
                     size: size,
@@ -1007,6 +1121,46 @@ struct SearchPlaylistArtworkView: View {
             }
         }
         .frame(width: size, height: size)
+    }
+
+    private var artworkURL: URL? {
+        guard let coverArtURL,
+              !coverArtURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        if let parsedURL = URL(string: coverArtURL), parsedURL.scheme != nil {
+            guard parsedURL.isFileURL || parsedURL.scheme?.lowercased() == "http" || parsedURL.scheme?.lowercased() == "https" else {
+                return nil
+            }
+            return parsedURL
+        }
+
+        return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+    }
+
+    private var fallbackArtwork: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.12),
+                        Color.white.opacity(0.04)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay {
+                VStack(spacing: 4) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.72))
+                    Text(String(fallbackTitle.prefix(1)).uppercased())
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white.opacity(0.42))
+                }
+            }
     }
 }
 

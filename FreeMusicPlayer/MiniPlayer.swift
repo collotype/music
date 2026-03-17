@@ -13,84 +13,96 @@ struct MiniPlayer: View {
     @Binding var showPlayer: Bool
     
     var body: some View {
-        VStack(spacing: 0) {
-            Divider()
-                .background(Color.white.opacity(0.1))
-            
-            HStack(spacing: 12) {
-                Group {
-                    if let currentTrack = audioPlayer.currentTrack {
-                        TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 8, showsSourceBadge: true)
-                    } else {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [Color.red, Color(red: 0.3, green: 0.1, blue: 0.1)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+        HStack(spacing: 12) {
+            Group {
+                if let currentTrack = audioPlayer.currentTrack {
+                    TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 8, showsSourceBadge: true)
+                } else {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.red, Color(red: 0.3, green: 0.1, blue: 0.1)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                                .frame(width: 48, height: 48)
+                            )
+                            .frame(width: 48, height: 48)
 
-                            Image(systemName: "music.note")
-                                .foregroundColor(.white.opacity(0.5))
-                        }
+                        Image(systemName: "music.note")
+                            .foregroundColor(.white.opacity(0.5))
                     }
                 }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    
-                    Text(audioPlayer.currentTrack?.displayArtist ?? "")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.5))
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                Button {
-                    debugLog("Mini player favorite button pressed")
-                    if let track = audioPlayer.currentTrack {
-                        dataManager.toggleFavorite(track)
-                    }
-                } label: {
-                    Image(systemName: getHeartIcon())
-                        .foregroundColor(getHeartColor())
-                        .font(.system(size: 20))
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 8)
-                
-                Button {
-                    debugLog("Mini player play/pause button pressed")
-                    audioPlayer.togglePlayPause()
-                } label: {
-                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(.white)
-                        .frame(width: 40, height: 40)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.15))
-                        )
-                }
-                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(audioPlayer.currentTrack?.displayArtist ?? "")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 12)
+
+            Button {
+                debugLog("Mini player favorite button pressed")
+                if let track = audioPlayer.currentTrack {
+                    dataManager.toggleFavorite(track)
+                }
+            } label: {
+                Image(systemName: getHeartIcon())
+                    .foregroundColor(getHeartColor())
+                    .font(.system(size: 20))
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
+
+            Button {
+                debugLog("Mini player play/pause button pressed")
+                audioPlayer.togglePlayPause()
+            } label: {
+                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        Circle()
+                            .fill(Color.white.opacity(0.15))
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background {
+            ZStack(alignment: .top) {
+                Color.black.opacity(0.94)
+
                 TrackArtworkBackdrop(
                     track: audioPlayer.currentTrack,
                     fallbackPalette: .cardFallback
                 )
-            )
+                .opacity(0.96)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(height: 0.5)
+            }
+            .clipped()
         }
         .contentShape(Rectangle())
+        .onAppear {
+            debugLog("Mini player layout state: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
+        }
+        .onChange(of: audioPlayer.currentTrack?.id) { _ in
+            debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
+        }
         .onTapGesture {
             debugLog("Mini player tapped")
             withAnimation(.spring(response: 0.3)) {
