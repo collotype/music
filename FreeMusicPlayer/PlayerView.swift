@@ -16,14 +16,9 @@ struct PlayerView: View {
     
     var body: some View {
         ZStack {
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.7, green: 0.15, blue: 0.15),
-                    Color(red: 0.2, green: 0.05, blue: 0.05),
-                    Color.black
-                ]),
-                startPoint: .top,
-                endPoint: .bottom
+            TrackArtworkBackdrop(
+                track: audioPlayer.currentTrack,
+                fallbackPalette: .playerFallback
             )
             .ignoresSafeArea()
             
@@ -86,6 +81,15 @@ struct PlayerView: View {
         VStack(spacing: 20) {
             ZStack {
                 if let currentTrack = audioPlayer.currentTrack {
+                    TrackArtworkBackdrop(
+                        track: currentTrack,
+                        fallbackPalette: .playerFallback,
+                        cornerRadius: 34
+                    )
+                    .frame(width: 340, height: 340)
+                    .blur(radius: 42)
+                    .opacity(0.68)
+
                     TrackArtworkView(track: currentTrack, size: 320, cornerRadius: 24, showsSourceBadge: false)
                         .aspectRatio(1, contentMode: .fit)
                         .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
@@ -308,7 +312,23 @@ struct PlayerPlaceholderSheet: View {
 struct PlayerLyricsSheet: View {
     let track: Track?
 
-    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            TrackLyricsView(track: track)
+                .navigationTitle("Lyrics")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        DismissButton()
+                    }
+                }
+        }
+    }
+}
+
+struct TrackLyricsView: View {
+    let track: Track?
+
     @State private var lyricsText: String?
     @State private var isLoadingLyrics = false
 
@@ -317,63 +337,52 @@ struct PlayerLyricsSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(track?.displayTitle ?? "Nothing playing")
-                                .font(.system(size: 22, weight: .bold))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(track?.displayTitle ?? "Nothing playing")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(.white)
+                        Text(track?.displayArtist ?? "")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+
+                    if isLoadingLyrics {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                                .tint(.white)
+                            Text("Loading lyrics...")
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        .padding(.top, 12)
+                    } else if let lyricsText {
+                        Text(lyricsText)
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.9))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Lyrics unavailable")
+                                .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.white)
-                            Text(track?.displayArtist ?? "")
+                            Text("No embedded lyrics were found for this track yet.")
                                 .font(.system(size: 14))
-                                .foregroundColor(.white.opacity(0.6))
+                                .foregroundColor(.white.opacity(0.58))
                         }
-
-                        if isLoadingLyrics {
-                            HStack(spacing: 12) {
-                                ProgressView()
-                                    .tint(.white)
-                                Text("Loading lyrics...")
-                                    .foregroundColor(.white.opacity(0.7))
-                            }
-                            .padding(.top, 12)
-                        } else if let lyricsText {
-                            Text(lyricsText)
-                                .font(.system(size: 16))
-                                .foregroundColor(.white.opacity(0.9))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, 4)
-                        } else {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Lyrics unavailable")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundColor(.white)
-                                Text("No embedded lyrics were found for this track yet.")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.white.opacity(0.58))
-                            }
-                            .padding(.top, 12)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(20)
-                }
-            }
-            .navigationTitle("Lyrics")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") {
-                        dismiss()
+                        .padding(.top, 12)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
             }
-            .task(id: trackIdentity) {
-                await loadLyrics()
-            }
+        }
+        .task(id: trackIdentity) {
+            await loadLyrics()
         }
     }
 
@@ -395,6 +404,16 @@ struct PlayerLyricsSheet: View {
         lyricsText = resolvedLyrics
         isLoadingLyrics = false
         debugLog("Lyrics \(resolvedLyrics == nil ? "unavailable" : "loaded") for \(track.displayTitle)")
+    }
+}
+
+private struct DismissButton: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Button("Close") {
+            dismiss()
+        }
     }
 }
 

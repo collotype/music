@@ -457,6 +457,7 @@ struct SearchTrackRow: View {
     let contextName: String
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
+    @State private var showingTrackActions = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -496,6 +497,20 @@ struct SearchTrackRow: View {
         .onTapGesture {
             debugLog("Search result row tapped: \(track.displayTitle)")
             audioPlayer.playTrack(track, in: contextTracks, contextName: contextName)
+        }
+        .onLongPressGesture(minimumDuration: 0.6) {
+            debugLog("Long press menu opened: \(track.displayTitle)")
+            showingTrackActions = true
+        }
+        .sheet(isPresented: $showingTrackActions) {
+            TrackActionSheet(
+                track: track,
+                contextTracks: contextTracks,
+                contextName: contextName,
+                playlistContext: nil
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 }

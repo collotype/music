@@ -245,6 +245,7 @@ struct PlaylistTrackRow: View {
 
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
+    @State private var showingTrackActions = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -281,6 +282,20 @@ struct PlaylistTrackRow: View {
                 in: playlistTracks,
                 contextName: "playlist:\(playlistID)"
             )
+        }
+        .onLongPressGesture(minimumDuration: 0.6) {
+            debugLog("Long press menu opened: \(track.displayTitle)")
+            showingTrackActions = true
+        }
+        .sheet(isPresented: $showingTrackActions) {
+            TrackActionSheet(
+                track: track,
+                contextTracks: playlistTracks,
+                contextName: "playlist:\(playlistID)",
+                playlistContext: TrackActionPlaylistContext(id: playlistID, name: playlistName)
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 }

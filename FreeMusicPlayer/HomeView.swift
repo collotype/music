@@ -387,6 +387,7 @@ struct TrackRow: View {
     let contextTracks: [Track]
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
+    @State private var showingTrackActions = false
 
     var isPlaying: Bool {
         audioPlayer.currentTrack?.id == track.id && audioPlayer.isPlaying
@@ -439,6 +440,20 @@ struct TrackRow: View {
         .onTapGesture {
             debugLog("Recent track row tapped: \(track.displayTitle)")
             audioPlayer.playTrack(track, in: contextTracks, contextName: "home:recent")
+        }
+        .onLongPressGesture(minimumDuration: 0.6) {
+            debugLog("Long press menu opened: \(track.displayTitle)")
+            showingTrackActions = true
+        }
+        .sheet(isPresented: $showingTrackActions) {
+            TrackActionSheet(
+                track: track,
+                contextTracks: contextTracks,
+                contextName: "home:recent",
+                playlistContext: nil
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 }

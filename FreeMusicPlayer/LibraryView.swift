@@ -726,7 +726,7 @@ struct LibraryTrackRow: View {
     let contextName: String
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
-    @State private var sharePayload: TrackSharePayload?
+    @State private var showingTrackActions = false
 
     var isPlaying: Bool {
         audioPlayer.currentTrack?.id == track.id && audioPlayer.isPlaying
@@ -780,70 +780,19 @@ struct LibraryTrackRow: View {
             debugLog("Library track row tapped: \(track.displayTitle)")
             audioPlayer.playTrack(track, in: contextTracks, contextName: contextName)
         }
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 1).onEnded { _ in
-                debugLog("Library long press menu presented: \(track.displayTitle)")
-            }
-        )
-        .contextMenu {
-            Button {
-                debugLog("Track context action selected: play next for \(track.displayTitle)")
-                audioPlayer.queueTrackNext(track)
-            } label: {
-                Label("Play Next", systemImage: "forward.fill")
-            }
-
-            Button {
-                debugLog("Track context action selected: add to queue for \(track.displayTitle)")
-                audioPlayer.addTrackToQueue(track)
-            } label: {
-                Label("Add to Queue", systemImage: "list.bullet")
-            }
-
-            Button {
-                debugLog("Track context action selected: favorite toggle for \(track.displayTitle)")
-                dataManager.toggleFavorite(track)
-            } label: {
-                Label(
-                    isFavorite ? "Remove from Favorites" : "Add to Favorites",
-                    systemImage: isFavorite ? "heart.slash" : "heart"
-                )
-            }
-
-            Menu {
-                if dataManager.sortedPlaylists.isEmpty {
-                    Button("No playlists yet") {}
-                        .disabled(true)
-                } else {
-                    ForEach(dataManager.sortedPlaylists) { playlist in
-                        Button {
-                            debugLog("Track context action selected: add \(track.displayTitle) to playlist \(playlist.displayName)")
-                            dataManager.addTrack(track, toPlaylistID: playlist.id)
-                        } label: {
-                            Label(
-                                playlist.displayName,
-                                systemImage: playlist.trackIDs.contains(track.id) ? "checkmark.circle.fill" : "music.note.list"
-                            )
-                        }
-                    }
-                }
-            } label: {
-                Label("Add to Playlist", systemImage: "text.badge.plus")
-            }
-
-            if let shareTarget = track.shareTargetURL {
-                Button {
-                    debugLog("Track context action selected: share \(track.displayTitle)")
-                    sharePayload = TrackSharePayload(items: [shareTarget])
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            }
-        } preview: {
-            TrackContextPreview(track: track)
+        .onLongPressGesture(minimumDuration: 0.6) {
+            debugLog("Long press menu opened: \(track.displayTitle)")
+            showingTrackActions = true
         }
-        .sheet(item: $sharePayload) { payload in
-            ActivityView(activityItems: payload.items)
+        .sheet(isPresented: $showingTrackActions) {
+            TrackActionSheet(
+                track: track,
+                contextTracks: contextTracks,
+                contextName: contextName,
+                playlistContext: nil
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 }
@@ -977,6 +926,298 @@ struct TrackArtworkView: View {
     }
 }
 
+struct TrackArtworkPalette: Equatable, Sendable {
+    let primaryRed: Double
+    let primaryGreen: Double
+    let primaryBlue: Double
+    let secondaryRed: Double
+    let secondaryGreen: Double
+    let secondaryBlue: Double
+
+    static let playerFallback = TrackArtworkPalette(
+        primaryRed: 0.40,
+        primaryGreen: 0.12,
+        primaryBlue: 0.12,
+        secondaryRed: 0.12,
+        secondaryGreen: 0.05,
+        secondaryBlue: 0.05
+    )
+
+    static let cardFallback = TrackArtworkPalette(
+        primaryRed: 0.16,
+        primaryGreen: 0.16,
+        primaryBlue: 0.18,
+        secondaryRed: 0.08,
+        secondaryGreen: 0.08,
+        secondaryBlue: 0.10
+    )
+
+    var primaryColor: Color {
+        Color(red: primaryRed, green: primaryGreen, blue: primaryBlue)
+    }
+
+    var secondaryColor: Color {
+        Color(red: secondaryRed, green: secondaryGreen, blue: secondaryBlue)
+    }
+
+    var debugSummary: String {
+        String(
+            format: "primary=(%.2f, %.2f, %.2f) secondary=(%.2f, %.2f, %.2f)",
+            primaryRed,
+            primaryGreen,
+            primaryBlue,
+            secondaryRed,
+            secondaryGreen,
+            secondaryBlue
+        )
+    }
+}
+
+struct TrackArtworkBackdrop: View {
+    let track: Track?
+    let fallbackPalette: TrackArtworkPalette
+    var cornerRadius: CGFloat = 0
+
+    @State private var palette: TrackArtworkPalette
+
+    init(
+        track: Track?,
+        fallbackPalette: TrackArtworkPalette = .cardFallback,
+        cornerRadius: CGFloat = 0
+    ) {
+        self.track = track
+        self.fallbackPalette = fallbackPalette
+        self.cornerRadius = cornerRadius
+        _palette = State(initialValue: fallbackPalette)
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    palette.primaryColor.opacity(0.96),
+                    palette.secondaryColor.opacity(0.88),
+                    Color.black.opacity(0.96)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(palette.primaryColor.opacity(0.34))
+                .frame(width: 260, height: 260)
+                .blur(radius: 78)
+                .offset(x: -90, y: -80)
+
+            Circle()
+                .fill(palette.secondaryColor.opacity(0.30))
+                .frame(width: 220, height: 220)
+                .blur(radius: 70)
+                .offset(x: 110, y: 100)
+
+            LinearGradient(
+                colors: [Color.white.opacity(0.04), Color.black.opacity(0.18), Color.black.opacity(0.42)],
+                startPoint: .topLeading,
+                endPoint: .bottom
+            )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .task(id: backdropIdentity) {
+            let resolvedPalette = await TrackArtworkPaletteStore.shared.palette(for: track) ?? fallbackPalette
+            await MainActor.run {
+                palette = resolvedPalette
+            }
+        }
+    }
+
+    private var backdropIdentity: String {
+        track?.coverArtURL ?? track?.sourceID ?? track?.id ?? "no-artwork"
+    }
+}
+
+private actor TrackArtworkPaletteStore {
+    static let shared = TrackArtworkPaletteStore()
+
+    private var palettesByKey: [String: TrackArtworkPalette] = [:]
+    private var fallbackLoggedKeys: Set<String> = []
+
+    func palette(for track: Track?) async -> TrackArtworkPalette? {
+        guard let track else {
+            logFallbackIfNeeded(for: "no-track", reason: "Artwork missing fallback for no active track")
+            return nil
+        }
+
+        guard let key = paletteCacheKey(for: track),
+              let artworkURL = resolvedArtworkURL(for: track) else {
+            logFallbackIfNeeded(
+                for: "missing:\(track.id)",
+                reason: "Artwork missing fallback for \(track.displayTitle)"
+            )
+            return nil
+        }
+
+        if let cachedPalette = palettesByKey[key] {
+            return cachedPalette
+        }
+
+        guard let data = await loadArtworkData(from: artworkURL),
+              let image = UIImage(data: data),
+              let palette = Self.extractPalette(from: image) else {
+            logFallbackIfNeeded(
+                for: "invalid:\(key)",
+                reason: "Artwork missing fallback for \(track.displayTitle)"
+            )
+            return nil
+        }
+
+        palettesByKey[key] = palette
+        debugLog("Dominant color extraction result for \(track.displayTitle): \(palette.debugSummary)")
+        return palette
+    }
+
+    private func paletteCacheKey(for track: Track) -> String? {
+        let cleanedCoverArtPath = track.coverArtURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !cleanedCoverArtPath.isEmpty {
+            return cleanedCoverArtPath
+        }
+
+        return track.sourceID ?? track.id
+    }
+
+    private func resolvedArtworkURL(for track: Track) -> URL? {
+        guard let coverArtURL = track.coverArtURL,
+              !coverArtURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        if let parsedURL = URL(string: coverArtURL),
+           parsedURL.scheme != nil {
+            guard parsedURL.isFileURL || parsedURL.scheme?.lowercased() == "http" || parsedURL.scheme?.lowercased() == "https" else {
+                return nil
+            }
+
+            return parsedURL
+        }
+
+        return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+    }
+
+    private func loadArtworkData(from url: URL) async -> Data? {
+        if url.isFileURL {
+            return try? Data(contentsOf: url)
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                return nil
+            }
+            return data
+        } catch {
+            return nil
+        }
+    }
+
+    private func logFallbackIfNeeded(for key: String, reason: String) {
+        guard fallbackLoggedKeys.insert(key).inserted else { return }
+        debugLog(reason)
+    }
+
+    private static func extractPalette(from image: UIImage) -> TrackArtworkPalette? {
+        guard let cgImage = image.cgImage else { return nil }
+
+        let width = 24
+        let height = 24
+        let bitsPerComponent = 8
+        let bytesPerPixel = 4
+        let bytesPerRow = width * bytesPerPixel
+        var rawData = [UInt8](repeating: 0, count: Int(height * bytesPerRow))
+
+        guard let context = CGContext(
+            data: &rawData,
+            width: width,
+            height: height,
+            bitsPerComponent: bitsPerComponent,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var redAccumulator: Double = 0
+        var greenAccumulator: Double = 0
+        var blueAccumulator: Double = 0
+        var alphaAccumulator: Double = 0
+
+        for index in stride(from: 0, to: rawData.count, by: bytesPerPixel) {
+            let alpha = Double(rawData[index + 3]) / 255.0
+            guard alpha > 0.08 else { continue }
+
+            redAccumulator += Double(rawData[index]) * alpha
+            greenAccumulator += Double(rawData[index + 1]) * alpha
+            blueAccumulator += Double(rawData[index + 2]) * alpha
+            alphaAccumulator += alpha
+        }
+
+        guard alphaAccumulator > 0 else { return nil }
+
+        let baseColor = UIColor(
+            red: CGFloat((redAccumulator / alphaAccumulator) / 255.0),
+            green: CGFloat((greenAccumulator / alphaAccumulator) / 255.0),
+            blue: CGFloat((blueAccumulator / alphaAccumulator) / 255.0),
+            alpha: 1
+        )
+
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        var alpha: CGFloat = 0
+
+        guard baseColor.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha) else {
+            return nil
+        }
+
+        let primaryColor = UIColor(
+            hue: hue,
+            saturation: min(max(saturation * 0.72 + 0.10, 0.18), 0.70),
+            brightness: min(max(brightness * 0.76 + 0.08, 0.28), 0.74),
+            alpha: 1
+        )
+
+        let secondaryColor = UIColor(
+            hue: hue,
+            saturation: min(max(saturation * 0.48 + 0.08, 0.12), 0.58),
+            brightness: min(max(brightness * 0.42 + 0.04, 0.16), 0.44),
+            alpha: 1
+        )
+
+        return TrackArtworkPalette(
+            primaryRed: primaryColor.rgb.red,
+            primaryGreen: primaryColor.rgb.green,
+            primaryBlue: primaryColor.rgb.blue,
+            secondaryRed: secondaryColor.rgb.red,
+            secondaryGreen: secondaryColor.rgb.green,
+            secondaryBlue: secondaryColor.rgb.blue
+        )
+    }
+}
+
+private extension UIColor {
+    var rgb: (red: Double, green: Double, blue: Double) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return (Double(red), Double(green), Double(blue))
+    }
+}
+
 struct TrackContextPreview: View {
     let track: Track
 
@@ -997,7 +1238,10 @@ struct TrackContextPreview: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.96))
+        .background(
+            TrackArtworkBackdrop(track: track, fallbackPalette: .cardFallback)
+                .ignoresSafeArea()
+        )
     }
 }
 
@@ -1014,6 +1258,484 @@ struct ActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+struct TrackActionPlaylistContext: Equatable {
+    let id: String
+    let name: String
+}
+
+struct TrackActionSheet: View {
+    let track: Track
+    let contextTracks: [Track]
+    let contextName: String
+    let playlistContext: TrackActionPlaylistContext?
+
+    @EnvironmentObject var audioPlayer: AudioPlayer
+    @EnvironmentObject var dataManager: DataManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var sharePayload: TrackSharePayload?
+
+    private var effectiveFavoriteTrack: Track? {
+        if dataManager.tracks.contains(where: { $0.id == track.id }) {
+            return track
+        }
+
+        guard let sourceID = track.sourceID else { return nil }
+        return dataManager.track(withSourceID: sourceID)
+    }
+
+    private var isFavorite: Bool {
+        guard let effectiveFavoriteTrack else { return false }
+        return dataManager.favorites.contains(effectiveFavoriteTrack.id)
+    }
+
+    private var trimmedAlbum: String? {
+        let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return album.isEmpty ? nil : album
+    }
+
+    private var artistTracks: [Track] {
+        let artistName = track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !artistName.isEmpty,
+              artistName != "Unknown Artist" else {
+            return [track]
+        }
+
+        let matches = dataManager.tracks.filter {
+            $0.displayArtist.caseInsensitiveCompare(artistName) == .orderedSame
+        }
+
+        return matches.isEmpty ? [track] : matches
+    }
+
+    private var albumTracks: [Track] {
+        guard let trimmedAlbum else { return [track] }
+
+        let matches = dataManager.tracks.filter {
+            ($0.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                .caseInsensitiveCompare(trimmedAlbum) == .orderedSame
+        }
+
+        return matches.isEmpty ? [track] : matches
+    }
+
+    private var canShowArtist: Bool {
+        let artistName = track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !artistName.isEmpty && artistName != "Unknown Artist"
+    }
+
+    private var canShowAlbum: Bool {
+        trimmedAlbum != nil
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    TrackActionHeader(track: track)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                        .listRowBackground(Color.clear)
+                }
+
+                Section("Playback") {
+                    Button {
+                        debugLog("Track context action selected: play next for \(track.displayTitle)")
+                        audioPlayer.queueTrackNext(track)
+                        dismiss()
+                    } label: {
+                        TrackActionRowLabel(title: "Play Next", systemImage: "text.insert")
+                    }
+
+                    Button {
+                        debugLog("Track context action selected: add to queue for \(track.displayTitle)")
+                        audioPlayer.addTrackToQueue(track)
+                        dismiss()
+                    } label: {
+                        TrackActionRowLabel(title: "Add to Queue", systemImage: "list.bullet")
+                    }
+
+                    if let effectiveFavoriteTrack {
+                        Button {
+                            debugLog("Track context action selected: favorite toggle for \(track.displayTitle)")
+                            dataManager.toggleFavorite(effectiveFavoriteTrack)
+                            dismiss()
+                        } label: {
+                            TrackActionRowLabel(
+                                title: isFavorite ? "Unlike" : "Like",
+                                systemImage: isFavorite ? "heart.slash" : "heart"
+                            )
+                        }
+                    }
+
+                    NavigationLink {
+                        TrackLyricsView(track: track)
+                            .navigationTitle("Lyrics")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .onAppear {
+                                debugLog("Track context action selected: show lyrics for \(track.displayTitle)")
+                            }
+                    } label: {
+                        TrackActionRowLabel(title: "Show Lyrics", systemImage: "text.quote")
+                    }
+                }
+
+                Section("Library") {
+                    NavigationLink {
+                        TrackPlaylistPickerView(track: track)
+                            .onAppear {
+                                debugLog("Track context action selected: add to playlist for \(track.displayTitle)")
+                            }
+                    } label: {
+                        TrackActionRowLabel(title: "Add to Playlist", systemImage: "text.badge.plus")
+                    }
+
+                    if let playlistContext {
+                        Button(role: .destructive) {
+                            debugLog("Track context action selected: remove from playlist \(playlistContext.name) for \(track.displayTitle)")
+                            dataManager.removeTrack(track, fromPlaylistID: playlistContext.id)
+                            dismiss()
+                        } label: {
+                            TrackActionRowLabel(
+                                title: "Remove from Playlist",
+                                systemImage: "minus.circle",
+                                tint: .red
+                            )
+                        }
+                    }
+                }
+
+                Section("Browse") {
+                    if canShowArtist {
+                        NavigationLink {
+                            TrackCollectionView(
+                                title: track.displayArtist,
+                                subtitle: "Artist",
+                                tracks: artistTracks,
+                                contextName: "artist:\(track.displayArtist)"
+                            )
+                            .onAppear {
+                                debugLog("Track context action selected: go to artist for \(track.displayTitle)")
+                            }
+                        } label: {
+                            TrackActionRowLabel(title: "Go to Artist", systemImage: "person.fill")
+                        }
+                    }
+
+                    if canShowAlbum, let trimmedAlbum {
+                        NavigationLink {
+                            TrackCollectionView(
+                                title: trimmedAlbum,
+                                subtitle: track.displayArtist,
+                                tracks: albumTracks,
+                                contextName: "album:\(trimmedAlbum)"
+                            )
+                            .onAppear {
+                                debugLog("Track context action selected: go to album for \(track.displayTitle)")
+                            }
+                        } label: {
+                            TrackActionRowLabel(title: "Go to Album", systemImage: "square.stack.fill")
+                        }
+                    }
+
+                    NavigationLink {
+                        TrackDetailsView(track: track)
+                            .onAppear {
+                                debugLog("Track context action selected: about track for \(track.displayTitle)")
+                            }
+                    } label: {
+                        TrackActionRowLabel(title: "About Track", systemImage: "info.circle")
+                    }
+                }
+
+                if let shareTarget = track.shareTargetURL {
+                    Section("Share") {
+                        Button {
+                            debugLog("Track context action selected: share \(track.displayTitle)")
+                            sharePayload = TrackSharePayload(items: [shareTarget])
+                        } label: {
+                            TrackActionRowLabel(title: "Share", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(Color.black)
+            .navigationTitle("Track Actions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityView(activityItems: payload.items)
+        }
+    }
+}
+
+struct TrackActionHeader: View {
+    let track: Track
+
+    var body: some View {
+        HStack(spacing: 16) {
+            TrackArtworkView(track: track, size: 86, cornerRadius: 18, showsSourceBadge: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(track.displayTitle)
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+
+                Text(track.displayArtist)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.72))
+                    .lineLimit(1)
+
+                if let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !album.isEmpty {
+                    Text(album)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(16)
+        .background(
+            TrackArtworkBackdrop(track: track, fallbackPalette: .cardFallback, cornerRadius: 24)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+struct TrackActionRowLabel: View {
+    let title: String
+    let systemImage: String
+    var tint: Color = .white
+
+    var body: some View {
+        Label {
+            Text(title)
+                .foregroundColor(tint)
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundColor(tint.opacity(0.9))
+                .frame(width: 22)
+        }
+    }
+}
+
+struct TrackPlaylistPickerView: View {
+    let track: Track
+
+    @EnvironmentObject var dataManager: DataManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showingCreatePlaylistPrompt = false
+    @State private var newPlaylistName = ""
+
+    var body: some View {
+        List {
+            if dataManager.sortedPlaylists.isEmpty {
+                Section {
+                    Text("No playlists yet")
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Section("Playlists") {
+                    ForEach(dataManager.sortedPlaylists) { playlist in
+                        Button {
+                            debugLog("Track context action selected: add \(track.displayTitle) to playlist \(playlist.displayName)")
+                            dataManager.addTrack(track, toPlaylistID: playlist.id)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(playlist.displayName)
+                                        .foregroundColor(.white)
+                                    Text("\(playlist.trackCount) tracks")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white.opacity(0.45))
+                                }
+
+                                Spacer()
+
+                                if playlist.trackIDs.contains(track.id) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Button {
+                    newPlaylistName = track.displayTitle
+                    showingCreatePlaylistPrompt = true
+                } label: {
+                    TrackActionRowLabel(title: "New Playlist", systemImage: "plus.circle")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.black)
+        .navigationTitle("Add to Playlist")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("New Playlist", isPresented: $showingCreatePlaylistPrompt) {
+            TextField("Playlist name", text: $newPlaylistName)
+            Button("Cancel", role: .cancel) {
+                newPlaylistName = ""
+            }
+            Button("Create") {
+                let playlist = dataManager.createPlaylist(name: newPlaylistName)
+                dataManager.addTrack(track, toPlaylistID: playlist.id)
+                newPlaylistName = ""
+                dismiss()
+            }
+        } message: {
+            Text("Create a playlist and add this track to it.")
+        }
+    }
+}
+
+struct TrackCollectionView: View {
+    let title: String
+    let subtitle: String
+    let tracks: [Track]
+    let contextName: String
+
+    @EnvironmentObject var audioPlayer: AudioPlayer
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(.white)
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.55))
+                    Text("\(tracks.count) track(s)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.45))
+                }
+                .padding(.vertical, 8)
+                .listRowBackground(Color.clear)
+            }
+
+            Section("Tracks") {
+                ForEach(tracks) { track in
+                    Button {
+                        debugLog("Track collection row tapped: \(track.displayTitle)")
+                        audioPlayer.playTrack(track, in: tracks, contextName: contextName)
+                    } label: {
+                        HStack(spacing: 12) {
+                            TrackArtworkView(track: track, size: 50, cornerRadius: 10, showsSourceBadge: true)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(track.displayTitle)
+                                    .foregroundColor(.white)
+                                Text(track.displayArtist)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+
+                            Spacer()
+
+                            Text(track.formattedDuration)
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.45))
+                        }
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.black)
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct TrackDetailsView: View {
+    let track: Track
+
+    var body: some View {
+        List {
+            Section {
+                TrackActionHeader(track: track)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+            }
+
+            Section("Details") {
+                TrackMetadataRow(label: "Title", value: track.displayTitle)
+                TrackMetadataRow(label: "Artist", value: track.displayArtist)
+                if let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !album.isEmpty {
+                    TrackMetadataRow(label: "Album", value: album)
+                }
+                TrackMetadataRow(label: "Duration", value: track.formattedDuration)
+                TrackMetadataRow(label: "Source", value: track.source.rawValue)
+                TrackMetadataRow(label: "Storage", value: track.storageLocation.rawValue)
+                TrackMetadataRow(label: "Play Count", value: "\(track.playCount)")
+                TrackMetadataRow(label: "Added", value: track.addedAt.formatted(date: .abbreviated, time: .omitted))
+            }
+
+            if let remotePageURL = track.remotePageURL,
+               !remotePageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Section("Source Link") {
+                    Text(remotePageURL)
+                        .foregroundColor(.white.opacity(0.85))
+                        .textSelection(.enabled)
+                }
+            } else if let fileURL = track.fileURL,
+                      !fileURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Section("File") {
+                    Text(fileURL)
+                        .foregroundColor(.white.opacity(0.85))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.black)
+        .navigationTitle("About Track")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct TrackMetadataRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(label)
+                .foregroundColor(.white.opacity(0.55))
+            Spacer()
+            Text(value)
+                .foregroundColor(.white)
+                .multilineTextAlignment(.trailing)
+        }
+    }
 }
 
 private extension Track {

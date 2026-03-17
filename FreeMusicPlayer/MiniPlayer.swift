@@ -84,8 +84,10 @@ struct MiniPlayer: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
-                Color(red: 0.12, green: 0.12, blue: 0.12)
-                    .opacity(0.95)
+                TrackArtworkBackdrop(
+                    track: audioPlayer.currentTrack,
+                    fallbackPalette: .cardFallback
+                )
             )
         }
         .contentShape(Rectangle())

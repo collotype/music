@@ -34,6 +34,9 @@ final class AudioPlayer: ObservableObject {
     private var artworkDataTask: URLSessionDataTask?
     private var nowPlayingArtworkIdentifier: String?
     private var playbackContext: PlaybackContext?
+    private var playbackSequence: PlaybackSequence = .standalone
+    private var queueResumeContext: QueueResumeContext?
+    private var shouldPrioritizeQueueOnNextAdvance = false
 
     enum RepeatMode {
         case off
@@ -42,8 +45,25 @@ final class AudioPlayer: ObservableObject {
     }
 
     private struct PlaybackContext {
+        enum Kind: String {
+            case playlist
+            case collection
+        }
+
         let name: String
+        let kind: Kind
         let tracks: [Track]
+    }
+
+    private enum PlaybackSequence: String {
+        case standalone
+        case context
+        case queue
+    }
+
+    private struct QueueResumeContext {
+        let context: PlaybackContext
+        let anchorTrack: Track
     }
 
     private var tracks: [Track] {
@@ -301,6 +321,7 @@ final class AudioPlayer: ObservableObject {
         }
 
         debugLog("Current track ended: \(currentTrack?.displayTitle ?? "Unknown Track")")
+        debugLog("Autoplay source context: \(playbackSequenceDescription)")
 
         switch repeatMode {
         case .one:
@@ -397,8 +418,14 @@ final class AudioPlayer: ObservableObject {
             if let contextTracks,
                let contextName {
                 updatePlaybackContext(with: contextTracks, name: contextName)
+                queueResumeContext = nil
+                playbackSequence = .context
+                shouldPrioritizeQueueOnNextAdvance = false
             } else {
                 clearPlaybackContext()
+                queueResumeContext = nil
+                playbackSequence = .standalone
+                shouldPrioritizeQueueOnNextAdvance = false
             }
         }
 
@@ -487,6 +514,32 @@ final class AudioPlayer: ObservableObject {
     @discardableResult
     func playNext(reason: String = "manual-next") -> Bool {
         debugLog("Play next track requested: \(reason)")
+        debugLog("Autoplay decision path: source=\(playbackSequenceDescription), queued=\(manualQueue.count)")
+
+        if playbackSequence == .queue {
+            if let queuedTrack = nextQueuedTrack() {
+                debugLog("Next track selected from queue: \(queuedTrack.displayTitle)")
+                let didStartPlayback = startQueuedPlayback(for: queuedTrack)
+                debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(queuedTrack.displayTitle)")
+                return didStartPlayback
+            }
+
+            if let resumedTrack = resumedTrackAfterQueue() {
+                let resumeContextName = queueResumeContext?.context.name ?? "unknown"
+                debugLog("Queue exhausted; resuming context \(resumeContextName) with \(resumedTrack.displayTitle)")
+                let didStartPlayback = startResumedContextPlayback(for: resumedTrack)
+                debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(resumedTrack.displayTitle)")
+                return didStartPlayback
+            }
+        }
+
+        if shouldPrioritizeQueueOnNextAdvance,
+           let queuedTrack = nextQueuedTrack() {
+            debugLog("Next track selected from explicit queue override: \(queuedTrack.displayTitle)")
+            let didStartPlayback = startQueuedPlayback(for: queuedTrack)
+            debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(queuedTrack.displayTitle)")
+            return didStartPlayback
+        }
 
         if let contextTrack = nextTrackInPlaybackContext() {
             debugLog("Next track selected from context \(playbackContext?.name ?? "unknown"): \(contextTrack.displayTitle)")
@@ -496,19 +549,23 @@ final class AudioPlayer: ObservableObject {
                 contextName: playbackContext?.name,
                 updateContext: false
             )
+            playbackSequence = .context
+            queueResumeContext = nil
             debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(contextTrack.displayTitle)")
             return didStartPlayback
         }
 
         if let queuedTrack = nextQueuedTrack() {
             debugLog("Next track selected from queue: \(queuedTrack.displayTitle)")
-            let didStartPlayback = playTrack(queuedTrack, contextTracks: nil, contextName: nil, updateContext: false)
+            let didStartPlayback = startQueuedPlayback(for: queuedTrack)
             debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(queuedTrack.displayTitle)")
             return didStartPlayback
         }
 
         if let libraryTrack = fallbackNextLibraryTrack() {
             debugLog("Next track selected from library fallback: \(libraryTrack.displayTitle)")
+            playbackSequence = .standalone
+            queueResumeContext = nil
             let didStartPlayback = playTrack(libraryTrack, contextTracks: nil, contextName: nil, updateContext: false)
             debugLog("Playback of next track \(didStartPlayback ? "succeeded" : "failed"): \(libraryTrack.displayTitle)")
             return didStartPlayback
@@ -527,6 +584,15 @@ final class AudioPlayer: ObservableObject {
             return true
         }
 
+        if playbackSequence == .queue,
+           let anchorTrack = queueResumeContext?.anchorTrack {
+            debugLog("Returning to queue anchor track: \(anchorTrack.displayTitle)")
+            playbackSequence = .context
+            let didStartPlayback = startResumedContextPlayback(for: anchorTrack, stepBackwards: false)
+            debugLog("Playback of previous track \(didStartPlayback ? "succeeded" : "failed"): \(anchorTrack.displayTitle)")
+            return didStartPlayback
+        }
+
         if let contextTrack = previousTrackInPlaybackContext() {
             debugLog("Previous track selected from context \(playbackContext?.name ?? "unknown"): \(contextTrack.displayTitle)")
             let didStartPlayback = playTrack(
@@ -535,6 +601,7 @@ final class AudioPlayer: ObservableObject {
                 contextName: playbackContext?.name,
                 updateContext: false
             )
+            playbackSequence = .context
             debugLog("Playback of previous track \(didStartPlayback ? "succeeded" : "failed"): \(contextTrack.displayTitle)")
             return didStartPlayback
         }
@@ -545,6 +612,7 @@ final class AudioPlayer: ObservableObject {
         }
 
         debugLog("Previous track selected from library fallback: \(libraryTrack.displayTitle)")
+        playbackSequence = .standalone
         let didStartPlayback = playTrack(libraryTrack, contextTracks: nil, contextName: nil, updateContext: false)
         debugLog("Playback of previous track \(didStartPlayback ? "succeeded" : "failed"): \(libraryTrack.displayTitle)")
         return didStartPlayback
@@ -570,12 +638,14 @@ final class AudioPlayer: ObservableObject {
         debugLog("Queue track next: \(track.displayTitle)")
         manualQueue.removeAll { $0.id == track.id }
         manualQueue.insert(track, at: 0)
+        shouldPrioritizeQueueOnNextAdvance = true
     }
 
     func addTrackToQueue(_ track: Track) {
         debugLog("Add track to queue: \(track.displayTitle)")
         manualQueue.removeAll { $0.id == track.id }
         manualQueue.append(track)
+        shouldPrioritizeQueueOnNextAdvance = true
     }
 
     func setPlaybackSpeed(_ speed: Float) {
@@ -620,6 +690,9 @@ final class AudioPlayer: ObservableObject {
         player?.replaceCurrentItem(with: nil)
         manualQueue.removeAll()
         clearPlaybackContext()
+        queueResumeContext = nil
+        playbackSequence = .standalone
+        shouldPrioritizeQueueOnNextAdvance = false
         currentTrack = nil
         isPlaying = false
         currentTime = 0
@@ -676,7 +749,11 @@ final class AudioPlayer: ObservableObject {
             return
         }
 
-        playbackContext = PlaybackContext(name: name, tracks: contextTracks)
+        playbackContext = PlaybackContext(
+            name: name,
+            kind: playbackContextKind(for: name),
+            tracks: contextTracks
+        )
         debugLog("Playback context updated: \(name) with \(contextTracks.count) tracks")
     }
 
@@ -687,45 +764,54 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func nextTrackInPlaybackContext() -> Track? {
-        guard let playbackContext else { return nil }
-        return adjacentTrack(in: playbackContext.tracks, step: 1)
+        guard let playbackContext,
+              playbackSequence == .context else { return nil }
+        return adjacentTrack(in: playbackContext.tracks, step: 1, anchorTrack: currentTrack, requiresAnchorMatch: true)
     }
 
     private func previousTrackInPlaybackContext() -> Track? {
-        guard let playbackContext else { return nil }
-        return adjacentTrack(in: playbackContext.tracks, step: -1)
+        guard let playbackContext,
+              playbackSequence == .context else { return nil }
+        return adjacentTrack(in: playbackContext.tracks, step: -1, anchorTrack: currentTrack, requiresAnchorMatch: true)
     }
 
     private func fallbackNextLibraryTrack() -> Track? {
-        adjacentTrack(in: tracks, step: 1)
+        adjacentTrack(in: tracks, step: 1, anchorTrack: currentTrack)
     }
 
     private func fallbackPreviousLibraryTrack() -> Track? {
-        adjacentTrack(in: tracks, step: -1)
+        adjacentTrack(in: tracks, step: -1, anchorTrack: currentTrack)
     }
 
-    private func adjacentTrack(in trackList: [Track], step: Int) -> Track? {
+    private func adjacentTrack(
+        in trackList: [Track],
+        step: Int,
+        anchorTrack: Track?,
+        requiresAnchorMatch: Bool = false
+    ) -> Track? {
         let resolvedTracks = deduplicatedTracks(from: trackList)
         guard !resolvedTracks.isEmpty else { return nil }
 
         if isShuffle {
             let candidates = resolvedTracks.filter { candidate in
-                guard let currentTrack else { return true }
-                return !matchesPlaybackIdentity(candidate, currentTrack)
+                guard let anchorTrack else { return true }
+                return !matchesPlaybackIdentity(candidate, anchorTrack)
             }
 
             if let shuffledTrack = candidates.randomElement() {
                 return resolvedTrackForPlayback(shuffledTrack)
             }
 
-            return repeatMode == .all ? resolvedTrackForPlayback(resolvedTracks.first!) : nil
+            return requiresAnchorMatch ? nil : (repeatMode == .all ? resolvedTrackForPlayback(resolvedTracks.first!) : nil)
         }
 
-        guard let currentTrack else {
+        guard let anchorTrack else {
+            guard !requiresAnchorMatch else { return nil }
             return resolvedTrackForPlayback(step >= 0 ? resolvedTracks.first! : resolvedTracks.last!)
         }
 
-        guard let currentIndex = resolvedTracks.firstIndex(where: { matchesPlaybackIdentity($0, currentTrack) }) else {
+        guard let currentIndex = resolvedTracks.firstIndex(where: { matchesPlaybackIdentity($0, anchorTrack) }) else {
+            guard !requiresAnchorMatch else { return nil }
             return resolvedTrackForPlayback(step >= 0 ? resolvedTracks.first! : resolvedTracks.last!)
         }
 
@@ -736,6 +822,71 @@ final class AudioPlayer: ObservableObject {
 
         guard repeatMode == .all else { return nil }
         return resolvedTrackForPlayback(step >= 0 ? resolvedTracks.first! : resolvedTracks.last!)
+    }
+
+    private func startQueuedPlayback(for track: Track) -> Bool {
+        if playbackSequence != .queue,
+           let playbackContext,
+           let currentTrack {
+            queueResumeContext = QueueResumeContext(context: playbackContext, anchorTrack: currentTrack)
+            debugLog("Queue override armed from \(playbackContext.name) after \(currentTrack.displayTitle)")
+        }
+
+        playbackSequence = .queue
+        shouldPrioritizeQueueOnNextAdvance = false
+        return playTrack(track, contextTracks: nil, contextName: nil, updateContext: false)
+    }
+
+    private func startResumedContextPlayback(for track: Track, stepBackwards: Bool = true) -> Bool {
+        guard let queueResumeContext else {
+            playbackSequence = .standalone
+            return playTrack(track, contextTracks: nil, contextName: nil, updateContext: false)
+        }
+
+        playbackSequence = .context
+        let didStartPlayback = playTrack(
+            stepBackwards ? track : queueResumeContext.anchorTrack,
+            contextTracks: queueResumeContext.context.tracks,
+            contextName: queueResumeContext.context.name,
+            updateContext: false
+        )
+
+        if didStartPlayback {
+            self.queueResumeContext = nil
+        }
+
+        return didStartPlayback
+    }
+
+    private func resumedTrackAfterQueue() -> Track? {
+        guard let queueResumeContext else { return nil }
+        return adjacentTrack(
+            in: queueResumeContext.context.tracks,
+            step: 1,
+            anchorTrack: queueResumeContext.anchorTrack,
+            requiresAnchorMatch: true
+        )
+    }
+
+    private func playbackContextKind(for name: String) -> PlaybackContext.Kind {
+        name.hasPrefix("playlist:") ? .playlist : .collection
+    }
+
+    private var playbackSequenceDescription: String {
+        switch playbackSequence {
+        case .standalone:
+            return "standalone"
+        case .context:
+            if let playbackContext {
+                return "\(playbackContext.kind.rawValue):\(playbackContext.name)"
+            }
+            return "context:missing"
+        case .queue:
+            if let queueResumeContext {
+                return "queue(resume:\(queueResumeContext.context.name))"
+            }
+            return "queue"
+        }
     }
 
     private func resolvedTrackForPlayback(_ track: Track) -> Track {

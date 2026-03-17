@@ -668,6 +668,7 @@ final class DataManager: ObservableObject {
 
     private func probeImportedTrack(at url: URL) throws -> ImportedTrackProbe {
         let asset = AVURLAsset(url: url)
+        let metadataItems = allMetadataItems(for: asset)
         let audioTracks = asset.tracks(withMediaType: .audio)
         let fallbackPlayer = try? AVAudioPlayer(contentsOf: url)
         let durationSeconds = max(CMTimeGetSeconds(asset.duration), 0)
@@ -678,13 +679,21 @@ final class DataManager: ObservableObject {
             throw LibraryImportError.unplayableFile(url.lastPathComponent)
         }
 
-        let title = metadataValue(for: asset, identifier: .commonIdentifierTitle)
-            ?? url.deletingPathExtension().lastPathComponent
-        let artist = metadataValue(for: asset, identifier: .commonIdentifierArtist)
-            ?? "Unknown Artist"
-        let album = metadataValue(for: asset, identifier: .commonIdentifierAlbumName)
+        let filenameFallback = parsedFilenameMetadata(from: url)
+        let metadataSummary = resolvedImportedMetadata(from: metadataItems)
+        let title = metadataSummary.title ?? filenameFallback.title
+        let artist = metadataSummary.preferredArtist ?? filenameFallback.artist ?? "Unknown Artist"
+        let album = metadataSummary.album
         let artworkData = artworkData(for: asset)
 
+        debugLog("Imported file path: \(url.path)")
+        debugLog("Metadata artist found: \(metadataSummary.artistTag ?? "none")")
+        debugLog("Album artist found: \(metadataSummary.albumArtistTag ?? "none")")
+        if metadataSummary.preferredArtist == nil {
+            debugLog("Filename fallback used: \(filenameFallback.didParseArtist ? "artist+title" : "title-only") for \(url.lastPathComponent)")
+        }
+        debugLog("Metadata parsing source: \(metadataSummary.preferredArtistSource ?? (filenameFallback.didParseArtist ? "filename" : "default"))")
+        debugLog("Final parsed title/artist: \(title) / \(artist)")
         debugLog("Metadata extracted for \(url.lastPathComponent): title=\(title), artist=\(artist), duration=\(resolvedDuration)")
         debugLog("Artwork extraction for \(url.lastPathComponent): \(artworkData == nil ? "missing" : "embedded artwork found")")
 
@@ -729,6 +738,182 @@ final class DataManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func allMetadataItems(for asset: AVURLAsset) -> [AVMetadataItem] {
+        asset.commonMetadata + asset.availableMetadataFormats.flatMap { asset.metadata(forFormat: $0) }
+    }
+
+    private func resolvedImportedMetadata(from items: [AVMetadataItem]) -> ImportedMetadataSummary {
+        let title = firstMetadataString(in: items) { descriptor in
+            descriptor.commonKey == "title" ||
+            descriptor.identifier.contains("title") ||
+            descriptor.identifier.contains("/tit2") ||
+            descriptor.key == "tit2" ||
+            descriptor.key == "title" ||
+            descriptor.key == "\u{00A9}nam"
+        }
+
+        let artistTag = firstMetadataString(in: items) { descriptor in
+            isExplicitArtistDescriptor(descriptor) && !isAlbumArtistDescriptor(descriptor)
+        }
+
+        let albumArtistTag = firstMetadataString(in: items) { descriptor in
+            isAlbumArtistDescriptor(descriptor)
+        }
+
+        let commonArtist = firstMetadataString(in: items) { descriptor in
+            descriptor.commonKey == "artist" ||
+            descriptor.identifier.contains("commonidentifierartist") ||
+            descriptor.identifier.contains("common/artist")
+        }
+
+        let album = firstMetadataString(in: items) { descriptor in
+            descriptor.commonKey == "albumname" ||
+            descriptor.identifier.contains("albumname") ||
+            descriptor.identifier.contains("/talb") ||
+            descriptor.key == "talb" ||
+            descriptor.key == "\u{00A9}alb" ||
+            descriptor.key == "album"
+        }
+
+        let preferredArtist = artistTag ?? albumArtistTag ?? commonArtist
+        let preferredArtistSource: String?
+
+        if artistTag != nil {
+            preferredArtistSource = "artist-tag"
+        } else if albumArtistTag != nil {
+            preferredArtistSource = "album-artist-tag"
+        } else if commonArtist != nil {
+            preferredArtistSource = "common-artist"
+        } else {
+            preferredArtistSource = nil
+        }
+
+        return ImportedMetadataSummary(
+            title: title,
+            artistTag: artistTag,
+            albumArtistTag: albumArtistTag,
+            commonArtist: commonArtist,
+            album: album,
+            preferredArtist: preferredArtist,
+            preferredArtistSource: preferredArtistSource
+        )
+    }
+
+    private func firstMetadataString(
+        in items: [AVMetadataItem],
+        matching predicate: (MetadataDescriptor) -> Bool
+    ) -> String? {
+        for item in items {
+            let descriptor = metadataDescriptor(for: item)
+            guard predicate(descriptor),
+                  let value = metadataString(from: item) else {
+                continue
+            }
+
+            return value
+        }
+
+        return nil
+    }
+
+    private func metadataDescriptor(for item: AVMetadataItem) -> MetadataDescriptor {
+        let keyValue: String
+        if let stringKey = item.key as? String {
+            keyValue = stringKey
+        } else if let stringKey = item.key as? NSString {
+            keyValue = stringKey as String
+        } else {
+            keyValue = String(describing: item.key ?? "")
+        }
+
+        return MetadataDescriptor(
+            identifier: item.identifier?.rawValue.lowercased() ?? "",
+            commonKey: item.commonKey?.rawValue.lowercased() ?? "",
+            key: keyValue.lowercased(),
+            keySpace: item.keySpace?.rawValue.lowercased() ?? ""
+        )
+    }
+
+    private func metadataString(from item: AVMetadataItem) -> String? {
+        if let stringValue = item.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !stringValue.isEmpty {
+            return stringValue
+        }
+
+        if let value = item.value as? String {
+            let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleanedValue.isEmpty {
+                return cleanedValue
+            }
+        }
+
+        if let dataValue = item.dataValue {
+            for encoding in [String.Encoding.utf8, .utf16, .unicode, .isoLatin1] {
+                if let decodedValue = String(data: dataValue, encoding: encoding) {
+                    let cleanedValue = decodedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanedValue.isEmpty {
+                        return cleanedValue
+                    }
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func isExplicitArtistDescriptor(_ descriptor: MetadataDescriptor) -> Bool {
+        descriptor.identifier.contains("/tpe1") ||
+        descriptor.identifier.contains("itunesmetadataartist") ||
+        descriptor.identifier.contains("quicktime/artist") ||
+        descriptor.identifier.hasSuffix("/artist") ||
+        descriptor.key == "tpe1" ||
+        descriptor.key == "\u{00A9}art" ||
+        descriptor.key == "artist"
+    }
+
+    private func isAlbumArtistDescriptor(_ descriptor: MetadataDescriptor) -> Bool {
+        descriptor.identifier.contains("albumartist") ||
+        descriptor.identifier.contains("album artist") ||
+        descriptor.identifier.contains("/tpe2") ||
+        descriptor.key == "tpe2" ||
+        descriptor.key == "aart" ||
+        descriptor.key == "albumartist" ||
+        descriptor.key == "album artist"
+    }
+
+    private func parsedFilenameMetadata(from url: URL) -> FilenameMetadataFallback {
+        let rawFilename = url.deletingPathExtension().lastPathComponent
+        let cleanedFilename = rawFilename
+            .replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let leadingTrackNumberPattern = #"^\s*\d{1,3}\s*[-._]\s*"#
+        let strippedFilename = cleanedFilename.replacingOccurrences(
+            of: leadingTrackNumberPattern,
+            with: "",
+            options: .regularExpression
+        )
+
+        let separators = [" - ", " \u{2013} ", " \u{2014} "]
+        for separator in separators {
+            let components = strippedFilename.components(separatedBy: separator)
+            guard components.count >= 2 else { continue }
+
+            let artist = components.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let title = components.dropFirst().joined(separator: separator).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if !artist.isEmpty && !title.isEmpty {
+                return FilenameMetadataFallback(title: title, artist: artist, didParseArtist: true)
+            }
+        }
+
+        return FilenameMetadataFallback(
+            title: strippedFilename.isEmpty ? rawFilename : strippedFilename,
+            artist: nil,
+            didParseArtist: false
+        )
     }
 
     private func storeArtworkIfAvailable(data: Data?, preferredName: String) throws -> String? {
@@ -877,6 +1062,29 @@ private struct ImportedTrackProbe {
     let album: String?
     let duration: TimeInterval
     let artworkData: Data?
+}
+
+private struct ImportedMetadataSummary {
+    let title: String?
+    let artistTag: String?
+    let albumArtistTag: String?
+    let commonArtist: String?
+    let album: String?
+    let preferredArtist: String?
+    let preferredArtistSource: String?
+}
+
+private struct MetadataDescriptor {
+    let identifier: String
+    let commonKey: String
+    let key: String
+    let keySpace: String
+}
+
+private struct FilenameMetadataFallback {
+    let title: String
+    let artist: String?
+    let didParseArtist: Bool
 }
 
 private struct DownloadedTrackMetadata {
