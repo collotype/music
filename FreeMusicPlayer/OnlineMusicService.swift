@@ -734,6 +734,7 @@ final class OnlineMusicService {
             using: authorizationRequestURL,
             callbackURLScheme: configuration.callbackURLScheme
         )
+        debugLog("Spotify callback URL received: \(redactedSpotifyCallbackURL(callbackURL))")
 
         guard let callbackComponents = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
             throw OnlineMusicServiceError.authenticationRequired(
@@ -1102,6 +1103,23 @@ final class OnlineMusicService {
 
         let status = spotifyConfigurationStatus
         return "\(baseMessage) Verify SpotifyClientID matches your Spotify app and that \(status.resolvedRedirectURI) is added to that app's Redirect URIs in the Spotify dashboard."
+    }
+
+    private func redactedSpotifyCallbackURL(_ url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url.absoluteString
+        }
+
+        let sensitiveQueryItemNames: Set<String> = ["code", "state"]
+        components.queryItems = components.queryItems?.map { item in
+            guard sensitiveQueryItemNames.contains(item.name.lowercased()) else {
+                return item
+            }
+
+            return URLQueryItem(name: item.name, value: "<redacted>")
+        }
+
+        return components.string ?? url.absoluteString
     }
 
     private func spotifyAPIErrorMessage(from data: Data) -> String? {
