@@ -22,10 +22,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.collotype.freemusic.spotify-auth</string>
+			<string>com.collotype.freemusic.spotify-callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.collotype.freemusic</string>
+				<string>freemusic</string>
 			</array>
 		</dict>
 	</array>
@@ -42,9 +42,9 @@
 	<key>SoundCloudClientID</key>
 	<string>GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7</string>
 	<key>SpotifyClientID</key>
-	<string></string>
+	<string>18b230e3ea3a4b4db816d971e979c598</string>
 	<key>SpotifyRedirectURI</key>
-	<string>com.collotype.freemusic://spotify-auth-callback</string>
+	<string>freemusic://spotify-callback</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

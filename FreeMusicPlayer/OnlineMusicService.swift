@@ -333,14 +333,14 @@ final class OnlineMusicService {
     private let spotifyAuthorizationURL = URL(string: "https://accounts.spotify.com/authorize")!
     private let spotifyTokenURL = URL(string: "https://accounts.spotify.com/api/token")!
     private let spotifySearchURL = URL(string: "https://api.spotify.com/v1/search")!
-    private let defaultSpotifyRedirectURI = "com.collotype.freemusic://spotify-auth-callback"
+    private let defaultSpotifyRedirectURI = "freemusic://spotify-callback"
     private let spotifySearchLimit = 12
 
     // Required Info.plist setup for Spotify search:
     // SpotifyClientID = <your client id>
     //
     // Optional Info.plist overrides:
-    // SpotifyRedirectURI = com.collotype.freemusic://spotify-auth-callback
+    // SpotifyRedirectURI = freemusic://spotify-callback
     // SpotifyMarket = US
     private enum SpotifyInfoPlistKeys {
         static let clientID = "SpotifyClientID"
@@ -706,7 +706,7 @@ final class OnlineMusicService {
 
         guard interactive else {
             throw OnlineMusicServiceError.authenticationRequired(
-                "Connect Spotify to search its catalog."
+                "Spotify is configured, but this device is not signed in yet. Tap Connect to authorize Spotify, then retry your search."
             )
         }
 
@@ -947,6 +947,8 @@ final class OnlineMusicService {
         let rawRedirectURI = Bundle.main.object(forInfoDictionaryKey: SpotifyInfoPlistKeys.redirectURI) as? String
         let explicitRedirectURI = sanitizedSpotifyRedirectURI(rawRedirectURI)
         let resolvedRedirectURI = explicitRedirectURI ?? defaultSpotifyRedirectURI
+        let callbackURLScheme = URL(string: resolvedRedirectURI)?.scheme?.lowercased()
+        let registeredURLSchemes = registeredBundleURLSchemes()
 
         return SpotifyConfigurationStatus(
             clientIDKey: SpotifyInfoPlistKeys.clientID,
@@ -955,7 +957,8 @@ final class OnlineMusicService {
             explicitRedirectURI: explicitRedirectURI,
             defaultRedirectURI: defaultSpotifyRedirectURI,
             resolvedRedirectURI: resolvedRedirectURI,
-            callbackURLScheme: URL(string: resolvedRedirectURI)?.scheme,
+            callbackURLScheme: callbackURLScheme,
+            registeredURLSchemes: registeredURLSchemes,
             market: resolvedSpotifyMarket()
         )
     }
@@ -978,20 +981,22 @@ final class OnlineMusicService {
         logSpotifyConfigurationDiagnostics(spotifyConfigurationStatus)
         let authState = await spotifyRuntimeState.debugDescription(referenceDate: Date())
         debugLog(
-            "Spotify config state: clientID=configured, redirectURI=\(configuration.redirectURI), market=\(configuration.market), auth=\(authState)"
+            "Spotify config state: clientID=configured, redirectURI=\(configuration.redirectURI), callbackScheme=\(configuration.callbackURLScheme), market=\(configuration.market), auth=\(authState)"
         )
     }
 
     private func logSpotifyConfigurationDiagnostics(_ status: SpotifyConfigurationStatus) {
-        debugLog("Spotify Info.plist client ID key checked: \(status.clientIDKey)")
-        debugLog("SpotifyClientID found: \(status.isClientIDConfigured ? "yes" : "no")")
-        debugLog("Spotify Info.plist redirect key checked: \(status.redirectURIKey)")
-        debugLog(
-            "Spotify redirect URI configured: \(status.isRedirectURIConfigured ? "yes" : "no") (\(status.usesDefaultRedirectURI ? "default" : "Info.plist"))"
-        )
-        debugLog("Spotify redirect URI valid: \(status.isRedirectURIValid ? "yes" : "no")")
-        debugLog("Spotify redirect URI resolved: \(status.resolvedRedirectURI)")
-        debugLog("Spotify provider enabled: \(status.isEnabled ? "yes" : "no")")
+        let loadedClientID = status.clientID.map(maskedClientID) ?? "missing"
+        let loadedRedirectURI = status.explicitRedirectURI ?? status.defaultRedirectURI
+        let expectedURLScheme = status.callbackURLScheme ?? "missing"
+        let providerState = status.isEnabled ? "enabled" : "disabled"
+
+        debugLog("Spotify config keys checked: \(status.clientIDKey), \(status.redirectURIKey)")
+        debugLog("SpotifyClientID loaded: \(loadedClientID)")
+        debugLog("SpotifyRedirectURI loaded: \(loadedRedirectURI)")
+        debugLog("URL scheme registration expected: \(expectedURLScheme)")
+        debugLog("URL scheme registered in CFBundleURLTypes: \(status.isCallbackURLSchemeRegistered ? "yes" : "no")")
+        debugLog("Spotify provider \(providerState)")
     }
 
     private func sanitizedSpotifyClientID(_ rawValue: String?) -> String? {
@@ -1038,20 +1043,65 @@ final class OnlineMusicService {
         return cleanedValue
     }
 
+    private func registeredBundleURLSchemes() -> [String] {
+        guard let urlTypes = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] else {
+            return []
+        }
+
+        let schemes = urlTypes
+            .flatMap { ($0["CFBundleURLSchemes"] as? [String]) ?? [] }
+            .compactMap(cleanedText)
+            .map { $0.lowercased() }
+
+        return orderedUniqueValues(schemes)
+    }
+
     private func spotifyTokenErrorMessage(from data: Data) -> String? {
         let tokenError = try? decoder.decode(SpotifyTokenErrorResponse.self, from: data)
         let errorCode = tokenError?.error?.trimmingCharacters(in: .whitespacesAndNewlines)
         let errorDescription = tokenError?.errorDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        let message: String?
+
         if let errorDescription, !errorDescription.isEmpty {
-            return "Spotify authorization failed: \(errorDescription)"
+            message = "Spotify authorization failed: \(errorDescription)"
+        } else if let errorCode, !errorCode.isEmpty {
+            message = "Spotify authorization failed: \(errorCode)"
+        } else {
+            message = nil
         }
 
-        if let errorCode, !errorCode.isEmpty {
-            return "Spotify authorization failed: \(errorCode)"
+        guard let message else { return nil }
+        return actionableSpotifyTokenErrorMessage(
+            baseMessage: message,
+            errorCode: errorCode,
+            errorDescription: errorDescription
+        )
+    }
+
+    private func actionableSpotifyTokenErrorMessage(
+        baseMessage: String,
+        errorCode: String?,
+        errorDescription: String?
+    ) -> String {
+        let normalizedDetails = [errorCode, errorDescription]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+
+        let needsSetupGuidance = [
+            "redirect",
+            "invalid_client",
+            "unauthorized_client",
+            "client id",
+            "client_id"
+        ].contains { normalizedDetails.contains($0) }
+
+        guard needsSetupGuidance else {
+            return baseMessage
         }
 
-        return nil
+        let status = spotifyConfigurationStatus
+        return "\(baseMessage) Verify SpotifyClientID matches your Spotify app and that \(status.resolvedRedirectURI) is added to that app's Redirect URIs in the Spotify dashboard."
     }
 
     private func spotifyAPIErrorMessage(from data: Data) -> String? {
@@ -1812,6 +1862,7 @@ private struct SpotifyConfigurationStatus {
     let defaultRedirectURI: String
     let resolvedRedirectURI: String
     let callbackURLScheme: String?
+    let registeredURLSchemes: [String]
     let market: String
 
     var isClientIDConfigured: Bool {
@@ -1826,6 +1877,11 @@ private struct SpotifyConfigurationStatus {
         callbackURLScheme != nil
     }
 
+    var isCallbackURLSchemeRegistered: Bool {
+        guard let callbackURLScheme else { return false }
+        return registeredURLSchemes.contains(callbackURLScheme.lowercased())
+    }
+
     var usesDefaultRedirectURI: Bool {
         explicitRedirectURI == nil
     }
@@ -1836,7 +1892,8 @@ private struct SpotifyConfigurationStatus {
 
     var configuration: SpotifyConfiguration? {
         guard let clientID,
-              let callbackURLScheme else {
+              let callbackURLScheme,
+              isCallbackURLSchemeRegistered else {
             return nil
         }
 
@@ -1855,6 +1912,10 @@ private struct SpotifyConfigurationStatus {
 
         if !isRedirectURIValid {
             return "Spotify search requires a valid Info.plist key SpotifyRedirectURI, or remove that key to use the default callback \(defaultRedirectURI)."
+        }
+
+        if !isCallbackURLSchemeRegistered, let callbackURLScheme {
+            return "Spotify auth callback requires the URL scheme \(callbackURLScheme) under CFBundleURLTypes so \(resolvedRedirectURI) can return to the app."
         }
 
         return "Spotify search is unavailable because its configuration is incomplete."
