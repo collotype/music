@@ -323,6 +323,7 @@ struct SearchView: View {
         }
     }
 
+    @ViewBuilder
     var artistSearchResults: some View {
         SearchSectionCard(title: "Library") {
             if artistResults.isEmpty {
@@ -377,6 +378,7 @@ struct SearchView: View {
         }
     }
 
+    @ViewBuilder
     var albumSearchResults: some View {
         SearchSectionCard(title: "Library") {
             if albumResults.isEmpty {
@@ -431,6 +433,7 @@ struct SearchView: View {
         }
     }
 
+    @ViewBuilder
     var playlistSearchResults: some View {
         SearchSectionCard(title: "Library") {
             if playlistResults.isEmpty {

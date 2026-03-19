@@ -323,7 +323,6 @@ final class OnlineMusicService {
     private let decoder = JSONDecoder()
     private let soundCloudRuntimeState = SoundCloudRuntimeState()
     private let spotifyRuntimeState = SpotifyRuntimeState()
-    private let spotifyAuthCoordinator = SpotifyAuthCoordinator()
 
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
     private let soundCloudSearchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
@@ -703,6 +702,7 @@ final class OnlineMusicService {
         return credentials.accessToken
     }
 
+    @MainActor
     private func authorizeSpotifyInteractively(
         configuration: SpotifyConfiguration
     ) async throws -> SpotifyCredentials {
@@ -717,6 +717,7 @@ final class OnlineMusicService {
             state: state
         )
 
+        let spotifyAuthCoordinator = SpotifyAuthCoordinator()
         let callbackURL = try await spotifyAuthCoordinator.authenticate(
             using: authorizationRequestURL,
             callbackURLScheme: configuration.callbackURLScheme
