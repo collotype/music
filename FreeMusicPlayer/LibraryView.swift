@@ -812,9 +812,7 @@ struct TrackArtworkView: View {
                     Spacer()
                     HStack {
                         Spacer()
-                        Image(systemName: sourceBadgeSymbol)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(sourceBadgeColor)
+                        sourceBadgeView
                             .padding(5)
                             .background(Circle().fill(Color.black.opacity(0.85)))
                     }
@@ -892,16 +890,25 @@ struct TrackArtworkView: View {
         return parsedURL
     }
 
+    @ViewBuilder
+    private var sourceBadgeView: some View {
+        if let provider = track.source.onlineProvider {
+            ProviderIconView(provider: provider, size: 13)
+        } else {
+            Image(systemName: sourceBadgeSymbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(sourceBadgeColor)
+        }
+    }
+
     private var sourceBadgeSymbol: String {
         switch track.source {
         case .appleMusicPreview:
             return "apple.logo"
         case .youtube:
             return "play.circle.fill"
-        case .soundcloud:
-            return "waveform"
-        case .spotify:
-            return "dot.radiowaves.left.and.right"
+        case .soundcloud, .spotify:
+            return "music.note"
         case .local:
             return "music.note"
         }
@@ -913,10 +920,8 @@ struct TrackArtworkView: View {
             return .white.opacity(0.9)
         case .youtube:
             return .red
-        case .soundcloud:
-            return .orange
-        case .spotify:
-            return .green
+        case .soundcloud, .spotify:
+            return .white
         case .local:
             return .white.opacity(0.85)
         }

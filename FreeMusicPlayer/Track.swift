@@ -151,6 +151,62 @@ struct Track: Identifiable, Codable, Equatable {
     }
 }
 
+extension Track.TrackSource {
+    var onlineProvider: OnlineTrackProvider? {
+        switch self {
+        case .soundcloud:
+            return .soundcloud
+        case .spotify:
+            return .spotify
+        case .local, .youtube, .appleMusicPreview:
+            return nil
+        }
+    }
+}
+
+extension OnlineTrackProvider {
+    var iconAssetName: String {
+        switch self {
+        case .soundcloud:
+            return "SoundCloudProviderIcon"
+        case .spotify:
+            return "SpotifyProviderIcon"
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .soundcloud:
+            return Color(red: 1.0, green: 0.43, blue: 0.0)
+        case .spotify:
+            return Color(red: 0.12, green: 0.82, blue: 0.38)
+        }
+    }
+
+    var secondaryAccentColor: Color {
+        switch self {
+        case .soundcloud:
+            return Color(red: 0.43, green: 0.12, blue: 0.02)
+        case .spotify:
+            return Color(red: 0.04, green: 0.19, blue: 0.09)
+        }
+    }
+}
+
+struct ProviderIconView: View {
+    let provider: OnlineTrackProvider
+    let size: CGFloat
+
+    var body: some View {
+        Image(provider.iconAssetName)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
 struct Playlist: Identifiable, Codable, Equatable {
     var id: String = UUID().uuidString
     var name: String

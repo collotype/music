@@ -10,22 +10,46 @@ import SwiftUI
 struct SearchView: View {
     private let onlineSearchTimeoutNanoseconds: UInt64 = 15_000_000_000
 
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var router: AppRouter
+    @AppStorage("search.selectedProvider") private var selectedProviderRawValue: String = OnlineTrackProvider.soundcloud.rawValue
 
     @State private var searchText: String = ""
     @State private var localResults: [Track] = []
-    @State private var onlineResults: [OnlineTrackResult] = []
+    @State private var onlineResults: OnlineSearchResults = .empty
     @State private var isSearchingOnline: Bool = false
     @State private var onlineStatusMessage: String?
     @State private var searchTask: Task<Void, Never>?
     @State private var downloadingIDs: Set<String> = []
     @State private var savingIDs: Set<String> = []
     @State private var selectedCategory: SearchCategory = .tracks
+    @State private var onlinePrompt: OnlineSearchPrompt?
+    @State private var isAuthorizingSpotify: Bool = false
+
+    private var selectedProvider: OnlineTrackProvider {
+        OnlineTrackProvider(rawValue: selectedProviderRawValue) ?? .soundcloud
+    }
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var onlineTrackResults: [OnlineTrackResult] {
+        onlineResults.tracks
+    }
+
+    private var onlineArtistResults: [OnlineArtistResult] {
+        onlineResults.artists
+    }
+
+    private var onlineAlbumResults: [OnlineAlbumResult] {
+        onlineResults.albums
+    }
+
+    private var onlinePlaylistResults: [OnlinePlaylistResult] {
+        onlineResults.playlists
     }
 
     private var artistResults: [LocalArtistSearchResult] {
@@ -56,24 +80,20 @@ struct SearchView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: dataManager.tracks) { _ in
-            guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard !trimmedSearchText.isEmpty else { return }
             localResults = localMatches(for: searchText)
             debugLog("Local result count updated: \(localResults.count)")
+            logResultCounts(for: searchText)
+        }
+        .onChange(of: dataManager.playlists) { _ in
+            guard !trimmedSearchText.isEmpty else { return }
             logResultCounts(for: searchText)
         }
         .onChange(of: selectedCategory) { newValue in
             debugLog("Search selected tab: \(newValue.title)")
             debugLog("Search query text: \(trimmedSearchText)")
-            debugLog("\(newValue.title) result count: \(resultCount(for: newValue, query: searchText))")
-
-            guard !trimmedSearchText.isEmpty else { return }
-
-            if newValue == .tracks {
-                performSearch(searchText, shouldSearchOnline: true)
-            } else {
-                searchTask?.cancel()
-                isSearchingOnline = false
-            }
+            debugLog("Library \(newValue.title) result count: \(resultCount(for: newValue, query: searchText))")
+            debugLog("\(selectedProvider.displayName) \(newValue.title) result count: \(onlineResultCount(for: newValue))")
         }
         .onChange(of: audioPlayer.playbackErrorMessage) { newValue in
             guard let newValue,
@@ -91,39 +111,58 @@ struct SearchView: View {
                 .frame(height: 16)
 
             HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.white.opacity(0.5))
+                HStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.white.opacity(0.5))
 
-                TextField("Search music", text: $searchText)
-                    .font(.system(size: 17))
-                    .foregroundColor(.white)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .onChange(of: searchText) { newValue in
-                        performSearch(newValue, shouldSearchOnline: selectedCategory == .tracks)
-                    }
+                    TextField("Search music", text: $searchText)
+                        .font(.system(size: 17))
+                        .foregroundColor(.white)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: searchText) { newValue in
+                            performSearch(newValue, shouldSearchOnline: true)
+                        }
 
-                if !searchText.isEmpty {
-                    Button {
-                        debugLog("Search clear button pressed")
-                        searchTask?.cancel()
-                        searchText = ""
-                        localResults = []
-                        onlineResults = []
-                        onlineStatusMessage = nil
-                        isSearchingOnline = false
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.white.opacity(0.5))
+                    if !searchText.isEmpty {
+                        Button {
+                            debugLog("Search clear button pressed")
+                            searchTask?.cancel()
+                            searchText = ""
+                            localResults = []
+                            onlineResults = .empty
+                            onlineStatusMessage = nil
+                            onlinePrompt = nil
+                            isSearchingOnline = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.1))
+                )
+
+                Menu {
+                    ForEach(OnlineTrackProvider.allCases) { provider in
+                        Button {
+                            selectProvider(provider)
+                        } label: {
+                            SearchProviderMenuRow(
+                                provider: provider,
+                                isSelected: provider == selectedProvider
+                            )
+                        }
+                    }
+                } label: {
+                    SearchProviderButton(provider: selectedProvider)
+                }
+                .buttonStyle(.plain)
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.1))
-            )
 
             searchCategoryTabs
         }
@@ -256,46 +295,36 @@ struct SearchView: View {
             }
         }
 
-        SearchSectionCard(title: "Online") {
-            if isSearchingOnline && onlineResults.isEmpty {
+        SearchSectionCard(title: selectedProvider.displayName) {
+            if isSearchingOnline && onlineTrackResults.isEmpty {
                 SearchStatusRow(
                     icon: "arrow.triangle.2.circlepath",
-                    title: "Searching online...",
-                    subtitle: "Looking up matching tracks on SoundCloud."
+                    title: "Searching \(selectedProvider.displayName)...",
+                    subtitle: onlineSearchSubtitle(for: .tracks)
                 )
-            } else if !onlineResults.isEmpty {
-                ForEach(onlineResults) { result in
+            } else if !onlineTrackResults.isEmpty {
+                ForEach(onlineTrackResults) { result in
                     OnlineSearchTrackRow(
                         result: result,
-                        isDownloading: downloadingIDs.contains(result.id),
+                        isPerformingPrimaryAction: downloadingIDs.contains(result.id),
                         isSaving: savingIDs.contains(result.id),
                         isSaved: dataManager.track(withSourceID: result.id) != nil,
-                        playAction: { playOnlineResult(result) },
-                        saveAction: { saveOnlineResult(result) }
+                        primaryAction: { handlePrimaryAction(for: result) },
+                        saveAction: result.supportsOfflineDownload ? { saveOnlineResult(result) } : nil
                     )
-                    if result.id != onlineResults.last?.id {
+                    if result.id != onlineTrackResults.last?.id {
                         Divider()
                             .background(Color.white.opacity(0.06))
                     }
                 }
-            } else if let onlineStatusMessage {
-                SearchStatusRow(
-                    icon: "wifi.exclamationmark",
-                    title: "Online search unavailable",
-                    subtitle: onlineStatusMessage
-                )
             } else {
-                SearchStatusRow(
-                    icon: "note.slash",
-                    title: "No online matches",
-                    subtitle: "Try another query or save a track to your library."
-                )
+                onlineStatusRow(for: .tracks)
             }
         }
     }
 
     var artistSearchResults: some View {
-        SearchSectionCard(title: "Artists") {
+        SearchSectionCard(title: "Library") {
             if artistResults.isEmpty {
                 SearchStatusRow(
                     icon: "person.crop.circle.badge.questionmark",
@@ -323,10 +352,33 @@ struct SearchView: View {
                 }
             }
         }
+
+        SearchSectionCard(title: selectedProvider.displayName) {
+            if isSearchingOnline && onlineArtistResults.isEmpty {
+                SearchStatusRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Searching \(selectedProvider.displayName)...",
+                    subtitle: onlineSearchSubtitle(for: .artists)
+                )
+            } else if !onlineArtistResults.isEmpty {
+                ForEach(onlineArtistResults) { result in
+                    OnlineSearchArtistRow(result: result) {
+                        openExternalResult(result.externalURL, failureMessage: "Couldn't open that artist result.")
+                    }
+
+                    if result.id != onlineArtistResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            } else {
+                onlineStatusRow(for: .artists)
+            }
+        }
     }
 
     var albumSearchResults: some View {
-        SearchSectionCard(title: "Albums") {
+        SearchSectionCard(title: "Library") {
             if albumResults.isEmpty {
                 SearchStatusRow(
                     icon: "square.stack.badge.minus",
@@ -354,10 +406,33 @@ struct SearchView: View {
                 }
             }
         }
+
+        SearchSectionCard(title: selectedProvider.displayName) {
+            if isSearchingOnline && onlineAlbumResults.isEmpty {
+                SearchStatusRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Searching \(selectedProvider.displayName)...",
+                    subtitle: onlineSearchSubtitle(for: .albums)
+                )
+            } else if !onlineAlbumResults.isEmpty {
+                ForEach(onlineAlbumResults) { result in
+                    OnlineSearchAlbumRow(result: result) {
+                        openExternalResult(result.externalURL, failureMessage: "Couldn't open that album result.")
+                    }
+
+                    if result.id != onlineAlbumResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            } else {
+                onlineStatusRow(for: .albums)
+            }
+        }
     }
 
     var playlistSearchResults: some View {
-        SearchSectionCard(title: "Playlists") {
+        SearchSectionCard(title: "Library") {
             if playlistResults.isEmpty {
                 SearchStatusRow(
                     icon: "music.note.list",
@@ -381,6 +456,29 @@ struct SearchView: View {
                 }
             }
         }
+
+        SearchSectionCard(title: selectedProvider.displayName) {
+            if isSearchingOnline && onlinePlaylistResults.isEmpty {
+                SearchStatusRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: "Searching \(selectedProvider.displayName)...",
+                    subtitle: onlineSearchSubtitle(for: .playlists)
+                )
+            } else if !onlinePlaylistResults.isEmpty {
+                ForEach(onlinePlaylistResults) { result in
+                    OnlineSearchPlaylistRow(result: result) {
+                        openExternalResult(result.externalURL, failureMessage: "Couldn't open that playlist result.")
+                    }
+
+                    if result.id != onlinePlaylistResults.last?.id {
+                        Divider()
+                            .background(Color.white.opacity(0.06))
+                    }
+                }
+            } else {
+                onlineStatusRow(for: .playlists)
+            }
+        }
     }
 
     private func performSearch(_ query: String, shouldSearchOnline: Bool) {
@@ -389,55 +487,72 @@ struct SearchView: View {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
             localResults = []
-            onlineResults = []
+            onlineResults = .empty
             onlineStatusMessage = nil
+            onlinePrompt = nil
             isSearchingOnline = false
             return
         }
 
         debugLog("Query entered: \(trimmedQuery)")
+        debugLog("Selected provider: \(selectedProvider.displayName)")
         localResults = localMatches(for: trimmedQuery)
         debugLog("Local result count: \(localResults.count)")
         logResultCounts(for: trimmedQuery)
-        onlineResults = []
+        onlineResults = .empty
         onlineStatusMessage = nil
+        onlinePrompt = nil
 
         guard shouldSearchOnline else {
             isSearchingOnline = false
             return
         }
 
+        let provider = selectedProvider
         isSearchingOnline = true
-        debugLog("Online search start: \(trimmedQuery)")
+        debugLog("Provider search start: \(provider.displayName) for \(trimmedQuery)")
 
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
 
             do {
-                let fetchedResults = try await searchOnlineResultsWithTimeout(for: trimmedQuery)
+                let fetchedResults = try await searchOnlineResultsWithTimeout(for: trimmedQuery, provider: provider)
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
-                    guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery else { return }
+                    guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery,
+                          selectedProvider == provider else { return }
                     onlineResults = fetchedResults
                     isSearchingOnline = false
                     onlineStatusMessage = nil
-                    debugLog("Online result count: \(fetchedResults.count)")
+                    onlinePrompt = nil
+                    debugLog(
+                        "Provider search end: \(provider.displayName) tracks=\(fetchedResults.tracks.count), artists=\(fetchedResults.artists.count), albums=\(fetchedResults.albums.count), playlists=\(fetchedResults.playlists.count)"
+                    )
                 }
             } catch let onlineError as OnlineMusicServiceError {
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
-                    guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery else { return }
-                    onlineResults = []
+                    guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery,
+                          selectedProvider == provider else { return }
+                    onlineResults = .empty
                     isSearchingOnline = false
+                    onlinePrompt = nil
 
                     switch onlineError {
                     case .noResults(_):
                         onlineStatusMessage = nil
-                        debugLog("Online result count: 0")
+                        debugLog("Provider search end: \(provider.displayName) with 0 results")
                     case .timedOut(let message):
+                        onlineStatusMessage = message
+                    case .authenticationRequired(let message):
+                        onlineStatusMessage = message
+                        if provider == .spotify && OnlineMusicService.shared.isSpotifyConfigured {
+                            onlinePrompt = .connectSpotify
+                        }
+                    case .configurationMissing(let message):
                         onlineStatusMessage = message
                     default:
                         onlineStatusMessage = onlineError.localizedDescription
@@ -447,28 +562,33 @@ struct SearchView: View {
                 guard !Task.isCancelled else { return }
 
                 await MainActor.run {
-                    guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery else { return }
-                    onlineResults = []
+                    guard searchText.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedQuery,
+                          selectedProvider == provider else { return }
+                    onlineResults = .empty
                     isSearchingOnline = false
+                    onlinePrompt = nil
                     onlineStatusMessage = error.localizedDescription
                 }
             }
         }
     }
 
-    private func searchOnlineResultsWithTimeout(for query: String) async throws -> [OnlineTrackResult] {
+    private func searchOnlineResultsWithTimeout(
+        for query: String,
+        provider: OnlineTrackProvider
+    ) async throws -> OnlineSearchResults {
         let timeoutNanoseconds = onlineSearchTimeoutNanoseconds
 
-        return try await withThrowingTaskGroup(of: [OnlineTrackResult].self) { group in
+        return try await withThrowingTaskGroup(of: OnlineSearchResults.self) { group in
             group.addTask {
-                try await OnlineMusicService.shared.search(query)
+                try await OnlineMusicService.shared.search(query, provider: provider)
             }
 
             group.addTask {
                 try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                debugLog("Online search timeout: \(query)")
+                debugLog("Provider search timeout: \(provider.displayName) for \(query)")
                 throw OnlineMusicServiceError.timedOut(
-                    "Online search timed out. Try another query or try again."
+                    "\(provider.displayName) search timed out. Try another query or try again."
                 )
             }
 
@@ -485,8 +605,24 @@ struct SearchView: View {
         }
     }
 
+    private func handlePrimaryAction(for result: OnlineTrackResult) {
+        if result.supportsInAppPlayback {
+            playOnlineResult(result)
+        } else {
+            debugLog("External result open pressed: \(result.title) [\(result.providerTrackID)]")
+            openExternalResult(
+                result.externalURL,
+                failureMessage: "\(result.providerDisplayName) could not be opened from this result."
+            )
+        }
+    }
+
     private func playOnlineResult(_ result: OnlineTrackResult) {
         guard !downloadingIDs.contains(result.id) else { return }
+        guard result.supportsInAppPlayback else {
+            onlineStatusMessage = result.playbackUnavailableMessage
+            return
+        }
 
         debugLog("Online result play pressed: \(result.title) [\(result.providerTrackID)]")
         downloadingIDs.insert(result.id)
@@ -527,6 +663,10 @@ struct SearchView: View {
 
     private func saveOnlineResult(_ result: OnlineTrackResult) {
         guard !savingIDs.contains(result.id) else { return }
+        guard result.supportsOfflineDownload else {
+            onlineStatusMessage = result.offlineDownloadUnavailableMessage
+            return
+        }
 
         if let savedTrack = dataManager.track(withSourceID: result.id) {
             debugLog("Saved online result tapped again: \(result.title) [\(result.providerTrackID)]")
@@ -566,6 +706,119 @@ struct SearchView: View {
                 }
             }
         }
+    }
+
+    private func selectProvider(_ provider: OnlineTrackProvider) {
+        guard provider != selectedProvider else { return }
+
+        debugLog("Selected provider switched to: \(provider.displayName)")
+        selectedProviderRawValue = provider.rawValue
+        onlineStatusMessage = nil
+        onlinePrompt = nil
+
+        guard !trimmedSearchText.isEmpty else { return }
+        performSearch(searchText, shouldSearchOnline: true)
+    }
+
+    private func connectSpotify() {
+        guard !isAuthorizingSpotify else { return }
+
+        debugLog("Spotify connect button pressed")
+        isAuthorizingSpotify = true
+        onlineStatusMessage = nil
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isAuthorizingSpotify = false
+                }
+            }
+
+            do {
+                try await OnlineMusicService.shared.authorizeSpotify()
+                await MainActor.run {
+                    onlinePrompt = nil
+                    if !trimmedSearchText.isEmpty {
+                        performSearch(searchText, shouldSearchOnline: true)
+                    }
+                }
+            } catch {
+                debugLog("Spotify connect error: \(error.localizedDescription)")
+                await MainActor.run {
+                    onlineStatusMessage = error.localizedDescription
+                    if OnlineMusicService.shared.isSpotifyConfigured {
+                        onlinePrompt = .connectSpotify
+                    }
+                }
+            }
+        }
+    }
+
+    private func openExternalResult(_ url: URL?, failureMessage: String) {
+        guard let url else {
+            onlineStatusMessage = failureMessage
+            return
+        }
+
+        openURL(url) { didOpen in
+            if !didOpen {
+                onlineStatusMessage = failureMessage
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func onlineStatusRow(for category: SearchCategory) -> some View {
+        if let onlineStatusMessage {
+            SearchStatusRow(
+                icon: "wifi.exclamationmark",
+                title: "\(selectedProvider.displayName) search unavailable",
+                subtitle: onlineStatusMessage,
+                actionTitle: onlinePrompt == .connectSpotify ? "Connect" : nil,
+                isActionLoading: isAuthorizingSpotify,
+                action: onlinePrompt == .connectSpotify ? connectSpotify : nil
+            )
+        } else {
+            SearchStatusRow(
+                icon: "note.slash",
+                title: noOnlineMatchesTitle(for: category),
+                subtitle: noOnlineMatchesSubtitle(for: category)
+            )
+        }
+    }
+
+    private func onlineSearchSubtitle(for category: SearchCategory) -> String {
+        switch category {
+        case .tracks:
+            return "Looking up matching tracks on \(selectedProvider.displayName)."
+        case .artists:
+            return "Looking up matching artists on \(selectedProvider.displayName)."
+        case .albums:
+            return "Looking up matching albums on \(selectedProvider.displayName)."
+        case .playlists:
+            return "Looking up matching playlists on \(selectedProvider.displayName)."
+        }
+    }
+
+    private func noOnlineMatchesTitle(for category: SearchCategory) -> String {
+        switch category {
+        case .tracks:
+            return "No \(selectedProvider.displayName) tracks"
+        case .artists:
+            return "No \(selectedProvider.displayName) artists"
+        case .albums:
+            return "No \(selectedProvider.displayName) albums"
+        case .playlists:
+            return "No \(selectedProvider.displayName) playlists"
+        }
+    }
+
+    private func noOnlineMatchesSubtitle(for category: SearchCategory) -> String {
+        if selectedProvider == .soundcloud && category == .playlists {
+            return "SoundCloud playlist search is not available in this app yet."
+        }
+
+        return "Try another query or switch providers."
     }
 
     private func localMatches(for query: String) -> [Track] {
@@ -668,6 +921,19 @@ struct SearchView: View {
         }
     }
 
+    private func onlineResultCount(for category: SearchCategory) -> Int {
+        switch category {
+        case .tracks:
+            return onlineTrackResults.count
+        case .artists:
+            return onlineArtistResults.count
+        case .albums:
+            return onlineAlbumResults.count
+        case .playlists:
+            return onlinePlaylistResults.count
+        }
+    }
+
     private func logResultCounts(for query: String) {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else { return }
@@ -682,6 +948,9 @@ struct SearchView: View {
         debugLog("Playlist search result count: \(playlistResultCount)")
         debugLog(
             "Search result counts for \(trimmedQuery): tracks=\(localMatches(for: trimmedQuery).count), artists=\(artistMatches(for: trimmedQuery).count), albums=\(albumMatches(for: trimmedQuery).count), playlists=\(playlistMatches(for: trimmedQuery).count)"
+        )
+        debugLog(
+            "Provider result counts for \(selectedProvider.displayName): tracks=\(onlineTrackResults.count), artists=\(onlineArtistResults.count), albums=\(onlineAlbumResults.count), playlists=\(onlinePlaylistResults.count)"
         )
     }
 
@@ -846,6 +1115,45 @@ struct LocalPlaylistSearchResult: Identifiable {
     }
 }
 
+private enum OnlineSearchPrompt {
+    case connectSpotify
+}
+
+struct SearchProviderButton: View {
+    let provider: OnlineTrackProvider
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white.opacity(0.08))
+
+            Circle()
+                .stroke(provider.accentColor.opacity(0.4), lineWidth: 1)
+
+            ProviderIconView(provider: provider, size: 20)
+        }
+        .frame(width: 42, height: 42)
+        .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
+        .accessibilityLabel(Text(provider.displayName))
+    }
+}
+
+struct SearchProviderMenuRow: View {
+    let provider: OnlineTrackProvider
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderIconView(provider: provider, size: 16)
+            Text(provider.displayName)
+            if isSelected {
+                Spacer(minLength: 8)
+                Image(systemName: "checkmark")
+            }
+        }
+    }
+}
+
 struct SearchSectionCard<Content: View>: View {
     let title: String
     let content: Content
@@ -878,6 +1186,9 @@ struct SearchStatusRow: View {
     let icon: String
     let title: String
     let subtitle: String
+    var actionTitle: String? = nil
+    var isActionLoading: Bool = false
+    var action: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -895,6 +1206,29 @@ struct SearchStatusRow: View {
             }
 
             Spacer()
+
+            if let actionTitle, let action {
+                Button(action: action) {
+                    Group {
+                        if isActionLoading {
+                            ProgressView()
+                                .tint(.white)
+                                .frame(width: 18, height: 18)
+                        } else {
+                            Text(actionTitle)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.08))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 12)
@@ -1174,15 +1508,21 @@ struct SearchPlaylistArtworkView: View {
 
 struct OnlineSearchTrackRow: View {
     let result: OnlineTrackResult
-    let isDownloading: Bool
+    let isPerformingPrimaryAction: Bool
     let isSaving: Bool
     let isSaved: Bool
-    let playAction: () -> Void
-    let saveAction: () -> Void
+    let primaryAction: () -> Void
+    let saveAction: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
-            OnlineTrackArtworkView(result: result, size: 50)
+            OnlineResultArtworkView(
+                provider: result.provider,
+                artworkURLString: result.coverArtURL,
+                fallbackSystemImage: "music.note",
+                size: 50,
+                cornerRadius: 8
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.title)
@@ -1190,7 +1530,7 @@ struct OnlineSearchTrackRow: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
 
-                Text("\(result.artist) - \(result.providerDisplayName)")
+                Text(result.detailLine)
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)
@@ -1202,29 +1542,34 @@ struct OnlineSearchTrackRow: View {
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.4))
 
-            Button(action: saveAction) {
-                if isSaving {
-                    ProgressView()
-                        .tint(.white)
-                        .frame(width: 20, height: 20)
-                } else {
-                    Image(systemName: isSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
-                        .font(.system(size: 20))
-                        .foregroundColor(isSaved ? .green : .white.opacity(0.7))
+            if let saveAction {
+                Button(action: saveAction) {
+                    if isSaving {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: isSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                            .font(.system(size: 20))
+                            .foregroundColor(isSaved ? .green : .white.opacity(0.7))
+                    }
                 }
+                .buttonStyle(.plain)
+                .frame(width: 28)
+            } else {
+                Color.clear
+                    .frame(width: 28, height: 28)
             }
-            .buttonStyle(.plain)
-            .frame(width: 28)
 
-            Button(action: playAction) {
-                if isDownloading {
+            Button(action: primaryAction) {
+                if isPerformingPrimaryAction {
                     ProgressView()
-                        .tint(.red)
+                        .tint(result.supportsInAppPlayback ? .red : result.provider.accentColor)
                         .frame(width: 28, height: 28)
                 } else {
-                    Image(systemName: "play.circle.fill")
+                    Image(systemName: result.supportsInAppPlayback ? "play.circle.fill" : "arrow.up.right.circle.fill")
                         .font(.system(size: 28))
-                        .foregroundColor(.red)
+                        .foregroundColor(result.supportsInAppPlayback ? .red : result.provider.accentColor)
                 }
             }
             .buttonStyle(.plain)
@@ -1232,22 +1577,157 @@ struct OnlineSearchTrackRow: View {
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .onTapGesture(perform: playAction)
+        .onTapGesture(perform: primaryAction)
     }
 }
 
-struct OnlineTrackArtworkView: View {
-    let result: OnlineTrackResult
+struct OnlineSearchArtistRow: View {
+    let result: OnlineArtistResult
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            OnlineResultArtworkView(
+                provider: result.provider,
+                artworkURLString: result.imageURL,
+                fallbackSystemImage: "person.fill",
+                size: 54,
+                cornerRadius: 27
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.name)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(result.providerDisplayName)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.52))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+    }
+}
+
+struct OnlineSearchAlbumRow: View {
+    let result: OnlineAlbumResult
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            OnlineResultArtworkView(
+                provider: result.provider,
+                artworkURLString: result.coverArtURL,
+                fallbackSystemImage: "square.stack.fill",
+                size: 54,
+                cornerRadius: 12
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(result.artist)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+
+                Text(result.providerDisplayName)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.42))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+    }
+}
+
+struct OnlineSearchPlaylistRow: View {
+    let result: OnlinePlaylistResult
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            OnlineResultArtworkView(
+                provider: result.provider,
+                artworkURLString: result.coverArtURL,
+                fallbackSystemImage: "music.note.list",
+                size: 54,
+                cornerRadius: 12
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(result.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(metadataLine)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.52))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.28))
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+    }
+
+    private var metadataLine: String {
+        let pieces = [
+            result.ownerName,
+            result.trackCount.map { "\($0) track\($0 == 1 ? "" : "s")" },
+            result.providerDisplayName
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? $0 : nil }
+
+        return pieces.isEmpty ? result.providerDisplayName : pieces.joined(separator: " | ")
+    }
+}
+
+struct OnlineResultArtworkView: View {
+    let provider: OnlineTrackProvider
+    let artworkURLString: String?
+    let fallbackSystemImage: String
     let size: CGFloat
+    let cornerRadius: CGFloat
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(red: 0.75, green: 0.2, blue: 0.2),
-                            Color(red: 0.25, green: 0.08, blue: 0.08)
+                            provider.accentColor,
+                            provider.secondaryAccentColor
                         ],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
@@ -1256,16 +1736,14 @@ struct OnlineTrackArtworkView: View {
 
             artworkContent
 
-            Image(systemName: "waveform")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.orange.opacity(0.95))
+            ProviderIconView(provider: provider, size: 13)
                 .padding(5)
                 .background(Circle().fill(Color.black.opacity(0.82)))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .padding(4)
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
 
     @ViewBuilder
@@ -1287,8 +1765,8 @@ struct OnlineTrackArtworkView: View {
     }
 
     private var artworkURL: URL? {
-        guard let coverArtURL = result.coverArtURL,
-              let parsedURL = URL(string: coverArtURL),
+        guard let artworkURLString,
+              let parsedURL = URL(string: artworkURLString),
               let scheme = parsedURL.scheme?.lowercased(),
               scheme == "http" || scheme == "https" else {
             return nil
@@ -1299,15 +1777,15 @@ struct OnlineTrackArtworkView: View {
 
     private var fallbackArtwork: some View {
         ZStack {
-            Image("PlayerAvatar")
-                .resizable()
-                .scaledToFill()
-
             LinearGradient(
-                colors: [Color.black.opacity(0.08), Color.black.opacity(0.28)],
+                colors: [provider.accentColor, provider.secondaryAccentColor],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+
+            Image(systemName: fallbackSystemImage)
+                .font(.system(size: size * 0.36, weight: .semibold))
+                .foregroundColor(.white.opacity(0.8))
         }
     }
 }

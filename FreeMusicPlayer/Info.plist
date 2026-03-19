@@ -16,6 +16,19 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.collotype.freemusic.spotify-auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.collotype.freemusic</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
@@ -28,6 +41,10 @@
 	<string>The app needs access to your photos so you can choose cover art.</string>
 	<key>SoundCloudClientID</key>
 	<string>GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7</string>
+	<key>SpotifyClientID</key>
+	<string></string>
+	<key>SpotifyRedirectURI</key>
+	<string>com.collotype.freemusic://spotify-auth-callback</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

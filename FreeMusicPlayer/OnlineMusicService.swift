@@ -2,21 +2,38 @@
 //  OnlineMusicService.swift
 //  FreeMusicPlayer
 //
-//  Foreground-only SoundCloud search and retrieval that runs directly inside
+//  Foreground-only online music search and retrieval that runs directly inside
 //  the app process without an external backend.
 //
 
+import AuthenticationServices
+import CryptoKit
 import Foundation
+import Security
+import UIKit
 
-enum OnlineTrackProvider: String, Equatable {
+enum OnlineTrackProvider: String, Equatable, CaseIterable, Identifiable {
     case soundcloud = "soundcloud"
+    case spotify = "spotify"
+
+    var id: String { rawValue }
 
     var displayName: String {
-        "SoundCloud"
+        switch self {
+        case .soundcloud:
+            return "SoundCloud"
+        case .spotify:
+            return "Spotify"
+        }
     }
 
     var trackSource: Track.TrackSource {
-        .soundcloud
+        switch self {
+        case .soundcloud:
+            return .soundcloud
+        case .spotify:
+            return .spotify
+        }
     }
 }
 
@@ -49,6 +66,24 @@ struct SoundCloudStreamCandidate: Equatable {
 
     var isProgressive: Bool {
         protocolName.lowercased() == "progressive"
+    }
+}
+
+struct OnlineSearchResults: Equatable {
+    let tracks: [OnlineTrackResult]
+    let artists: [OnlineArtistResult]
+    let albums: [OnlineAlbumResult]
+    let playlists: [OnlinePlaylistResult]
+
+    static let empty = OnlineSearchResults(
+        tracks: [],
+        artists: [],
+        albums: [],
+        playlists: []
+    )
+
+    var isEmpty: Bool {
+        tracks.isEmpty && artists.isEmpty && albums.isEmpty && playlists.isEmpty
     }
 }
 
@@ -88,8 +123,148 @@ struct OnlineTrackResult: Identifiable, Equatable {
         provider.trackSource
     }
 
+    var supportsInAppPlayback: Bool {
+        switch provider {
+        case .soundcloud:
+            return !playbackStreams.isEmpty
+        case .spotify:
+            return false
+        }
+    }
+
     var supportsOfflineDownload: Bool {
-        playbackStreams.contains { $0.kind == .progressiveMP3 }
+        switch provider {
+        case .soundcloud:
+            return playbackStreams.contains { $0.kind == .progressiveMP3 }
+        case .spotify:
+            return false
+        }
+    }
+
+    var detailLine: String {
+        let pieces = [
+            cleanedDisplayText(artist),
+            cleanedDisplayText(album),
+            providerDisplayName
+        ].compactMap { $0 }
+
+        return pieces.joined(separator: " | ")
+    }
+
+    var externalURL: URL? {
+        guard let parsedURL = URL(string: webpageURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+
+    var playbackUnavailableMessage: String {
+        switch provider {
+        case .soundcloud:
+            return "Playback is not available for this SoundCloud track right now."
+        case .spotify:
+            return "Spotify results are metadata-only here. Open the track in Spotify instead."
+        }
+    }
+
+    var offlineDownloadUnavailableMessage: String {
+        switch provider {
+        case .soundcloud:
+            return "Offline saving is not available for this SoundCloud track."
+        case .spotify:
+            return "Spotify tracks cannot be downloaded or saved into the local library from this app."
+        }
+    }
+
+    private func cleanedDisplayText(_ value: String?) -> String? {
+        guard let value else { return nil }
+
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+}
+
+struct OnlineArtistResult: Identifiable, Equatable {
+    let provider: OnlineTrackProvider
+    let providerArtistID: String
+    let name: String
+    let imageURL: String?
+    let webpageURL: String
+
+    var id: String {
+        "\(provider.rawValue):artist:\(providerArtistID)"
+    }
+
+    var providerDisplayName: String {
+        provider.displayName
+    }
+
+    var externalURL: URL? {
+        guard let parsedURL = URL(string: webpageURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+}
+
+struct OnlineAlbumResult: Identifiable, Equatable {
+    let provider: OnlineTrackProvider
+    let providerAlbumID: String
+    let title: String
+    let artist: String
+    let coverArtURL: String?
+    let webpageURL: String
+
+    var id: String {
+        "\(provider.rawValue):album:\(providerAlbumID)"
+    }
+
+    var providerDisplayName: String {
+        provider.displayName
+    }
+
+    var externalURL: URL? {
+        guard let parsedURL = URL(string: webpageURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+}
+
+struct OnlinePlaylistResult: Identifiable, Equatable {
+    let provider: OnlineTrackProvider
+    let providerPlaylistID: String
+    let title: String
+    let ownerName: String?
+    let coverArtURL: String?
+    let webpageURL: String
+    let trackCount: Int?
+
+    var id: String {
+        "\(provider.rawValue):playlist:\(providerPlaylistID)"
+    }
+
+    var providerDisplayName: String {
+        provider.displayName
+    }
+
+    var externalURL: URL? {
+        guard let parsedURL = URL(string: webpageURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
     }
 }
 
@@ -109,13 +284,15 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
     case extractionFailure(String)
     case tempFileWriteFailure(String)
     case unavailableSources
+    case authenticationRequired(String)
+    case configurationMissing(String)
 
     var errorDescription: String? {
         switch self {
         case .invalidQuery:
             return "Enter a search query first."
-        case .noResults(let query):
-            return "No SoundCloud results were found for \"\(query)\"."
+        case .noResults(let message):
+            return message
         case .timedOut(let message):
             return message
         case .networkFailure(let message):
@@ -129,7 +306,11 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
         case .tempFileWriteFailure(let message):
             return message
         case .unavailableSources:
-            return "SoundCloud is unavailable right now."
+            return "The selected online provider is unavailable right now."
+        case .authenticationRequired(let message):
+            return message
+        case .configurationMissing(let message):
+            return message
         }
     }
 }
@@ -140,12 +321,21 @@ final class OnlineMusicService {
     private let fileManager = FileManager.default
     private let session: URLSession
     private let decoder = JSONDecoder()
-    private let runtimeState = SoundCloudRuntimeState()
+    private let soundCloudRuntimeState = SoundCloudRuntimeState()
+    private let spotifyRuntimeState = SpotifyRuntimeState()
+    private let spotifyAuthCoordinator = SpotifyAuthCoordinator()
+
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
     private let soundCloudSearchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
     private let bundledFallbackClientIDs = [
         "GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7",
     ]
+
+    private let spotifyAuthorizationURL = URL(string: "https://accounts.spotify.com/authorize")!
+    private let spotifyTokenURL = URL(string: "https://accounts.spotify.com/api/token")!
+    private let spotifySearchURL = URL(string: "https://api.spotify.com/v1/search")!
+    private let defaultSpotifyRedirectURI = "com.collotype.freemusic://spotify-auth-callback"
+    private let spotifySearchLimit = 12
 
     private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     private let soundCloudAssetPattern = #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#
@@ -163,77 +353,38 @@ final class OnlineMusicService {
         session = URLSession(configuration: configuration)
     }
 
-    func search(_ query: String) async throws -> [OnlineTrackResult] {
+    var isSpotifyConfigured: Bool {
+        spotifyConfiguration != nil
+    }
+
+    func search(_ query: String, provider: OnlineTrackProvider) async throws -> OnlineSearchResults {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
             throw OnlineMusicServiceError.invalidQuery
         }
 
+        debugLog("Selected provider: \(provider.displayName)")
         debugLog("Online query entered: \(trimmedQuery)")
 
-        let initialCandidates = await initialSoundCloudClientIDs()
-        var attemptedClientIDs: [String] = []
-        var lastExplicitError: OnlineMusicServiceError?
-
-        for clientID in initialCandidates {
-            do {
-                return try await executeSearch(query: trimmedQuery, clientID: clientID)
-            } catch let error as OnlineMusicServiceError {
-                attemptedClientIDs.append(clientID)
-                lastExplicitError = error
-                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
-            } catch {
-                attemptedClientIDs.append(clientID)
-                let wrappedError = OnlineMusicServiceError.networkFailure(
-                    "SoundCloud search failed because the provider request could not be completed."
-                )
-                lastExplicitError = wrappedError
-                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
-            }
+        switch provider {
+        case .soundcloud:
+            return try await searchViaSoundCloud(query: trimmedQuery)
+        case .spotify:
+            return try await searchViaSpotify(query: trimmedQuery)
         }
-
-        if let discoveredClientID = try? await discoverSoundCloudClientID(),
-           !attemptedClientIDs.contains(discoveredClientID) {
-            do {
-                return try await executeSearch(query: trimmedQuery, clientID: discoveredClientID)
-            } catch let error as OnlineMusicServiceError {
-                lastExplicitError = error
-                debugLog("Provider error: SoundCloud using discovered client_id \(maskedClientID(discoveredClientID)) - \(error.localizedDescription)")
-            } catch {
-                let wrappedError = OnlineMusicServiceError.networkFailure(
-                    "SoundCloud search failed because the provider request could not be completed."
-                )
-                lastExplicitError = wrappedError
-                debugLog("Provider error: SoundCloud using discovered client_id \(maskedClientID(discoveredClientID)) - \(error.localizedDescription)")
-            }
-        }
-
-        if let lastExplicitError {
-            throw lastExplicitError
-        }
-
-        debugLog("Provider error: SoundCloud - unavailable sources")
-        throw OnlineMusicServiceError.unavailableSources
     }
 
-    private func executeSearch(query: String, clientID: String) async throws -> [OnlineTrackResult] {
-        debugLog("Provider start: SoundCloud for query \(query) using client_id \(maskedClientID(clientID))")
-
-        let results = try await searchViaSoundCloud(query: query, clientID: clientID)
-        let finalResults = Array(results.prefix(20))
-        await runtimeState.setClientID(clientID)
-
-        debugLog("Provider finish: SoundCloud with \(finalResults.count) results")
-        debugLog("Online result count: \(finalResults.count)")
-
-        if finalResults.isEmpty {
-            throw OnlineMusicServiceError.noResults(query)
-        }
-
-        return finalResults
+    func authorizeSpotify() async throws {
+        let configuration = try spotifyConfigurationOrThrow()
+        await logSpotifyConfigurationState(configuration)
+        _ = try await spotifyAccessToken(configuration: configuration, interactive: true)
     }
 
     func resolvePlaybackStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
+        guard result.provider == .soundcloud else {
+            throw OnlineMusicServiceError.unsupportedSource(result.playbackUnavailableMessage)
+        }
+
         guard !result.providerTrackURN.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OnlineMusicServiceError.unsupportedSource(
                 "Unsupported source. The selected SoundCloud result does not contain a valid track URN."
@@ -282,6 +433,10 @@ final class OnlineMusicService {
     }
 
     func downloadAudio(for result: OnlineTrackResult) async throws -> URL {
+        guard result.provider == .soundcloud else {
+            throw OnlineMusicServiceError.unsupportedSource(result.offlineDownloadUnavailableMessage)
+        }
+
         guard !result.providerTrackURN.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OnlineMusicServiceError.unsupportedSource(
                 "Unsupported source. The selected SoundCloud result does not contain a valid track URN."
@@ -365,7 +520,73 @@ final class OnlineMusicService {
         return destinationURL
     }
 
-    private func searchViaSoundCloud(query: String, clientID: String) async throws -> [OnlineTrackResult] {
+    private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
+        let initialCandidates = await initialSoundCloudClientIDs()
+        var attemptedClientIDs: [String] = []
+        var lastExplicitError: OnlineMusicServiceError?
+
+        for clientID in initialCandidates {
+            do {
+                return try await executeSoundCloudSearch(query: query, clientID: clientID)
+            } catch let error as OnlineMusicServiceError {
+                attemptedClientIDs.append(clientID)
+                lastExplicitError = error
+                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
+            } catch {
+                attemptedClientIDs.append(clientID)
+                let wrappedError = OnlineMusicServiceError.networkFailure(
+                    "SoundCloud search failed because the provider request could not be completed."
+                )
+                lastExplicitError = wrappedError
+                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
+            }
+        }
+
+        if let discoveredClientID = try? await discoverSoundCloudClientID(),
+           !attemptedClientIDs.contains(discoveredClientID) {
+            do {
+                return try await executeSoundCloudSearch(query: query, clientID: discoveredClientID)
+            } catch let error as OnlineMusicServiceError {
+                lastExplicitError = error
+                debugLog("Provider error: SoundCloud using discovered client_id \(maskedClientID(discoveredClientID)) - \(error.localizedDescription)")
+            } catch {
+                let wrappedError = OnlineMusicServiceError.networkFailure(
+                    "SoundCloud search failed because the provider request could not be completed."
+                )
+                lastExplicitError = wrappedError
+                debugLog("Provider error: SoundCloud using discovered client_id \(maskedClientID(discoveredClientID)) - \(error.localizedDescription)")
+            }
+        }
+
+        if let lastExplicitError {
+            throw lastExplicitError
+        }
+
+        debugLog("Provider error: SoundCloud - unavailable sources")
+        throw OnlineMusicServiceError.unavailableSources
+    }
+
+    private func executeSoundCloudSearch(query: String, clientID: String) async throws -> OnlineSearchResults {
+        debugLog("Provider start: SoundCloud for query \(query) using client_id \(maskedClientID(clientID))")
+
+        let tracks = try await searchTracksViaSoundCloud(query: query, clientID: clientID)
+        let finalTracks = Array(tracks.prefix(20))
+        let results = makeSoundCloudSearchResults(from: finalTracks)
+        await soundCloudRuntimeState.setClientID(clientID)
+
+        logMappedResultCounts(provider: .soundcloud, results: results)
+        debugLog(
+            "Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
+        )
+
+        guard !results.isEmpty else {
+            throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
+        }
+
+        return results
+    }
+
+    private func searchTracksViaSoundCloud(query: String, clientID: String) async throws -> [OnlineTrackResult] {
         var components = URLComponents(url: soundCloudSearchURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "q", value: query),
@@ -378,7 +599,7 @@ final class OnlineMusicService {
             throw OnlineMusicServiceError.networkFailure("SoundCloud search URL could not be created.")
         }
 
-        let data = try await fetchData(from: requestURL, accept: "application/json, text/plain, */*")
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
 
         let response: SoundCloudSearchResponse
         do {
@@ -387,9 +608,465 @@ final class OnlineMusicService {
             throw OnlineMusicServiceError.extractionFailure("SoundCloud search returned malformed JSON.")
         }
 
-        return deduplicatedResults(
+        return deduplicatedTrackResults(
             response.collection.compactMap { makeOnlineTrackResult(from: $0) }
         )
+    }
+
+    private func searchViaSpotify(query: String) async throws -> OnlineSearchResults {
+        let configuration = try spotifyConfigurationOrThrow()
+        await logSpotifyConfigurationState(configuration)
+        let accessToken = try await spotifyAccessToken(configuration: configuration, interactive: false)
+
+        debugLog("Provider start: Spotify for query \(query)")
+
+        var components = URLComponents(url: spotifySearchURL, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "type", value: "track,artist,album,playlist"),
+            URLQueryItem(name: "limit", value: String(spotifySearchLimit)),
+            URLQueryItem(name: "market", value: configuration.market)
+        ]
+
+        guard let requestURL = components?.url else {
+            throw OnlineMusicServiceError.networkFailure("Spotify search URL could not be created.")
+        }
+
+        let data = try await fetchSpotifyData(from: requestURL, accessToken: accessToken)
+
+        let response: SpotifySearchResponse
+        do {
+            response = try decoder.decode(SpotifySearchResponse.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("Spotify search returned malformed JSON.")
+        }
+
+        let results = OnlineSearchResults(
+            tracks: deduplicatedTrackResults(
+                response.tracks?.items.compactMap { makeOnlineTrackResult(from: $0) } ?? []
+            ),
+            artists: deduplicatedArtistResults(
+                response.artists?.items.compactMap { makeOnlineArtistResult(from: $0) } ?? []
+            ),
+            albums: deduplicatedAlbumResults(
+                response.albums?.items.compactMap { makeOnlineAlbumResult(from: $0) } ?? []
+            ),
+            playlists: deduplicatedPlaylistResults(
+                response.playlists?.items.compactMap { makeOnlinePlaylistResult(from: $0) } ?? []
+            )
+        )
+
+        logMappedResultCounts(provider: .spotify, results: results)
+        debugLog(
+            "Provider finish: Spotify with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
+        )
+
+        guard !results.isEmpty else {
+            throw OnlineMusicServiceError.noResults("No Spotify results were found for \"\(query)\".")
+        }
+
+        return results
+    }
+
+    private func spotifyAccessToken(
+        configuration: SpotifyConfiguration,
+        interactive: Bool
+    ) async throws -> String {
+        if let accessToken = await spotifyRuntimeState.validAccessToken(referenceDate: Date()) {
+            debugLog("Spotify auth state: using cached access token")
+            return accessToken
+        }
+
+        if let refreshToken = await spotifyRuntimeState.refreshToken {
+            debugLog("Spotify auth state: refreshing access token")
+
+            do {
+                let refreshedCredentials = try await refreshSpotifyAccessToken(
+                    refreshToken: refreshToken,
+                    configuration: configuration
+                )
+                await spotifyRuntimeState.setCredentials(refreshedCredentials)
+                return refreshedCredentials.accessToken
+            } catch {
+                debugLog("Spotify token refresh failed: \(error.localizedDescription)")
+                await spotifyRuntimeState.clearCredentials()
+            }
+        }
+
+        guard interactive else {
+            throw OnlineMusicServiceError.authenticationRequired(
+                "Connect Spotify to search its catalog."
+            )
+        }
+
+        let credentials = try await authorizeSpotifyInteractively(configuration: configuration)
+        return credentials.accessToken
+    }
+
+    private func authorizeSpotifyInteractively(
+        configuration: SpotifyConfiguration
+    ) async throws -> SpotifyCredentials {
+        debugLog("Spotify auth start")
+
+        let codeVerifier = makePKCECodeVerifier()
+        let codeChallenge = makeCodeChallenge(from: codeVerifier)
+        let state = makeOpaqueState()
+        let authorizationRequestURL = try makeSpotifyAuthorizationRequestURL(
+            configuration: configuration,
+            codeChallenge: codeChallenge,
+            state: state
+        )
+
+        let callbackURL = try await spotifyAuthCoordinator.authenticate(
+            using: authorizationRequestURL,
+            callbackURLScheme: configuration.callbackURLScheme
+        )
+
+        guard let callbackComponents = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
+            throw OnlineMusicServiceError.authenticationRequired(
+                "Spotify sign-in finished with an unreadable callback URL."
+            )
+        }
+
+        if let errorValue = callbackComponents.queryItems?.first(where: { $0.name == "error" })?.value {
+            throw OnlineMusicServiceError.authenticationRequired(
+                "Spotify sign-in did not complete: \(errorValue)."
+            )
+        }
+
+        guard let returnedState = callbackComponents.queryItems?.first(where: { $0.name == "state" })?.value,
+              returnedState == state else {
+            throw OnlineMusicServiceError.authenticationRequired(
+                "Spotify sign-in could not be verified."
+            )
+        }
+
+        guard let authorizationCode = callbackComponents.queryItems?.first(where: { $0.name == "code" })?.value,
+              let cleanedAuthorizationCode = cleanedText(authorizationCode) else {
+            throw OnlineMusicServiceError.authenticationRequired(
+                "Spotify sign-in finished without an authorization code."
+            )
+        }
+
+        let credentials = try await exchangeSpotifyAuthorizationCode(
+            authorizationCode: cleanedAuthorizationCode,
+            codeVerifier: codeVerifier,
+            configuration: configuration
+        )
+        await spotifyRuntimeState.setCredentials(credentials)
+
+        debugLog("Spotify auth finish")
+        return credentials
+    }
+
+    private func exchangeSpotifyAuthorizationCode(
+        authorizationCode: String,
+        codeVerifier: String,
+        configuration: SpotifyConfiguration
+    ) async throws -> SpotifyCredentials {
+        let response = try await performSpotifyTokenRequest(
+            bodyItems: [
+                URLQueryItem(name: "grant_type", value: "authorization_code"),
+                URLQueryItem(name: "code", value: authorizationCode),
+                URLQueryItem(name: "redirect_uri", value: configuration.redirectURI),
+                URLQueryItem(name: "client_id", value: configuration.clientID),
+                URLQueryItem(name: "code_verifier", value: codeVerifier)
+            ]
+        )
+
+        return SpotifyCredentials(
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+            expirationDate: Date().addingTimeInterval(TimeInterval(max(response.expiresIn - 60, 0)))
+        )
+    }
+
+    private func refreshSpotifyAccessToken(
+        refreshToken: String,
+        configuration: SpotifyConfiguration
+    ) async throws -> SpotifyCredentials {
+        let response = try await performSpotifyTokenRequest(
+            bodyItems: [
+                URLQueryItem(name: "grant_type", value: "refresh_token"),
+                URLQueryItem(name: "refresh_token", value: refreshToken),
+                URLQueryItem(name: "client_id", value: configuration.clientID)
+            ]
+        )
+
+        debugLog("Spotify auth state: refresh token succeeded")
+
+        return SpotifyCredentials(
+            accessToken: response.accessToken,
+            refreshToken: cleanedText(response.refreshToken) ?? refreshToken,
+            expirationDate: Date().addingTimeInterval(TimeInterval(max(response.expiresIn - 60, 0)))
+        )
+    }
+
+    private func performSpotifyTokenRequest(
+        bodyItems: [URLQueryItem]
+    ) async throws -> SpotifyTokenResponse {
+        var components = URLComponents()
+        components.queryItems = bodyItems
+
+        guard let body = components.percentEncodedQuery?.data(using: .utf8) else {
+            throw OnlineMusicServiceError.networkFailure("Spotify token request could not be created.")
+        }
+
+        var request = URLRequest(url: spotifyTokenURL)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+
+        let data: Data
+        let response: URLResponse
+
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw OnlineMusicServiceError.networkFailure(
+                "The Spotify token request could not be completed."
+            )
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OnlineMusicServiceError.networkFailure("Spotify returned an invalid response.")
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let errorMessage = spotifyTokenErrorMessage(from: data) ??
+                "Spotify token exchange returned HTTP \(httpResponse.statusCode)."
+
+            if httpResponse.statusCode == 400 || httpResponse.statusCode == 401 {
+                throw OnlineMusicServiceError.authenticationRequired(errorMessage)
+            }
+
+            throw OnlineMusicServiceError.networkFailure(errorMessage)
+        }
+
+        do {
+            return try decoder.decode(SpotifyTokenResponse.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("Spotify token exchange returned malformed JSON.")
+        }
+    }
+
+    private func fetchSpotifyData(from url: URL, accessToken: String) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let data: Data
+        let response: URLResponse
+
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw OnlineMusicServiceError.networkFailure(
+                "The Spotify request could not be completed."
+            )
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OnlineMusicServiceError.networkFailure("Spotify returned an invalid response.")
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let providerMessage = spotifyAPIErrorMessage(from: data) ??
+                "Spotify returned HTTP \(httpResponse.statusCode)."
+
+            if httpResponse.statusCode == 401 {
+                await spotifyRuntimeState.clearCredentials()
+                throw OnlineMusicServiceError.authenticationRequired(
+                    "Spotify authorization expired. Connect Spotify again to continue."
+                )
+            }
+
+            throw OnlineMusicServiceError.networkFailure(providerMessage)
+        }
+
+        return data
+    }
+
+    private func makeSpotifyAuthorizationRequestURL(
+        configuration: SpotifyConfiguration,
+        codeChallenge: String,
+        state: String
+    ) throws -> URL {
+        var components = URLComponents(url: spotifyAuthorizationURL, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "client_id", value: configuration.clientID),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "redirect_uri", value: configuration.redirectURI),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "code_challenge", value: codeChallenge),
+            URLQueryItem(name: "state", value: state)
+        ]
+
+        guard let requestURL = components?.url else {
+            throw OnlineMusicServiceError.networkFailure("Spotify authorization URL could not be created.")
+        }
+
+        return requestURL
+    }
+
+    private func spotifyConfigurationOrThrow() throws -> SpotifyConfiguration {
+        guard let configuration = spotifyConfiguration else {
+            debugLog("Spotify config state: missing or invalid client ID")
+            throw OnlineMusicServiceError.configurationMissing(
+                "Spotify search needs a valid Spotify client ID in Info.plist before it can be used."
+            )
+        }
+
+        return configuration
+    }
+
+    private var spotifyConfiguration: SpotifyConfiguration? {
+        guard let configuredClientID = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientID") as? String,
+              let clientID = cleanedText(configuredClientID) else {
+            return nil
+        }
+
+        if clientID.localizedCaseInsensitiveContains("your_spotify_client_id") {
+            return nil
+        }
+
+        let redirectURI = cleanedText(Bundle.main.object(forInfoDictionaryKey: "SpotifyRedirectURI") as? String) ??
+            defaultSpotifyRedirectURI
+
+        guard let parsedRedirectURL = URL(string: redirectURI),
+              let callbackURLScheme = parsedRedirectURL.scheme,
+              !callbackURLScheme.isEmpty else {
+            return nil
+        }
+
+        return SpotifyConfiguration(
+            clientID: clientID,
+            redirectURI: redirectURI,
+            callbackURLScheme: callbackURLScheme,
+            market: resolvedSpotifyMarket()
+        )
+    }
+
+    private func resolvedSpotifyMarket() -> String {
+        if let configuredMarket = Bundle.main.object(forInfoDictionaryKey: "SpotifyMarket") as? String,
+           let cleanedConfiguredMarket = cleanedText(configuredMarket) {
+            return cleanedConfiguredMarket.uppercased()
+        }
+
+        if let regionCode = Locale.current.regionCode,
+           !regionCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return regionCode.uppercased()
+        }
+
+        return "US"
+    }
+
+    private func logSpotifyConfigurationState(_ configuration: SpotifyConfiguration) async {
+        let authState = await spotifyRuntimeState.debugDescription(referenceDate: Date())
+        debugLog(
+            "Spotify config state: clientID=configured, redirectURI=\(configuration.redirectURI), market=\(configuration.market), auth=\(authState)"
+        )
+    }
+
+    private func spotifyTokenErrorMessage(from data: Data) -> String? {
+        let tokenError = try? decoder.decode(SpotifyTokenErrorResponse.self, from: data)
+        let errorCode = tokenError?.error?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errorDescription = tokenError?.errorDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let errorDescription, !errorDescription.isEmpty {
+            return "Spotify authorization failed: \(errorDescription)"
+        }
+
+        if let errorCode, !errorCode.isEmpty {
+            return "Spotify authorization failed: \(errorCode)"
+        }
+
+        return nil
+    }
+
+    private func spotifyAPIErrorMessage(from data: Data) -> String? {
+        let apiError = try? decoder.decode(SpotifyAPIErrorEnvelope.self, from: data)
+        guard let message = apiError?.error.message.trimmingCharacters(in: .whitespacesAndNewlines),
+              !message.isEmpty else {
+            return nil
+        }
+
+        return "Spotify search failed: \(message)"
+    }
+
+    private func makeSoundCloudSearchResults(from tracks: [OnlineTrackResult]) -> OnlineSearchResults {
+        OnlineSearchResults(
+            tracks: tracks,
+            artists: makeSoundCloudArtistResults(from: tracks),
+            albums: makeSoundCloudAlbumResults(from: tracks),
+            playlists: []
+        )
+    }
+
+    private func makeSoundCloudArtistResults(from tracks: [OnlineTrackResult]) -> [OnlineArtistResult] {
+        let groupedResults = Dictionary(grouping: tracks) { track in
+            track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+
+        return groupedResults.compactMap { normalizedArtistName, groupedTracks in
+            guard let representativeTrack = groupedTracks.first(where: hasRemoteArtwork) ?? groupedTracks.first,
+                  let artistName = cleanedText(representativeTrack.artist),
+                  let webpageURL = cleanedText(representativeTrack.webpageURL) else {
+                return nil
+            }
+
+            return OnlineArtistResult(
+                provider: .soundcloud,
+                providerArtistID: normalizedArtistName,
+                name: artistName,
+                imageURL: representativeTrack.coverArtURL,
+                webpageURL: webpageURL
+            )
+        }
+        .sorted { left, right in
+            left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        }
+    }
+
+    private func makeSoundCloudAlbumResults(from tracks: [OnlineTrackResult]) -> [OnlineAlbumResult] {
+        let albumTracks = tracks.filter { track in
+            cleanedText(track.album) != nil
+        }
+
+        let groupedResults = Dictionary(grouping: albumTracks) { track in
+            let normalizedAlbum = track.album?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+            let normalizedArtist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return "\(normalizedAlbum)::\(normalizedArtist)"
+        }
+
+        return groupedResults.compactMap { groupedID, groupedTracks in
+            guard let representativeTrack = groupedTracks.first(where: hasRemoteArtwork) ?? groupedTracks.first,
+                  let albumTitle = cleanedText(representativeTrack.album),
+                  let artistName = cleanedText(representativeTrack.artist),
+                  let webpageURL = cleanedText(representativeTrack.webpageURL) else {
+                return nil
+            }
+
+            return OnlineAlbumResult(
+                provider: .soundcloud,
+                providerAlbumID: groupedID,
+                title: albumTitle,
+                artist: artistName,
+                coverArtURL: representativeTrack.coverArtURL,
+                webpageURL: webpageURL
+            )
+        }
+        .sorted { left, right in
+            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
+                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
+            }
+
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
     }
 
     private func makeOnlineTrackResult(from track: SoundCloudSearchTrack) -> OnlineTrackResult? {
@@ -427,6 +1104,102 @@ final class OnlineMusicService {
             trackAuthorization: cleanedText(track.trackAuthorization),
             playbackStreams: streams
         )
+    }
+
+    private func makeOnlineTrackResult(from track: SpotifyTrack) -> OnlineTrackResult? {
+        guard let trackID = cleanedText(track.id),
+              let title = cleanedText(track.name) else {
+            return nil
+        }
+
+        let artistNames = track.artists.compactMap { cleanedText($0.name) }
+        let albumName = cleanedText(track.album?.name)
+        let artworkURL = spotifyArtworkURL(from: track.album?.images)
+        let webpageURL = cleanedText(track.externalURLs?.spotify) ??
+            "https://open.spotify.com/track/\(trackID)"
+
+        return OnlineTrackResult(
+            provider: .spotify,
+            providerTrackURN: trackID,
+            title: title,
+            artist: artistNames.isEmpty ? "Unknown Artist" : artistNames.joined(separator: ", "),
+            album: albumName,
+            duration: TimeInterval(track.durationMS ?? 0) / 1000,
+            coverArtURL: artworkURL,
+            webpageURL: webpageURL,
+            directAudioURL: nil,
+            directFileExtension: nil,
+            trackAuthorization: nil,
+            playbackStreams: []
+        )
+    }
+
+    private func makeOnlineArtistResult(from artist: SpotifyArtist) -> OnlineArtistResult? {
+        guard let artistID = cleanedText(artist.id),
+              let artistName = cleanedText(artist.name) else {
+            return nil
+        }
+
+        let webpageURL = cleanedText(artist.externalURLs?.spotify) ??
+            "https://open.spotify.com/artist/\(artistID)"
+
+        return OnlineArtistResult(
+            provider: .spotify,
+            providerArtistID: artistID,
+            name: artistName,
+            imageURL: spotifyArtworkURL(from: artist.images),
+            webpageURL: webpageURL
+        )
+    }
+
+    private func makeOnlineAlbumResult(from album: SpotifyAlbum) -> OnlineAlbumResult? {
+        guard let albumID = cleanedText(album.id),
+              let title = cleanedText(album.name) else {
+            return nil
+        }
+
+        let primaryArtist = album.artists.compactMap { cleanedText($0.name) }.first ?? "Unknown Artist"
+        let webpageURL = cleanedText(album.externalURLs?.spotify) ??
+            "https://open.spotify.com/album/\(albumID)"
+
+        return OnlineAlbumResult(
+            provider: .spotify,
+            providerAlbumID: albumID,
+            title: title,
+            artist: primaryArtist,
+            coverArtURL: spotifyArtworkURL(from: album.images),
+            webpageURL: webpageURL
+        )
+    }
+
+    private func makeOnlinePlaylistResult(from playlist: SpotifyPlaylist) -> OnlinePlaylistResult? {
+        guard let playlistID = cleanedText(playlist.id),
+              let title = cleanedText(playlist.name) else {
+            return nil
+        }
+
+        let webpageURL = cleanedText(playlist.externalURLs?.spotify) ??
+            "https://open.spotify.com/playlist/\(playlistID)"
+
+        return OnlinePlaylistResult(
+            provider: .spotify,
+            providerPlaylistID: playlistID,
+            title: title,
+            ownerName: cleanedText(playlist.owner?.displayName) ?? cleanedText(playlist.owner?.id),
+            coverArtURL: spotifyArtworkURL(from: playlist.images),
+            webpageURL: webpageURL,
+            trackCount: playlist.tracks?.total
+        )
+    }
+
+    private func spotifyArtworkURL(from images: [SpotifyImage]?) -> String? {
+        guard let images, !images.isEmpty else { return nil }
+
+        let sortedImages = images.sorted { left, right in
+            (left.width ?? 0) > (right.width ?? 0)
+        }
+
+        return sortedImages.compactMap { cleanedText($0.url) }.first
     }
 
     private func makeStreamCandidate(from transcoding: SoundCloudTranscoding) -> SoundCloudStreamCandidate? {
@@ -534,7 +1307,7 @@ final class OnlineMusicService {
             )
         }
 
-        let data = try await fetchData(from: requestURL, accept: "application/json, text/plain, */*")
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
 
         let response: SoundCloudResolvedStream
         do {
@@ -555,32 +1328,32 @@ final class OnlineMusicService {
     }
 
     private func soundCloudClientID() async throws -> String {
-        if let cachedClientID = await runtimeState.clientID {
+        if let cachedClientID = await soundCloudRuntimeState.clientID {
             return cachedClientID
         }
 
         if let configuredClientID = Bundle.main.object(forInfoDictionaryKey: "SoundCloudClientID") as? String,
            let cleanedConfiguredClientID = cleanedText(configuredClientID) {
-            await runtimeState.setClientID(cleanedConfiguredClientID)
+            await soundCloudRuntimeState.setClientID(cleanedConfiguredClientID)
             debugLog("Using configured SoundCloud client_id from Info.plist")
             return cleanedConfiguredClientID
         }
 
         if let bundledClientID = bundledFallbackClientIDs.compactMap(cleanedText).first {
-            await runtimeState.setClientID(bundledClientID)
+            await soundCloudRuntimeState.setClientID(bundledClientID)
             debugLog("Using bundled SoundCloud client_id fallback")
             return bundledClientID
         }
 
         let discoveredClientID = try await discoverSoundCloudClientID()
-        await runtimeState.setClientID(discoveredClientID)
+        await soundCloudRuntimeState.setClientID(discoveredClientID)
         return discoveredClientID
     }
 
     private func initialSoundCloudClientIDs() async -> [String] {
         var candidateIDs: [String] = []
 
-        if let cachedClientID = await runtimeState.clientID {
+        if let cachedClientID = await soundCloudRuntimeState.clientID {
             candidateIDs.append(cachedClientID)
         }
 
@@ -641,7 +1414,7 @@ final class OnlineMusicService {
     }
 
     private func fetchText(from url: URL, accept: String) async throws -> String {
-        let data = try await fetchData(from: url, accept: accept)
+        let data = try await fetchSoundCloudData(from: url, accept: accept)
 
         if let text = String(data: data, encoding: .utf8) {
             return text
@@ -654,7 +1427,7 @@ final class OnlineMusicService {
         throw OnlineMusicServiceError.extractionFailure("The online provider returned unreadable text.")
     }
 
-    private func fetchData(from url: URL, accept: String) async throws -> Data {
+    private func fetchSoundCloudData(from url: URL, accept: String) async throws -> Data {
         var request = URLRequest(url: url)
         request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue(accept, forHTTPHeaderField: "Accept")
@@ -713,7 +1486,34 @@ final class OnlineMusicService {
             .replacingOccurrences(of: "-crop.", with: "-t500x500.")
     }
 
-    private func deduplicatedResults(_ results: [OnlineTrackResult]) -> [OnlineTrackResult] {
+    private func deduplicatedTrackResults(_ results: [OnlineTrackResult]) -> [OnlineTrackResult] {
+        var seenIDs: Set<String> = []
+
+        return results.filter { result in
+            guard seenIDs.insert(result.id).inserted else { return false }
+            return true
+        }
+    }
+
+    private func deduplicatedArtistResults(_ results: [OnlineArtistResult]) -> [OnlineArtistResult] {
+        var seenIDs: Set<String> = []
+
+        return results.filter { result in
+            guard seenIDs.insert(result.id).inserted else { return false }
+            return true
+        }
+    }
+
+    private func deduplicatedAlbumResults(_ results: [OnlineAlbumResult]) -> [OnlineAlbumResult] {
+        var seenIDs: Set<String> = []
+
+        return results.filter { result in
+            guard seenIDs.insert(result.id).inserted else { return false }
+            return true
+        }
+    }
+
+    private func deduplicatedPlaylistResults(_ results: [OnlinePlaylistResult]) -> [OnlinePlaylistResult] {
         var seenIDs: Set<String> = []
 
         return results.filter { result in
@@ -783,6 +1583,111 @@ final class OnlineMusicService {
         let suffix = clientID.suffix(4)
         return "\(prefix)...\(suffix)"
     }
+
+    private func makePKCECodeVerifier() -> String {
+        let data = secureRandomData(length: 64)
+        return data.base64URLEncodedString
+    }
+
+    private func makeCodeChallenge(from verifier: String) -> String {
+        let digest = SHA256.hash(data: Data(verifier.utf8))
+        return Data(digest).base64URLEncodedString
+    }
+
+    private func makeOpaqueState() -> String {
+        secureRandomData(length: 24).base64URLEncodedString
+    }
+
+    private func secureRandomData(length: Int) -> Data {
+        var data = Data(count: length)
+        let status = data.withUnsafeMutableBytes { bytes in
+            SecRandomCopyBytes(kSecRandomDefault, length, bytes.baseAddress!)
+        }
+
+        guard status == errSecSuccess else {
+            return Data(UUID().uuidString.utf8)
+        }
+
+        return data
+    }
+
+    private func logMappedResultCounts(provider: OnlineTrackProvider, results: OnlineSearchResults) {
+        debugLog(
+            "Mapped result counts for \(provider.displayName): tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
+        )
+    }
+
+    private func hasRemoteArtwork(_ track: OnlineTrackResult) -> Bool {
+        guard let coverArtURL = track.coverArtURL else { return false }
+        return !coverArtURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+@MainActor
+private final class SpotifyAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+
+    func authenticate(using url: URL, callbackURLScheme: String) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            let authenticationSession = ASWebAuthenticationSession(
+                url: url,
+                callbackURLScheme: callbackURLScheme
+            ) { [weak self] callbackURL, error in
+                self?.session = nil
+
+                if let error = error as? ASWebAuthenticationSessionError,
+                   error.code == .canceledLogin {
+                    continuation.resume(
+                        throwing: OnlineMusicServiceError.authenticationRequired(
+                            "Spotify sign-in was cancelled."
+                        )
+                    )
+                    return
+                }
+
+                if let error {
+                    continuation.resume(
+                        throwing: OnlineMusicServiceError.authenticationRequired(
+                            "Spotify sign-in failed: \(error.localizedDescription)"
+                        )
+                    )
+                    return
+                }
+
+                guard let callbackURL else {
+                    continuation.resume(
+                        throwing: OnlineMusicServiceError.authenticationRequired(
+                            "Spotify sign-in finished without a callback URL."
+                        )
+                    )
+                    return
+                }
+
+                continuation.resume(returning: callbackURL)
+            }
+
+            authenticationSession.presentationContextProvider = self
+            authenticationSession.prefersEphemeralWebBrowserSession = false
+            self.session = authenticationSession
+
+            guard authenticationSession.start() else {
+                self.session = nil
+                continuation.resume(
+                    throwing: OnlineMusicServiceError.authenticationRequired(
+                        "Spotify sign-in could not start."
+                    )
+                )
+                return
+            }
+        }
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+    }
 }
 
 private actor SoundCloudRuntimeState {
@@ -791,6 +1696,52 @@ private actor SoundCloudRuntimeState {
     func setClientID(_ clientID: String) {
         self.clientID = clientID
     }
+}
+
+private actor SpotifyRuntimeState {
+    private var credentials: SpotifyCredentials?
+
+    func validAccessToken(referenceDate: Date) -> String? {
+        guard let credentials,
+              credentials.expirationDate > referenceDate else {
+            return nil
+        }
+
+        return credentials.accessToken
+    }
+
+    var refreshToken: String? {
+        credentials?.refreshToken
+    }
+
+    func setCredentials(_ credentials: SpotifyCredentials) {
+        self.credentials = credentials
+    }
+
+    func clearCredentials() {
+        credentials = nil
+    }
+
+    func debugDescription(referenceDate: Date) -> String {
+        guard let credentials else {
+            return "missing-user-token"
+        }
+
+        return credentials.expirationDate > referenceDate ? "authorized" : "expired"
+    }
+}
+
+private struct SpotifyConfiguration {
+    let clientID: String
+    let redirectURI: String
+    let callbackURLScheme: String
+    let market: String
+}
+
+private struct SpotifyCredentials {
+    let accessToken: String
+    let refreshToken: String?
+    let expirationDate: Date
 }
 
 private struct SoundCloudSearchResponse: Decodable {
@@ -875,4 +1826,159 @@ private struct SoundCloudTranscodingFormat: Decodable {
 
 private struct SoundCloudResolvedStream: Decodable {
     let url: String?
+}
+
+private struct SpotifySearchResponse: Decodable {
+    let tracks: SpotifyTracksContainer?
+    let artists: SpotifyArtistsContainer?
+    let albums: SpotifyAlbumsContainer?
+    let playlists: SpotifyPlaylistsContainer?
+}
+
+private struct SpotifyTracksContainer: Decodable {
+    let items: [SpotifyTrack]
+}
+
+private struct SpotifyArtistsContainer: Decodable {
+    let items: [SpotifyArtist]
+}
+
+private struct SpotifyAlbumsContainer: Decodable {
+    let items: [SpotifyAlbum]
+}
+
+private struct SpotifyPlaylistsContainer: Decodable {
+    let items: [SpotifyPlaylist]
+}
+
+private struct SpotifyTrack: Decodable {
+    let id: String?
+    let name: String?
+    let durationMS: Int?
+    let externalURLs: SpotifyExternalURLs?
+    let album: SpotifyAlbum?
+    let artists: [SpotifyArtist]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case durationMS = "duration_ms"
+        case externalURLs = "external_urls"
+        case album
+        case artists
+    }
+}
+
+private struct SpotifyArtist: Decodable {
+    let id: String?
+    let name: String?
+    let images: [SpotifyImage]?
+    let externalURLs: SpotifyExternalURLs?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case images
+        case externalURLs = "external_urls"
+    }
+}
+
+private struct SpotifyAlbum: Decodable {
+    let id: String?
+    let name: String?
+    let images: [SpotifyImage]?
+    let artists: [SpotifyArtist]
+    let externalURLs: SpotifyExternalURLs?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case images
+        case artists
+        case externalURLs = "external_urls"
+    }
+}
+
+private struct SpotifyPlaylist: Decodable {
+    let id: String?
+    let name: String?
+    let images: [SpotifyImage]?
+    let owner: SpotifyUser?
+    let externalURLs: SpotifyExternalURLs?
+    let tracks: SpotifyPlaylistTracksSummary?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case images
+        case owner
+        case externalURLs = "external_urls"
+        case tracks
+    }
+}
+
+private struct SpotifyPlaylistTracksSummary: Decodable {
+    let total: Int?
+}
+
+private struct SpotifyUser: Decodable {
+    let displayName: String?
+    let id: String?
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case id
+    }
+}
+
+private struct SpotifyExternalURLs: Decodable {
+    let spotify: String?
+}
+
+private struct SpotifyImage: Decodable {
+    let url: String?
+    let width: Int?
+    let height: Int?
+}
+
+private struct SpotifyTokenResponse: Decodable {
+    let accessToken: String
+    let tokenType: String
+    let expiresIn: Int
+    let refreshToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case tokenType = "token_type"
+        case expiresIn = "expires_in"
+        case refreshToken = "refresh_token"
+    }
+}
+
+private struct SpotifyTokenErrorResponse: Decodable {
+    let error: String?
+    let errorDescription: String?
+
+    enum CodingKeys: String, CodingKey {
+        case error
+        case errorDescription = "error_description"
+    }
+}
+
+private struct SpotifyAPIErrorEnvelope: Decodable {
+    let error: SpotifyAPIError
+}
+
+private struct SpotifyAPIError: Decodable {
+    let status: Int?
+    let message: String
+}
+
+private extension Data {
+    var base64URLEncodedString: String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
 }
