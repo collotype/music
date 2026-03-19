@@ -32,6 +32,10 @@ struct SearchView: View {
         OnlineTrackProvider(rawValue: selectedProviderRawValue) ?? .soundcloud
     }
 
+    private var isSpotifyProviderAvailable: Bool {
+        OnlineMusicService.shared.isSpotifyConfigured
+    }
+
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -154,12 +158,16 @@ struct SearchView: View {
                         } label: {
                             SearchProviderMenuRow(
                                 provider: provider,
-                                isSelected: provider == selectedProvider
+                                isSelected: provider == selectedProvider,
+                                isAvailable: isProviderAvailable(provider)
                             )
                         }
                     }
                 } label: {
-                    SearchProviderButton(provider: selectedProvider)
+                    SearchProviderButton(
+                        provider: selectedProvider,
+                        isAvailable: isProviderAvailable(selectedProvider)
+                    )
                 }
                 .buttonStyle(.plain)
             }
@@ -715,6 +723,7 @@ struct SearchView: View {
         guard provider != selectedProvider else { return }
 
         debugLog("Selected provider switched to: \(provider.displayName)")
+        debugLog("Provider \(provider.displayName) enabled: \(isProviderAvailable(provider) ? "yes" : "no")")
         selectedProviderRawValue = provider.rawValue
         onlineStatusMessage = nil
         onlinePrompt = nil
@@ -775,7 +784,7 @@ struct SearchView: View {
         if let onlineStatusMessage {
             SearchStatusRow(
                 icon: "wifi.exclamationmark",
-                title: "\(selectedProvider.displayName) search unavailable",
+                title: unavailableOnlineTitle,
                 subtitle: onlineStatusMessage,
                 actionTitle: onlinePrompt == .connectSpotify ? "Connect" : nil,
                 isActionLoading: isAuthorizingSpotify,
@@ -822,6 +831,23 @@ struct SearchView: View {
         }
 
         return "Try another query or switch providers."
+    }
+
+    private var unavailableOnlineTitle: String {
+        if selectedProvider == .spotify && !isSpotifyProviderAvailable {
+            return "Spotify setup required"
+        }
+
+        return "\(selectedProvider.displayName) search unavailable"
+    }
+
+    private func isProviderAvailable(_ provider: OnlineTrackProvider) -> Bool {
+        switch provider {
+        case .soundcloud:
+            return true
+        case .spotify:
+            return isSpotifyProviderAvailable
+        }
     }
 
     private func localMatches(for query: String) -> [Track] {
@@ -1124,6 +1150,7 @@ private enum OnlineSearchPrompt {
 
 struct SearchProviderButton: View {
     let provider: OnlineTrackProvider
+    let isAvailable: Bool
 
     var body: some View {
         ZStack {
@@ -1134,26 +1161,37 @@ struct SearchProviderButton: View {
                 .stroke(provider.accentColor.opacity(0.4), lineWidth: 1)
 
             ProviderIconView(provider: provider, size: 20)
+
+            if !isAvailable {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.yellow)
+                    .background(Circle().fill(Color.black))
+                    .offset(x: 12, y: -12)
+            }
         }
         .frame(width: 42, height: 42)
         .shadow(color: Color.black.opacity(0.18), radius: 8, x: 0, y: 4)
-        .accessibilityLabel(Text(provider.displayName))
+        .accessibilityLabel(Text(isAvailable ? provider.displayName : "\(provider.displayName), setup required"))
     }
 }
 
 struct SearchProviderMenuRow: View {
     let provider: OnlineTrackProvider
     let isSelected: Bool
+    let isAvailable: Bool
 
     var body: some View {
         HStack(spacing: 10) {
             ProviderIconView(provider: provider, size: 16)
-            Text(provider.displayName)
+            Text(isAvailable ? provider.displayName : "\(provider.displayName) (Setup Required)")
+                .foregroundColor(isAvailable ? .primary : .secondary)
             if isSelected {
                 Spacer(minLength: 8)
                 Image(systemName: "checkmark")
             }
         }
+        .opacity(isAvailable ? 1.0 : 0.82)
     }
 }
 

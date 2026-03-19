@@ -336,6 +336,18 @@ final class OnlineMusicService {
     private let defaultSpotifyRedirectURI = "com.collotype.freemusic://spotify-auth-callback"
     private let spotifySearchLimit = 12
 
+    // Required Info.plist setup for Spotify search:
+    // SpotifyClientID = <your client id>
+    //
+    // Optional Info.plist overrides:
+    // SpotifyRedirectURI = com.collotype.freemusic://spotify-auth-callback
+    // SpotifyMarket = US
+    private enum SpotifyInfoPlistKeys {
+        static let clientID = "SpotifyClientID"
+        static let redirectURI = "SpotifyRedirectURI"
+        static let market = "SpotifyMarket"
+    }
+
     private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     private let soundCloudAssetPattern = #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#
     private let soundCloudClientIDPatterns = [
@@ -353,7 +365,7 @@ final class OnlineMusicService {
     }
 
     var isSpotifyConfigured: Bool {
-        spotifyConfiguration != nil
+        spotifyConfigurationStatus.isEnabled
     }
 
     func search(_ query: String, provider: OnlineTrackProvider) async throws -> OnlineSearchResults {
@@ -915,45 +927,41 @@ final class OnlineMusicService {
     }
 
     private func spotifyConfigurationOrThrow() throws -> SpotifyConfiguration {
-        guard let configuration = spotifyConfiguration else {
-            debugLog("Spotify config state: missing or invalid client ID")
-            throw OnlineMusicServiceError.configurationMissing(
-                "Spotify search needs a valid Spotify client ID in Info.plist before it can be used."
-            )
+        let status = spotifyConfigurationStatus
+        logSpotifyConfigurationDiagnostics(status)
+
+        guard let configuration = status.configuration else {
+            throw OnlineMusicServiceError.configurationMissing(status.userFacingErrorMessage)
         }
 
         return configuration
     }
 
     private var spotifyConfiguration: SpotifyConfiguration? {
-        guard let configuredClientID = Bundle.main.object(forInfoDictionaryKey: "SpotifyClientID") as? String,
-              let clientID = cleanedText(configuredClientID) else {
-            return nil
-        }
+        spotifyConfigurationStatus.configuration
+    }
 
-        if clientID.localizedCaseInsensitiveContains("your_spotify_client_id") {
-            return nil
-        }
+    private var spotifyConfigurationStatus: SpotifyConfigurationStatus {
+        let rawClientID = Bundle.main.object(forInfoDictionaryKey: SpotifyInfoPlistKeys.clientID) as? String
+        let clientID = sanitizedSpotifyClientID(rawClientID)
+        let rawRedirectURI = Bundle.main.object(forInfoDictionaryKey: SpotifyInfoPlistKeys.redirectURI) as? String
+        let explicitRedirectURI = sanitizedSpotifyRedirectURI(rawRedirectURI)
+        let resolvedRedirectURI = explicitRedirectURI ?? defaultSpotifyRedirectURI
 
-        let redirectURI = cleanedText(Bundle.main.object(forInfoDictionaryKey: "SpotifyRedirectURI") as? String) ??
-            defaultSpotifyRedirectURI
-
-        guard let parsedRedirectURL = URL(string: redirectURI),
-              let callbackURLScheme = parsedRedirectURL.scheme,
-              !callbackURLScheme.isEmpty else {
-            return nil
-        }
-
-        return SpotifyConfiguration(
+        return SpotifyConfigurationStatus(
+            clientIDKey: SpotifyInfoPlistKeys.clientID,
+            redirectURIKey: SpotifyInfoPlistKeys.redirectURI,
             clientID: clientID,
-            redirectURI: redirectURI,
-            callbackURLScheme: callbackURLScheme,
+            explicitRedirectURI: explicitRedirectURI,
+            defaultRedirectURI: defaultSpotifyRedirectURI,
+            resolvedRedirectURI: resolvedRedirectURI,
+            callbackURLScheme: URL(string: resolvedRedirectURI)?.scheme,
             market: resolvedSpotifyMarket()
         )
     }
 
     private func resolvedSpotifyMarket() -> String {
-        if let configuredMarket = Bundle.main.object(forInfoDictionaryKey: "SpotifyMarket") as? String,
+        if let configuredMarket = Bundle.main.object(forInfoDictionaryKey: SpotifyInfoPlistKeys.market) as? String,
            let cleanedConfiguredMarket = cleanedText(configuredMarket) {
             return cleanedConfiguredMarket.uppercased()
         }
@@ -967,10 +975,67 @@ final class OnlineMusicService {
     }
 
     private func logSpotifyConfigurationState(_ configuration: SpotifyConfiguration) async {
+        logSpotifyConfigurationDiagnostics(spotifyConfigurationStatus)
         let authState = await spotifyRuntimeState.debugDescription(referenceDate: Date())
         debugLog(
             "Spotify config state: clientID=configured, redirectURI=\(configuration.redirectURI), market=\(configuration.market), auth=\(authState)"
         )
+    }
+
+    private func logSpotifyConfigurationDiagnostics(_ status: SpotifyConfigurationStatus) {
+        debugLog("Spotify Info.plist client ID key checked: \(status.clientIDKey)")
+        debugLog("SpotifyClientID found: \(status.isClientIDConfigured ? "yes" : "no")")
+        debugLog("Spotify Info.plist redirect key checked: \(status.redirectURIKey)")
+        debugLog(
+            "Spotify redirect URI configured: \(status.isRedirectURIConfigured ? "yes" : "no") (\(status.usesDefaultRedirectURI ? "default" : "Info.plist"))"
+        )
+        debugLog("Spotify redirect URI valid: \(status.isRedirectURIValid ? "yes" : "no")")
+        debugLog("Spotify redirect URI resolved: \(status.resolvedRedirectURI)")
+        debugLog("Spotify provider enabled: \(status.isEnabled ? "yes" : "no")")
+    }
+
+    private func sanitizedSpotifyClientID(_ rawValue: String?) -> String? {
+        guard let cleanedValue = cleanedText(rawValue) else { return nil }
+
+        let normalizedValue = cleanedValue.lowercased()
+        let placeholderMarkers = [
+            "your_spotify_client_id",
+            "<your client id>",
+            "<your spotify client id>",
+            "insert_spotify_client_id"
+        ]
+
+        if placeholderMarkers.contains(where: normalizedValue.contains) {
+            return nil
+        }
+
+        if cleanedValue.hasPrefix("$(") && cleanedValue.hasSuffix(")") {
+            return nil
+        }
+
+        return cleanedValue
+    }
+
+    private func sanitizedSpotifyRedirectURI(_ rawValue: String?) -> String? {
+        guard let cleanedValue = cleanedText(rawValue) else { return nil }
+
+        let normalizedValue = cleanedValue.lowercased()
+        let placeholderMarkers = [
+            "your_spotify_redirect_uri",
+            "<your redirect uri>",
+            "<your spotify redirect uri>",
+            "insert_spotify_redirect_uri"
+        ]
+
+        if placeholderMarkers.contains(where: normalizedValue.contains) {
+            return nil
+        }
+
+        if cleanedValue.hasPrefix("$(") && cleanedValue.hasSuffix(")") {
+            return nil
+        }
+
+        return cleanedValue
     }
 
     private func spotifyTokenErrorMessage(from data: Data) -> String? {
@@ -1737,6 +1802,63 @@ private struct SpotifyConfiguration {
     let redirectURI: String
     let callbackURLScheme: String
     let market: String
+}
+
+private struct SpotifyConfigurationStatus {
+    let clientIDKey: String
+    let redirectURIKey: String
+    let clientID: String?
+    let explicitRedirectURI: String?
+    let defaultRedirectURI: String
+    let resolvedRedirectURI: String
+    let callbackURLScheme: String?
+    let market: String
+
+    var isClientIDConfigured: Bool {
+        clientID != nil
+    }
+
+    var isRedirectURIConfigured: Bool {
+        explicitRedirectURI != nil
+    }
+
+    var isRedirectURIValid: Bool {
+        callbackURLScheme != nil
+    }
+
+    var usesDefaultRedirectURI: Bool {
+        explicitRedirectURI == nil
+    }
+
+    var isEnabled: Bool {
+        configuration != nil
+    }
+
+    var configuration: SpotifyConfiguration? {
+        guard let clientID,
+              let callbackURLScheme else {
+            return nil
+        }
+
+        return SpotifyConfiguration(
+            clientID: clientID,
+            redirectURI: resolvedRedirectURI,
+            callbackURLScheme: callbackURLScheme,
+            market: market
+        )
+    }
+
+    var userFacingErrorMessage: String {
+        if !isClientIDConfigured {
+            return "Spotify search requires the Info.plist key SpotifyClientID with your Spotify app client ID."
+        }
+
+        if !isRedirectURIValid {
+            return "Spotify search requires a valid Info.plist key SpotifyRedirectURI, or remove that key to use the default callback \(defaultRedirectURI)."
+        }
+
+        return "Spotify search is unavailable because its configuration is incomplete."
+    }
 }
 
 private struct SpotifyCredentials {
