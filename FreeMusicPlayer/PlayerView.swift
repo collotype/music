@@ -451,7 +451,7 @@ struct TrackLyricsView: View {
                             Text("Lyrics unavailable")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.white)
-                            Text("No saved, embedded, or Genius lyrics were found for this track.")
+                            Text("No saved, embedded, or online lyrics were found for this track.")
                                 .font(.system(size: 14))
                                 .foregroundColor(.white.opacity(0.58))
                         }
@@ -514,6 +514,10 @@ struct TrackLyricsView: View {
             return "Embedded lyrics"
         case "genius":
             return "Lyrics from Genius"
+        case "lrclib":
+            return "Lyrics via LRCLIB"
+        case "lyricsovh":
+            return "Lyrics via Lyrics.ovh"
         default:
             return source.capitalized
         }
@@ -562,9 +566,9 @@ actor LyricsMetadataResolver {
 
         guard let fileURL = localFileURL(for: track),
               FileManager.default.fileExists(atPath: fileURL.path) else {
-            if let geniusLyrics = await geniusLyrics(for: track) {
-                resolvedLyricsCache[cacheKey] = geniusLyrics
-                return geniusLyrics
+            if let resolvedNetworkLyrics = await resolvedNetworkLyrics(for: track) {
+                resolvedLyricsCache[cacheKey] = resolvedNetworkLyrics
+                return resolvedNetworkLyrics
             }
             return nil
         }
@@ -581,9 +585,9 @@ actor LyricsMetadataResolver {
             return resolvedLyrics
         }
 
-        if let geniusLyrics = await geniusLyrics(for: track) {
-            resolvedLyricsCache[cacheKey] = geniusLyrics
-            return geniusLyrics
+        if let resolvedNetworkLyrics = await resolvedNetworkLyrics(for: track) {
+            resolvedLyricsCache[cacheKey] = resolvedNetworkLyrics
+            return resolvedNetworkLyrics
         }
 
         return nil
@@ -617,7 +621,7 @@ actor LyricsMetadataResolver {
 
     private func lyricsCacheKey(for track: Track) -> String {
         let identity = track.sourceID ?? track.id
-        return "\(identity)::\(track.displayArtist.lowercased())::\(track.displayTitle.lowercased())"
+        return "\(identity)::\(normalizedComparisonText(track.displayArtist))::\(normalizedComparisonText(track.displayTitle))"
     }
 
     private func metadataLyrics(from asset: AVURLAsset) -> String? {
@@ -655,48 +659,140 @@ actor LyricsMetadataResolver {
         return nil
     }
 
-    private func geniusLyrics(for track: Track) async -> ResolvedTrackLyrics? {
-        let normalizedTrackTitleCandidates = normalizedTitleCandidates(for: track.displayTitle)
-        let normalizedTrackArtistCandidates = normalizedArtistCandidates(for: track.displayArtist)
-
-        guard !normalizedTrackTitleCandidates.isEmpty,
-              !normalizedTrackArtistCandidates.isEmpty else {
+    private func resolvedNetworkLyrics(for track: Track) async -> ResolvedTrackLyrics? {
+        guard let lookupMetadata = lookupMetadata(for: track) else {
+            debugLog("Lyrics lookup skipped for \(track.displayTitle): insufficient artist/title metadata")
             return nil
         }
 
-        guard let encodedQuery = "\(track.displayArtist) \(track.displayTitle)"
-            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let searchURL = URL(string: "https://genius.com/api/search/multi?per_page=8&q=\(encodedQuery)") else {
-            return nil
+        if let geniusLyrics = await geniusLyrics(using: lookupMetadata) {
+            return geniusLyrics
         }
 
-        guard let searchData = try? await fetchData(from: searchURL),
-              let response = try? JSONDecoder().decode(GeniusSearchEnvelope.self, from: searchData),
-              let bestMatch = bestGeniusMatch(
-                forTitleCandidates: normalizedTrackTitleCandidates,
-                artistCandidates: normalizedTrackArtistCandidates,
-                in: response.response.sections.flatMap { $0.hits ?? [] }
-              ) else {
-            return nil
+        if let lrcLibLyrics = await lrcLibLyrics(using: lookupMetadata) {
+            return lrcLibLyrics
         }
 
-        let lyricsPageURLString = cleanedLyricsText(bestMatch.url) ??
-            cleanedLyricsText(bestMatch.path).map { "https://genius.com\($0)" }
-
-        guard let lyricsPageURLString,
-              let lyricsPageURL = URL(string: lyricsPageURLString),
-              let pageHTML = try? await fetchHTML(from: lyricsPageURL),
-              let lyricsHTML = extractLyricsHTML(from: pageHTML),
-              let lyricsText = plainTextLyrics(fromHTML: lyricsHTML) else {
-            return nil
+        if let lyricsOVH = await lyricsOVHLyrics(using: lookupMetadata) {
+            return lyricsOVH
         }
 
-        return ResolvedTrackLyrics(
-            text: lyricsText,
-            source: "genius",
-            url: lyricsPageURLString,
-            lastUpdated: Date()
-        )
+        return nil
+    }
+
+    private func geniusLyrics(using lookupMetadata: LyricsLookupMetadata) async -> ResolvedTrackLyrics? {
+        for searchQuery in lookupMetadata.geniusSearchQueries {
+            guard let encodedQuery = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                  let searchURL = URL(string: "https://genius.com/api/search/multi?per_page=8&q=\(encodedQuery)") else {
+                continue
+            }
+
+            do {
+                let searchData = try await fetchData(from: searchURL)
+                guard let response = try? JSONDecoder().decode(GeniusSearchEnvelope.self, from: searchData),
+                      let bestMatch = bestGeniusMatch(
+                        forTitleCandidates: lookupMetadata.normalizedTitleCandidates,
+                        artistCandidates: lookupMetadata.normalizedArtistCandidates,
+                        in: response.response.sections.flatMap { $0.hits ?? [] }
+                      ) else {
+                    continue
+                }
+
+                let lyricsPageURLString = cleanedLyricsText(bestMatch.url) ??
+                    cleanedLyricsText(bestMatch.path).map { "https://genius.com\($0)" }
+
+                guard let lyricsPageURLString,
+                      let lyricsPageURL = URL(string: lyricsPageURLString) else {
+                    continue
+                }
+
+                let pageHTML = try await fetchHTML(from: lyricsPageURL)
+                guard let lyricsHTML = extractLyricsHTML(from: pageHTML),
+                      let lyricsText = plainTextLyrics(fromHTML: lyricsHTML) else {
+                    continue
+                }
+
+                return ResolvedTrackLyrics(
+                    text: lyricsText,
+                    source: "genius",
+                    url: lyricsPageURLString,
+                    lastUpdated: Date()
+                )
+            } catch {
+                debugLog("Genius lyrics lookup failed for query \(searchQuery): \(error.localizedDescription)")
+                return nil
+            }
+        }
+
+        return nil
+    }
+
+    private func lrcLibLyrics(using lookupMetadata: LyricsLookupMetadata) async -> ResolvedTrackLyrics? {
+        for query in lookupMetadata.providerQueries {
+            guard var components = URLComponents(string: "https://lrclib.net/api/get") else {
+                continue
+            }
+
+            components.queryItems = [
+                URLQueryItem(name: "artist_name", value: query.artist),
+                URLQueryItem(name: "track_name", value: query.title)
+            ]
+
+            guard let requestURL = components.url else { continue }
+
+            do {
+                let data = try await fetchData(from: requestURL)
+                let result = try JSONDecoder().decode(LRCLibLyricsResult.self, from: data)
+                guard let lyricsText = cleanedLyricsText(result.plainLyrics) ??
+                        cleanedLyricsText(result.syncedLyrics).flatMap(strippedSyncedLyrics(from:)) else {
+                    continue
+                }
+
+                debugLog("Lyrics resolved through LRCLIB for \(query.artist) - \(query.title)")
+                return ResolvedTrackLyrics(
+                    text: lyricsText,
+                    source: "lrclib",
+                    url: result.url,
+                    lastUpdated: Date()
+                )
+            } catch {
+                continue
+            }
+        }
+
+        return nil
+    }
+
+    private func lyricsOVHLyrics(using lookupMetadata: LyricsLookupMetadata) async -> ResolvedTrackLyrics? {
+        let pathAllowedCharacterSet = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+
+        for query in lookupMetadata.providerQueries {
+            guard let encodedArtist = query.artist.addingPercentEncoding(withAllowedCharacters: pathAllowedCharacterSet),
+                  let encodedTitle = query.title.addingPercentEncoding(withAllowedCharacters: pathAllowedCharacterSet),
+                  let requestURL = URL(string: "https://api.lyrics.ovh/v1/\(encodedArtist)/\(encodedTitle)") else {
+                continue
+            }
+
+            do {
+                let data = try await fetchData(from: requestURL)
+                let result = try JSONDecoder().decode(LyricsOVHResponse.self, from: data)
+                guard let lyricsText = cleanedLyricsText(result.lyrics) else {
+                    continue
+                }
+
+                debugLog("Lyrics resolved through Lyrics.ovh for \(query.artist) - \(query.title)")
+                return ResolvedTrackLyrics(
+                    text: lyricsText,
+                    source: "lyricsovh",
+                    url: nil,
+                    lastUpdated: Date()
+                )
+            } catch {
+                continue
+            }
+        }
+
+        return nil
     }
 
     private func fetchData(from url: URL) async throws -> Data {
@@ -747,11 +843,26 @@ actor LyricsMetadataResolver {
 
             let candidateTitleScore = comparisonScore(
                 expectedCandidates: titleCandidates,
-                actualCandidates: normalizedTitleCandidates(for: title)
+                actualCandidates: normalizedTitleCandidates(
+                    for: [
+                        title,
+                        result.fullTitle,
+                        result.titleWithFeatured
+                    ]
+                    .compactMap { $0 }
+                    .joined(separator: " ")
+                )
             )
             let candidateArtistScore = comparisonScore(
                 expectedCandidates: artistCandidates,
-                actualCandidates: normalizedArtistCandidates(for: result.artistNames ?? "")
+                actualCandidates: normalizedArtistCandidates(
+                    for: [
+                        result.artistNames,
+                        result.primaryArtist?.name
+                    ]
+                    .compactMap { $0 }
+                    .joined(separator: ", ")
+                )
             )
             var score = candidateTitleScore + candidateArtistScore
 
@@ -763,11 +874,11 @@ actor LyricsMetadataResolver {
                 score -= 25
             }
 
-            guard candidateTitleScore >= 75 else {
+            guard candidateTitleScore >= 58 else {
                 return nil
             }
 
-            guard candidateArtistScore >= 55 || candidateTitleScore >= 95 else {
+            guard candidateArtistScore >= 34 || candidateTitleScore >= 94 else {
                 return nil
             }
 
@@ -805,6 +916,24 @@ actor LyricsMetadataResolver {
         let expectedTokens = Set(expectedCandidates.flatMap { $0.split(separator: " ").map(String.init) })
         let actualTokens = Set(actualCandidates.flatMap { $0.split(separator: " ").map(String.init) })
         let sharedTokens = expectedTokens.intersection(actualTokens)
+        let tokenOverlapRatio = Int(
+            (
+                Double(sharedTokens.count) /
+                Double(max(1, min(expectedTokens.count, actualTokens.count)))
+            ) * 100
+        )
+
+        if tokenOverlapRatio >= 90 {
+            return 92
+        }
+
+        if tokenOverlapRatio >= 72 {
+            return 78
+        }
+
+        if tokenOverlapRatio >= 55 {
+            return 64
+        }
 
         if sharedTokens.count >= min(3, max(1, expectedTokens.count)) {
             return 64
@@ -818,49 +947,20 @@ actor LyricsMetadataResolver {
     }
 
     private func normalizedTitleCandidates(for title: String) -> Set<String> {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty else { return [] }
-
-        var candidates: Set<String> = []
-        candidates.insert(normalizedComparisonText(trimmedTitle))
-
-        let titleWithoutBrackets = trimmedTitle.replacingOccurrences(
-            of: #"\[[^\]]*\]|\([^)]*\)"#,
-            with: " ",
-            options: .regularExpression
-        )
-        candidates.insert(normalizedComparisonText(titleWithoutBrackets))
-
-        if let hyphenPrefix = trimmedTitle.components(separatedBy: " - ").first {
-            candidates.insert(normalizedComparisonText(hyphenPrefix))
-        }
-
-        return Set(candidates.filter { !$0.isEmpty })
+        Set(titleSearchVariants(for: title).map(normalizedComparisonText).filter { !$0.isEmpty })
     }
 
     private func normalizedArtistCandidates(for artist: String) -> Set<String> {
-        let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedArtist.isEmpty, trimmedArtist != "Unknown Artist" else { return [] }
-
-        var candidates: Set<String> = []
-        candidates.insert(normalizedComparisonText(trimmedArtist))
-
-        let lowercasedArtist = trimmedArtist.lowercased()
-        let separators = [" feat", " ft", ",", "&", " x ", " and "]
-        let separatorIndex = separators.compactMap { lowercasedArtist.range(of: $0)?.lowerBound }.min()
-        if let separatorIndex {
-            let primaryArtist = String(lowercasedArtist[..<separatorIndex])
-            candidates.insert(normalizedComparisonText(primaryArtist))
-        }
-
-        return Set(candidates.filter { !$0.isEmpty })
+        Set(artistSearchVariants(for: artist).map(normalizedComparisonText).filter { !$0.isEmpty })
     }
 
     private func normalizedComparisonText(_ value: String) -> String {
         let strippedValue = value
             .replacingOccurrences(of: "\u{0451}", with: "\u{0435}")
             .replacingOccurrences(of: #"(feat\.?|ft\.?|featuring)\s+.+$"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)(version|remix|mix|edit|live|sped up|slowed|remaster(ed)?)"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)(prod\.?|produced by)\s+.+$"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)(official audio|official video|lyrics video|lyric video|visualizer|nightcore|sped up|slowed(?:\s*\+\s*reverb)?|remix|mix|edit|live|version|remaster(ed)?)"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
 
@@ -878,6 +978,20 @@ actor LyricsMetadataResolver {
     }
 
     private func extractLyricsHTML(from pageHTML: String) -> String? {
+        let lowercasedHTML = pageHTML.lowercased()
+        if lowercasedHTML.contains("cloudflare_error.challenge") ||
+            lowercasedHTML.contains("make sure you're a human") {
+            return nil
+        }
+
+        if let preloadedStateLyricsHTML = extractLyricsHTMLFromPreloadedState(from: pageHTML) {
+            return preloadedStateLyricsHTML
+        }
+
+        return extractLyricsHTMLFromContainers(from: pageHTML)
+    }
+
+    private func extractLyricsHTMLFromPreloadedState(from pageHTML: String) -> String? {
         let marker = "window.__PRELOADED_STATE__ = JSON.parse('"
         guard let markerRange = pageHTML.range(of: marker) else {
             return nil
@@ -917,6 +1031,31 @@ actor LyricsMetadataResolver {
         return cleanedLyricsText(pageState.songPage?.lyricsData?.body?.html)
     }
 
+    private func extractLyricsHTMLFromContainers(from pageHTML: String) -> String? {
+        let pattern = #"<div[^>]*data-lyrics-container=\"true\"[^>]*>(.*?)</div>"#
+        guard let regex = try? NSRegularExpression(
+            pattern: pattern,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return nil
+        }
+
+        let range = NSRange(pageHTML.startIndex..., in: pageHTML)
+        let snippets = regex.matches(in: pageHTML, options: [], range: range).compactMap { match -> String? in
+            guard let captureRange = Range(match.range(at: 1), in: pageHTML) else {
+                return nil
+            }
+
+            return String(pageHTML[captureRange])
+        }
+
+        guard !snippets.isEmpty else {
+            return nil
+        }
+
+        return cleanedLyricsText(snippets.joined(separator: "<br><br>"))
+    }
+
     private func plainTextLyrics(fromHTML html: String) -> String? {
         guard let data = html.data(using: .utf8),
               let attributedString = try? NSAttributedString(
@@ -947,6 +1086,120 @@ actor LyricsMetadataResolver {
         let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return cleanedValue.isEmpty ? nil : cleanedValue
     }
+
+    private func lookupMetadata(for track: Track) -> LyricsLookupMetadata? {
+        let titleVariants = titleSearchVariants(for: track.displayTitle)
+        let artistVariants = artistSearchVariants(for: track.displayArtist)
+        let normalizedTitleCandidates = Set(titleVariants.map(normalizedComparisonText).filter { !$0.isEmpty })
+        let normalizedArtistCandidates = Set(artistVariants.map(normalizedComparisonText).filter { !$0.isEmpty })
+
+        guard !titleVariants.isEmpty,
+              !artistVariants.isEmpty,
+              !normalizedTitleCandidates.isEmpty,
+              !normalizedArtistCandidates.isEmpty else {
+            return nil
+        }
+
+        return LyricsLookupMetadata(
+            titleVariants: titleVariants,
+            artistVariants: artistVariants,
+            normalizedTitleCandidates: normalizedTitleCandidates,
+            normalizedArtistCandidates: normalizedArtistCandidates
+        )
+    }
+
+    private func titleSearchVariants(for title: String) -> [String] {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return [] }
+
+        let strippedBracketedTitle = trimmedTitle.replacingOccurrences(
+            of: #"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}"#,
+            with: " ",
+            options: .regularExpression
+        )
+        let strippedNoiseTitle = strippedBracketedTitle
+            .replacingOccurrences(of: #"(?:^|\s)(feat\.?|ft\.?|featuring|prod\.?|produced by)\s+.+$"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)(official audio|official video|lyrics video|lyric video|visualizer|nightcore|sped up(?:\s*\+\s*reverb)?|slowed(?:\s*\+\s*reverb)?|remix|mix|edit|live|version|remaster(?:ed)?)"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var variants: [String] = [
+            trimmedTitle,
+            strippedBracketedTitle,
+            strippedNoiseTitle
+        ]
+
+        let titleSeparators = [" - ", " – ", " — ", " | ", ":"]
+        for separator in titleSeparators {
+            guard let range = trimmedTitle.range(of: separator) else { continue }
+            let prefix = String(trimmedTitle[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let suffix = String(trimmedTitle[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if containsLyricsNoise(in: suffix) {
+                variants.append(prefix)
+            }
+        }
+
+        return deduplicatedNonEmptyValues(variants)
+    }
+
+    private func artistSearchVariants(for artist: String) -> [String] {
+        let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedArtist.isEmpty, trimmedArtist != "Unknown Artist" else { return [] }
+
+        let strippedArtist = trimmedArtist
+            .replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"(feat\.?|ft\.?|featuring|prod\.?|produced by)\s+.+$"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var variants: [String] = [trimmedArtist, strippedArtist]
+        let lowercasedArtist = strippedArtist.lowercased()
+        let separators = [" feat", " ft", ",", "&", " x ", " and ", " with "]
+        let separatorIndex = separators.compactMap { lowercasedArtist.range(of: $0)?.lowerBound }.min()
+        if let separatorIndex {
+            variants.append(String(strippedArtist[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return deduplicatedNonEmptyValues(variants)
+    }
+
+    private func deduplicatedNonEmptyValues(_ values: [String]) -> [String] {
+        var seenNormalizedValues: Set<String> = []
+        var orderedValues: [String] = []
+
+        for value in values {
+            let cleanedValue = value
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedValue.isEmpty else { continue }
+
+            let normalizedValue = cleanedValue.lowercased()
+            guard seenNormalizedValues.insert(normalizedValue).inserted else { continue }
+            orderedValues.append(cleanedValue)
+        }
+
+        return orderedValues
+    }
+
+    private func containsLyricsNoise(in value: String) -> Bool {
+        let normalizedValue = value.lowercased()
+        let markers = [
+            "feat", "ft", "featuring", "prod", "produced by", "official audio", "official video",
+            "lyrics video", "lyric video", "visualizer", "nightcore", "slowed", "sped up",
+            "remix", "edit", "mix", "live", "version", "remaster"
+        ]
+
+        return markers.contains { normalizedValue.contains($0) }
+    }
+
+    private func strippedSyncedLyrics(from value: String) -> String? {
+        let plainText = value
+            .replacingOccurrences(of: #"(?m)^\[[^\]]+\]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+
+        return cleanedLyricsText(plainText)
+    }
 }
 
 private struct GeniusSearchEnvelope: Decodable {
@@ -968,7 +1221,10 @@ private struct GeniusSearchHit: Decodable {
 private struct GeniusSongHitResult: Decodable {
     let id: Int
     let title: String?
+    let fullTitle: String?
+    let titleWithFeatured: String?
     let artistNames: String?
+    let primaryArtist: GeniusPrimaryArtist?
     let path: String?
     let url: String?
     let lyricsState: String?
@@ -976,11 +1232,18 @@ private struct GeniusSongHitResult: Decodable {
     enum CodingKeys: String, CodingKey {
         case id
         case title
+        case fullTitle = "full_title"
+        case titleWithFeatured = "title_with_featured"
         case artistNames = "artist_names"
+        case primaryArtist = "primary_artist"
         case path
         case url
         case lyricsState = "lyrics_state"
     }
+}
+
+private struct GeniusPrimaryArtist: Decodable {
+    let name: String?
 }
 
 private struct GeniusSongPageState: Decodable {
@@ -997,6 +1260,84 @@ private struct GeniusLyricsPayload: Decodable {
 
 private struct GeniusLyricsBody: Decodable {
     let html: String?
+}
+
+private struct LyricsLookupMetadata {
+    let titleVariants: [String]
+    let artistVariants: [String]
+    let normalizedTitleCandidates: Set<String>
+    let normalizedArtistCandidates: Set<String>
+
+    var geniusSearchQueries: [String] {
+        var queries: [String] = []
+
+        for artist in artistVariants.prefix(2) {
+            for title in titleVariants.prefix(3) {
+                queries.append("\(artist) \(title)")
+            }
+        }
+
+        return deduplicatedQueries(queries)
+    }
+
+    var providerQueries: [(artist: String, title: String)] {
+        var queries: [(artist: String, title: String)] = []
+
+        for artist in artistVariants.prefix(2) {
+            for title in titleVariants.prefix(4) {
+                queries.append((artist: artist, title: title))
+            }
+        }
+
+        var seenKeys: Set<String> = []
+        var orderedQueries: [(artist: String, title: String)] = []
+
+        for query in queries {
+            let identity = "\(query.artist.lowercased())::\(query.title.lowercased())"
+            guard seenKeys.insert(identity).inserted else { continue }
+            orderedQueries.append(query)
+        }
+
+        return orderedQueries
+    }
+
+    private func deduplicatedQueries(_ queries: [String]) -> [String] {
+        var seenValues: Set<String> = []
+        var orderedValues: [String] = []
+
+        for query in queries {
+            let cleanedQuery = query
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanedQuery.isEmpty else { continue }
+
+            let normalizedQuery = cleanedQuery.lowercased()
+            guard seenValues.insert(normalizedQuery).inserted else { continue }
+            orderedValues.append(cleanedQuery)
+        }
+
+        return orderedValues
+    }
+}
+
+private struct LRCLibLyricsResult: Decodable {
+    let trackName: String?
+    let artistName: String?
+    let plainLyrics: String?
+    let syncedLyrics: String?
+    let url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case trackName
+        case artistName
+        case plainLyrics
+        case syncedLyrics
+        case url
+    }
+}
+
+private struct LyricsOVHResponse: Decodable {
+    let lyrics: String?
 }
 
 #Preview {
