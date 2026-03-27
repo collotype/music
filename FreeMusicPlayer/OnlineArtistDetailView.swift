@@ -79,28 +79,12 @@ struct OnlineArtistDetailView: View {
     }
 
     private var artistHeroCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            ZStack {
-                ArtistHeroArtworkView(
-                    provider: route.provider,
-                    artworkURLString: heroArtworkReference,
-                    fallbackTitle: profile.name,
-                    fallbackSystemImage: "person.fill",
-                    cornerRadius: 0
-                )
-                .frame(maxWidth: .infinity)
-                .frame(height: artistHeroHeight)
-
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.05),
-                        Color.black.opacity(0.18),
-                        Color.black.opacity(0.72)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            ArtistBackdropBannerView(
+                provider: route.provider,
+                artworkReference: heroBackdropReference
+            )
+            .frame(height: artistBackdropHeight)
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .center, spacing: 16) {
@@ -135,6 +119,7 @@ struct OnlineArtistDetailView: View {
 
                     Spacer(minLength: 0)
                 }
+                .padding(.top, 16)
 
                 if !artistMetadataChips.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -175,6 +160,7 @@ struct OnlineArtistDetailView: View {
                     }
                     .buttonStyle(.plain)
                 }
+                .padding(.bottom, 8)
             }
             .padding(.horizontal, 16)
         }
@@ -303,15 +289,8 @@ struct OnlineArtistDetailView: View {
         dataManager.favoriteArtist(provider: route.provider, artistID: route.providerArtistID)
     }
 
-    private var heroArtworkReference: String? {
-        preferredArtworkReference(
-            profile.heroImageURL,
-            persistedFavoriteArtist?.localImagePath,
-            profile.imageURL,
-            route.imageURL,
-            releases.first?.coverArtURL,
-            popularTracks.first?.coverArtURL
-        )
+    private var heroBackdropReference: String? {
+        preferredArtworkReference(profile.heroImageURL)
     }
 
     private var avatarArtworkReference: String? {
@@ -341,8 +320,8 @@ struct OnlineArtistDetailView: View {
         return chips
     }
 
-    private var artistHeroHeight: CGFloat {
-        resolvedArtworkURL(from: heroArtworkReference) == nil ? 170 : 240
+    private var artistBackdropHeight: CGFloat {
+        resolvedArtworkURL(from: heroBackdropReference) == nil ? 110 : 156
     }
 
     private func retryLoadArtistPage() {
@@ -376,6 +355,7 @@ struct OnlineArtistDetailView: View {
 
         do {
             popularTracks = try await OnlineMusicService.shared.fetchSoundCloudTracks(for: route)
+            prewarmPopularTrackPlayback()
         } catch {
             trackErrorMessage = error.localizedDescription
             debugLog("Online artist track load error for \(route.providerArtistID): \(error.localizedDescription)")
@@ -418,6 +398,20 @@ struct OnlineArtistDetailView: View {
                 await MainActor.run {
                     actionStatusMessage = error.localizedDescription
                 }
+            }
+        }
+    }
+
+    private func prewarmPopularTrackPlayback() {
+        let tracksToWarm = popularTracks
+            .filter(\.supportsInAppPlayback)
+            .prefix(3)
+
+        guard !tracksToWarm.isEmpty else { return }
+
+        Task(priority: .utility) {
+            for track in tracksToWarm {
+                _ = try? await OnlineMusicService.shared.resolvePlaybackStream(for: track)
             }
         }
     }
@@ -994,6 +988,62 @@ private struct OnlineReleaseCard: View {
         }
 
         return pieces.isEmpty ? release.providerDisplayName : pieces.joined(separator: " | ")
+    }
+}
+
+private struct ArtistBackdropBannerView: View {
+    let provider: OnlineTrackProvider
+    let artworkReference: String?
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    provider.accentColor.opacity(0.92),
+                    provider.secondaryAccentColor.opacity(0.92),
+                    Color.black
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            backdropImage
+
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.18),
+                    Color.black.opacity(0.30),
+                    Color.black.opacity(0.82)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .clipped()
+    }
+
+    @ViewBuilder
+    private var backdropImage: some View {
+        if let artworkURL = resolvedArtworkURL(from: artworkReference) {
+            if artworkURL.isFileURL, let image = UIImage(contentsOfFile: artworkURL.path) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .opacity(0.52)
+            } else {
+                AsyncImage(url: artworkURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .opacity(0.52)
+                    default:
+                        Color.clear
+                    }
+                }
+            }
+        }
     }
 }
 

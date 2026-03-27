@@ -12,7 +12,7 @@ import Foundation
 import Security
 import UIKit
 
-enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Identifiable {
+enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Identifiable, Sendable {
     case soundcloud = "soundcloud"
     case spotify = "spotify"
 
@@ -37,8 +37,8 @@ enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Id
     }
 }
 
-struct SoundCloudStreamCandidate: Equatable {
-    enum StreamKind: String, Equatable {
+struct SoundCloudStreamCandidate: Equatable, Sendable {
+    enum StreamKind: String, Equatable, Sendable {
         case hlsAAC160 = "hls_aac_160_url"
         case hlsAAC96 = "hls_aac_96_url"
         case hlsAAC = "hls_aac_url"
@@ -87,7 +87,7 @@ struct OnlineSearchResults: Equatable {
     }
 }
 
-struct OnlineTrackResult: Identifiable, Equatable {
+struct OnlineTrackResult: Identifiable, Equatable, Sendable {
     let provider: OnlineTrackProvider
     let providerTrackURN: String
     let providerArtistID: String?
@@ -292,10 +292,22 @@ struct OnlinePlaylistResult: Identifiable, Equatable {
     }
 }
 
-struct ResolvedAudioStream {
+struct ResolvedAudioStream: Sendable {
     let url: URL
     let providerName: String
     let streamType: String
+}
+
+private actor ResolvedPlaybackStreamCache {
+    private var cachedStreams: [String: ResolvedAudioStream] = [:]
+
+    func stream(for key: String) -> ResolvedAudioStream? {
+        cachedStreams[key]
+    }
+
+    func store(_ stream: ResolvedAudioStream, for key: String) {
+        cachedStreams[key] = stream
+    }
 }
 
 enum OnlineMusicServiceError: LocalizedError, Equatable {
@@ -347,6 +359,7 @@ final class OnlineMusicService {
     private let decoder = JSONDecoder()
     private let soundCloudRuntimeState = SoundCloudRuntimeState()
     private let spotifyRuntimeState = SpotifyRuntimeState()
+    private let resolvedPlaybackStreamCache = ResolvedPlaybackStreamCache()
 
     private let soundCloudAPIBaseURL = URL(string: "https://api-v2.soundcloud.com")!
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
@@ -548,6 +561,11 @@ final class OnlineMusicService {
             throw OnlineMusicServiceError.unsupportedSource(result.playbackUnavailableMessage)
         }
 
+        if let cachedStream = await resolvedPlaybackStreamCache.stream(for: result.id) {
+            debugLog("Using cached stream URL for \(result.providerTrackURN): \(cachedStream.url.absoluteString)")
+            return cachedStream
+        }
+
         guard !result.providerTrackURN.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OnlineMusicServiceError.unsupportedSource(
                 "Unsupported source. The selected SoundCloud result does not contain a valid track URN."
@@ -575,11 +593,13 @@ final class OnlineMusicService {
 
             debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
 
-            return ResolvedAudioStream(
+            let resolvedStream = ResolvedAudioStream(
                 url: finalURL,
                 providerName: result.providerDisplayName,
                 streamType: chosenCandidate.kind.rawValue
             )
+            await resolvedPlaybackStreamCache.store(resolvedStream, for: result.id)
+            return resolvedStream
         }
 
         if result.playbackStreams.contains(where: { $0.kind == .hlsAAC160 || $0.kind == .hlsAAC96 || $0.kind == .hlsAAC }) {
