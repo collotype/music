@@ -374,16 +374,16 @@ final class DataManager: ObservableObject {
             fileURL: storedPath,
             coverArtURL: result.coverArtURL,
             source: result.trackSource,
-            remoteCoverArtURL: result.coverArtURL,
-            artistImageURL: result.artistImageURL,
-            remoteArtistImageURL: result.artistImageURL,
             isFavorite: false,
             playCount: 0,
             lastPlayed: nil,
             addedAt: Date(),
             sourceID: result.id,
             remotePageURL: result.webpageURL,
-            storageLocation: .temp
+            storageLocation: .temp,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL
         )
     }
 
@@ -398,16 +398,16 @@ final class DataManager: ObservableObject {
             fileURL: streamURL.absoluteString,
             coverArtURL: result.coverArtURL,
             source: result.trackSource,
-            remoteCoverArtURL: result.coverArtURL,
-            artistImageURL: result.artistImageURL,
-            remoteArtistImageURL: result.artistImageURL,
             isFavorite: false,
             playCount: 0,
             lastPlayed: nil,
             addedAt: Date(),
             sourceID: result.id,
             remotePageURL: result.webpageURL,
-            storageLocation: .remote
+            storageLocation: .remote,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL
         )
     }
 
@@ -453,16 +453,16 @@ final class DataManager: ObservableObject {
             fileURL: storedPath,
             coverArtURL: resolvedArtworkPath ?? result.coverArtURL,
             source: result.trackSource,
-            remoteCoverArtURL: result.coverArtURL,
-            artistImageURL: resolvedArtistImagePath ?? result.artistImageURL,
-            remoteArtistImageURL: result.artistImageURL,
             isFavorite: false,
             playCount: 0,
             lastPlayed: nil,
             addedAt: Date(),
             sourceID: result.id,
             remotePageURL: result.webpageURL,
-            storageLocation: .library
+            storageLocation: .library,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: resolvedArtistImagePath ?? result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL
         )
 
         return addTrack(track)
