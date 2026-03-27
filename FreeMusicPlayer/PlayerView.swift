@@ -10,6 +10,7 @@ import SwiftUI
 
 struct PlayerView: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
+    @EnvironmentObject var router: AppRouter
     @Binding var isPresented: Bool
     @State private var showLyrics: Bool = false
     @State private var showEQ: Bool = false
@@ -158,10 +159,27 @@ struct PlayerView: View {
                     .font(.system(size: 22, weight: .bold))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
-                
-                Text(audioPlayer.currentTrack?.displayArtist ?? "Unknown Artist")
-                    .font(.system(size: 16))
-                    .foregroundColor(.white.opacity(0.6))
+
+                if let currentArtistRoute {
+                    Button {
+                        openArtistPage(currentArtistRoute)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(currentArtistRoute.artistName)
+                                .lineLimit(1)
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white.opacity(0.72))
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Text(audioPlayer.currentTrack?.displayArtist ?? "Unknown Artist")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white.opacity(0.6))
+                }
             }
             
             HStack(spacing: 24) {
@@ -317,6 +335,23 @@ struct PlayerView: View {
         let mins = Int(time) / 60
         let secs = Int(time.truncatingRemainder(dividingBy: 60))
         return String(format: "%d:%02d", mins, secs)
+    }
+
+    private var currentArtistRoute: OnlineArtistRoute? {
+        audioPlayer.currentTrack?.onlineArtistRoute
+    }
+
+    private func openArtistPage(_ route: OnlineArtistRoute) {
+        debugLog("Player artist pressed: \(route.artistName) [\(route.providerArtistID)]")
+
+        withAnimation(.spring(response: 0.3)) {
+            isPresented = false
+        }
+
+        Task { @MainActor in
+            await Task.yield()
+            router.openOnlineArtist(route)
+        }
     }
 }
 
@@ -525,4 +560,5 @@ private actor LyricsMetadataResolver {
 #Preview {
     PlayerView(isPresented: .constant(true))
         .environmentObject(AudioPlayer.shared)
+        .environmentObject(AppRouter())
 }

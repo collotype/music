@@ -63,7 +63,7 @@ struct OnlineArtistDetailView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
-                    .padding(.bottom, 120)
+                    .padding(.bottom, 64)
                 }
             }
         }
@@ -79,36 +79,36 @@ struct OnlineArtistDetailView: View {
     }
 
     private var artistHeroCard: some View {
-        ZStack(alignment: .bottomLeading) {
-            ArtistHeroArtworkView(
-                provider: route.provider,
-                artworkURLString: heroArtworkReference,
-                fallbackTitle: profile.name,
-                fallbackSystemImage: "person.fill",
-                cornerRadius: 0
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: 400)
+        VStack(alignment: .leading, spacing: 18) {
+            ZStack {
+                ArtistHeroArtworkView(
+                    provider: route.provider,
+                    artworkURLString: heroArtworkReference,
+                    fallbackTitle: profile.name,
+                    fallbackSystemImage: "person.fill",
+                    cornerRadius: 0
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: artistHeroHeight)
 
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.08),
-                    Color.black.opacity(0.35),
-                    Color.black.opacity(0.88)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.05),
+                        Color.black.opacity(0.18),
+                        Color.black.opacity(0.72)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
 
-            VStack(alignment: .leading, spacing: 18) {
-                Spacer(minLength: 0)
-
-                HStack(alignment: .bottom, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center, spacing: 16) {
                     ResolvedArtworkTileView(
                         provider: route.provider,
                         artworkReference: avatarArtworkReference,
                         fallbackSystemImage: "person.fill",
-                        size: 88,
+                        size: 92,
                         cornerRadius: 24,
                         showsProviderBadge: false
                     )
@@ -176,9 +176,7 @@ struct OnlineArtistDetailView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 104)
-            .padding(.bottom, 26)
+            .padding(.horizontal, 16)
         }
         .frame(maxWidth: .infinity)
     }
@@ -343,6 +341,10 @@ struct OnlineArtistDetailView: View {
         return chips
     }
 
+    private var artistHeroHeight: CGFloat {
+        resolvedArtworkURL(from: heroArtworkReference) == nil ? 170 : 240
+    }
+
     private func retryLoadArtistPage() {
         Task {
             await loadArtistPage()
@@ -502,7 +504,7 @@ struct OnlineReleaseDetailView: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
-                    .padding(.bottom, 120)
+                    .padding(.bottom, 64)
                 }
             }
         }
@@ -518,37 +520,54 @@ struct OnlineReleaseDetailView: View {
     }
 
     private var releaseHeroCard: some View {
-        ZStack(alignment: .bottomLeading) {
-            ArtistHeroArtworkView(
-                provider: route.provider,
-                artworkURLString: release.coverArtURL,
-                fallbackTitle: release.title,
-                fallbackSystemImage: "square.stack.fill",
-                cornerRadius: 0
-            )
-            .frame(maxWidth: .infinity)
-            .frame(height: 360)
+        VStack(alignment: .leading, spacing: 18) {
+            ZStack {
+                ArtistHeroArtworkView(
+                    provider: route.provider,
+                    artworkURLString: release.coverArtURL,
+                    fallbackTitle: release.title,
+                    fallbackSystemImage: "square.stack.fill",
+                    cornerRadius: 0
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: releaseHeroHeight)
 
-            LinearGradient(
-                colors: [
-                    Color.black.opacity(0.06),
-                    Color.black.opacity(0.30),
-                    Color.black.opacity(0.86)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.04),
+                        Color.black.opacity(0.14),
+                        Color.black.opacity(0.68)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text(release.title)
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .center, spacing: 16) {
+                    ResolvedArtworkTileView(
+                        provider: route.provider,
+                        artworkReference: release.coverArtURL,
+                        fallbackSystemImage: "square.stack.fill",
+                        size: 92,
+                        cornerRadius: 22,
+                        showsProviderBadge: false
+                    )
 
-                Text(release.artist)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.72))
-                    .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(release.title)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+
+                        Text(release.artist)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.72))
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+                }
 
                 if !releaseMetadataChips.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -575,9 +594,7 @@ struct OnlineReleaseDetailView: View {
                 .disabled(primaryPlayableTrack == nil || isPlayingPrimaryAction)
                 .opacity(primaryPlayableTrack == nil ? 0.45 : 1)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 104)
-            .padding(.bottom, 24)
+            .padding(.horizontal, 16)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -602,6 +619,10 @@ struct OnlineReleaseDetailView: View {
         }
 
         return chips
+    }
+
+    private var releaseHeroHeight: CGFloat {
+        resolvedArtworkURL(from: release.coverArtURL) == nil ? 170 : 220
     }
 
     private func retryLoadRelease() {
@@ -1035,14 +1056,14 @@ private struct ArtistHeroArtworkView: View {
                 endRadius: 220
             )
 
-            VStack(spacing: 10) {
-                Image(systemName: fallbackSystemImage)
-                    .font(.system(size: 48, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.86))
+            Circle()
+                .fill(Color.white.opacity(0.12))
+                .frame(width: 92, height: 92)
 
-                Text(String(fallbackTitle.prefix(1)).uppercased())
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundColor(.white.opacity(0.52))
+            VStack(spacing: 8) {
+                Image(systemName: fallbackSystemImage)
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.86))
             }
         }
     }

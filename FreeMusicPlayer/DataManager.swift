@@ -98,6 +98,14 @@ final class DataManager: ObservableObject {
                 newValue: track.remoteArtistImageURL,
                 existingValue: tracks[existingIndex].remoteArtistImageURL
             )
+            updatedTrack.providerArtistID = resolvedPreferredTextValue(
+                newValue: track.providerArtistID,
+                existingValue: tracks[existingIndex].providerArtistID
+            )
+            updatedTrack.artistWebpageURL = resolvedPreferredTextValue(
+                newValue: track.artistWebpageURL,
+                existingValue: tracks[existingIndex].artistWebpageURL
+            )
             updatedTrack.isFavorite = favorites.contains(updatedTrack.id)
             tracks[existingIndex] = updatedTrack
             saveData()
@@ -383,7 +391,9 @@ final class DataManager: ObservableObject {
             storageLocation: .temp,
             remoteCoverArtURL: result.coverArtURL,
             artistImageURL: result.artistImageURL,
-            remoteArtistImageURL: result.artistImageURL
+            remoteArtistImageURL: result.artistImageURL,
+            providerArtistID: result.providerArtistID,
+            artistWebpageURL: result.artistWebpageURL
         )
     }
 
@@ -407,7 +417,9 @@ final class DataManager: ObservableObject {
             storageLocation: .remote,
             remoteCoverArtURL: result.coverArtURL,
             artistImageURL: result.artistImageURL,
-            remoteArtistImageURL: result.artistImageURL
+            remoteArtistImageURL: result.artistImageURL,
+            providerArtistID: result.providerArtistID,
+            artistWebpageURL: result.artistWebpageURL
         )
     }
 
@@ -416,13 +428,51 @@ final class DataManager: ObservableObject {
     func saveDownloadedOnlineTrack(_ result: OnlineTrackResult, from tempFileURL: URL) async throws -> Track {
         if let existingTrack = track(withSourceID: result.id) {
             debugLog("Reuse existing saved online track: \(existingTrack.displayTitle)")
+            let existingIndex = tracks.firstIndex(where: { $0.id == existingTrack.id })
+
+            if let existingIndex {
+                var updatedTrack = tracks[existingIndex]
+                var didUpdateMetadata = false
+
+                let resolvedProviderArtistID = resolvedPreferredTextValue(
+                    newValue: result.providerArtistID,
+                    existingValue: updatedTrack.providerArtistID
+                )
+                if updatedTrack.providerArtistID != resolvedProviderArtistID {
+                    updatedTrack.providerArtistID = resolvedProviderArtistID
+                    didUpdateMetadata = true
+                }
+
+                let resolvedArtistWebpageURL = resolvedPreferredTextValue(
+                    newValue: result.artistWebpageURL,
+                    existingValue: updatedTrack.artistWebpageURL
+                )
+                if updatedTrack.artistWebpageURL != resolvedArtistWebpageURL {
+                    updatedTrack.artistWebpageURL = resolvedArtistWebpageURL
+                    didUpdateMetadata = true
+                }
+
+                if didUpdateMetadata {
+                    tracks[existingIndex] = updatedTrack
+                    saveData()
+                }
+            }
+
             if let refreshedTrack = await persistOfflineVisualsIfNeeded(
                 forTrackID: existingTrack.id,
                 preferredCoverReference: result.coverArtURL ?? existingTrack.remoteCoverArtURL,
                 preferredArtistReference: result.artistImageURL ?? existingTrack.remoteArtistImageURL
             ) {
+                if let existingIndex {
+                    return tracks[existingIndex]
+                }
                 return refreshedTrack
             }
+
+            if let existingIndex {
+                return tracks[existingIndex]
+            }
+
             return existingTrack
         }
 
@@ -462,7 +512,9 @@ final class DataManager: ObservableObject {
             storageLocation: .library,
             remoteCoverArtURL: result.coverArtURL,
             artistImageURL: resolvedArtistImagePath ?? result.artistImageURL,
-            remoteArtistImageURL: result.artistImageURL
+            remoteArtistImageURL: result.artistImageURL,
+            providerArtistID: result.providerArtistID,
+            artistWebpageURL: result.artistWebpageURL
         )
 
         return addTrack(track)
@@ -695,6 +747,10 @@ final class DataManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func resolvedPreferredTextValue(newValue: String?, existingValue: String?) -> String? {
+        cleanedImageReference(newValue) ?? cleanedImageReference(existingValue)
     }
 
     private func persistFavoriteArtistImageIfNeeded(artist: FavoriteArtist) {

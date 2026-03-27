@@ -33,6 +33,8 @@ struct Track: Identifiable, Codable, Equatable {
     var remoteCoverArtURL: String?
     var artistImageURL: String?
     var remoteArtistImageURL: String?
+    var providerArtistID: String?
+    var artistWebpageURL: String?
     var source: TrackSource
     var isFavorite: Bool
     var playCount: Int
@@ -62,7 +64,9 @@ struct Track: Identifiable, Codable, Equatable {
         importOriginID: String? = nil,
         remoteCoverArtURL: String? = nil,
         artistImageURL: String? = nil,
-        remoteArtistImageURL: String? = nil
+        remoteArtistImageURL: String? = nil,
+        providerArtistID: String? = nil,
+        artistWebpageURL: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -74,6 +78,8 @@ struct Track: Identifiable, Codable, Equatable {
         self.remoteCoverArtURL = remoteCoverArtURL
         self.artistImageURL = artistImageURL
         self.remoteArtistImageURL = remoteArtistImageURL
+        self.providerArtistID = providerArtistID
+        self.artistWebpageURL = artistWebpageURL
         self.source = source
         self.isFavorite = isFavorite
         self.playCount = playCount
@@ -96,6 +102,8 @@ struct Track: Identifiable, Codable, Equatable {
         case remoteCoverArtURL
         case artistImageURL
         case remoteArtistImageURL
+        case providerArtistID
+        case artistWebpageURL
         case source
         case isFavorite
         case playCount
@@ -120,6 +128,8 @@ struct Track: Identifiable, Codable, Equatable {
         remoteCoverArtURL = try container.decodeIfPresent(String.self, forKey: .remoteCoverArtURL)
         artistImageURL = try container.decodeIfPresent(String.self, forKey: .artistImageURL)
         remoteArtistImageURL = try container.decodeIfPresent(String.self, forKey: .remoteArtistImageURL)
+        providerArtistID = try container.decodeIfPresent(String.self, forKey: .providerArtistID)
+        artistWebpageURL = try container.decodeIfPresent(String.self, forKey: .artistWebpageURL)
         source = try container.decodeIfPresent(TrackSource.self, forKey: .source) ?? .local
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
@@ -143,6 +153,8 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(remoteCoverArtURL, forKey: .remoteCoverArtURL)
         try container.encodeIfPresent(artistImageURL, forKey: .artistImageURL)
         try container.encodeIfPresent(remoteArtistImageURL, forKey: .remoteArtistImageURL)
+        try container.encodeIfPresent(providerArtistID, forKey: .providerArtistID)
+        try container.encodeIfPresent(artistWebpageURL, forKey: .artistWebpageURL)
         try container.encode(source, forKey: .source)
         try container.encode(isFavorite, forKey: .isFavorite)
         try container.encode(playCount, forKey: .playCount)
@@ -322,6 +334,23 @@ extension OnlineArtistRoute {
 }
 
 extension Track {
+    var onlineArtistRoute: OnlineArtistRoute? {
+        guard let provider = source.onlineProvider,
+              let providerArtistID = cleanedImageReference(providerArtistID),
+              let artistName = cleanedImageReference(displayArtist),
+              artistName != "Unknown Artist" else {
+            return nil
+        }
+
+        return OnlineArtistRoute(
+            provider: provider,
+            providerArtistID: providerArtistID,
+            artistName: artistName,
+            imageURL: preferredArtistImageReference ?? preferredArtworkReference,
+            webpageURL: cleanedImageReference(artistWebpageURL)
+        )
+    }
+
     var artworkCacheIdentity: String {
         preferredArtworkReference ?? sourceID ?? id
     }
