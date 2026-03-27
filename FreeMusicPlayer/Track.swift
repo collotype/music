@@ -271,6 +271,7 @@ enum Tab: String, CaseIterable, Hashable {
 
 enum AppRoute: Hashable {
     case playlist(String)
+    case onlineArtist(OnlineArtistResult)
 }
 
 final class AppRouter: ObservableObject {
@@ -286,6 +287,11 @@ final class AppRouter: ObservableObject {
     func openPlaylist(_ playlistId: String) {
         debugLog("Navigate to playlist: \(playlistId)")
         path.append(AppRoute.playlist(playlistId))
+    }
+
+    func openOnlineArtist(_ artist: OnlineArtistResult) {
+        debugLog("Navigate to online artist: \(artist.name) [\(artist.providerArtistID)]")
+        path.append(AppRoute.onlineArtist(artist))
     }
 
     func popToRoot() {

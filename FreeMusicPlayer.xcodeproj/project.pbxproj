@@ -22,6 +22,7 @@
 		A100000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A200000D; };
 		A100000E /* AppFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
 		A100000F /* OnlineMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
+		A1000010 /* OnlineArtistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 		A200000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = FreeMusicPlayer/Info.plist; sourceTree = "<group>"; };
 		A2000010 /* AppFileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFileManager.swift; sourceTree = "<group>"; };
 		A2000011 /* OnlineMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineMusicService.swift; sourceTree = "<group>"; };
+		A2000012 /* OnlineArtistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineArtistDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +84,7 @@
 				A2000009 /* DataManager.swift */,
 				A2000010 /* AppFileManager.swift */,
 				A2000011 /* OnlineMusicService.swift */,
+				A2000012 /* OnlineArtistDetailView.swift */,
 			);
 			path = FreeMusicPlayer;
 			sourceTree = "<group>";
@@ -178,6 +181,7 @@
 				A100000C /* MiniPlayer.swift in Sources */,
 				A100000E /* AppFileManager.swift in Sources */,
 				A100000F /* OnlineMusicService.swift in Sources */,
+				A1000010 /* OnlineArtistDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

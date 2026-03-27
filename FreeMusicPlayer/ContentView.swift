@@ -43,6 +43,8 @@ struct ContentView: View {
                 switch route {
                 case .playlist(let playlistId):
                     PlaylistView(playlistId: playlistId)
+                case .onlineArtist(let artist):
+                    OnlineArtistDetailView(artist: artist)
                 }
             }
         }

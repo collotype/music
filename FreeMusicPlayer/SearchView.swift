@@ -9,6 +9,7 @@ import SwiftUI
 
 struct SearchView: View {
     private let onlineSearchTimeoutNanoseconds: UInt64 = 15_000_000_000
+    private let supportedOnlineProviders: [OnlineTrackProvider] = [.soundcloud]
 
     @Environment(\.openURL) private var openURL
     @EnvironmentObject var dataManager: DataManager
@@ -22,14 +23,21 @@ struct SearchView: View {
     @State private var isSearchingOnline: Bool = false
     @State private var onlineStatusMessage: String?
     @State private var searchTask: Task<Void, Never>?
-    @State private var downloadingIDs: Set<String> = []
-    @State private var savingIDs: Set<String> = []
     @State private var selectedCategory: SearchCategory = .tracks
     @State private var onlinePrompt: OnlineSearchPrompt?
     @State private var isAuthorizingSpotify: Bool = false
 
     private var selectedProvider: OnlineTrackProvider {
-        OnlineTrackProvider(rawValue: selectedProviderRawValue) ?? .soundcloud
+        guard let provider = OnlineTrackProvider(rawValue: selectedProviderRawValue),
+              supportedOnlineProviders.contains(provider) else {
+            return .soundcloud
+        }
+
+        return provider
+    }
+
+    private var shouldShowProviderSwitcher: Bool {
+        supportedOnlineProviders.count > 1
     }
 
     private var isSpotifyProviderAvailable: Bool {
@@ -104,6 +112,9 @@ struct SearchView: View {
                   audioPlayer.currentTrack?.source != .local else { return }
             onlineStatusMessage = newValue
         }
+        .onAppear {
+            ensureSupportedProviderSelection()
+        }
         .onDisappear {
             searchTask?.cancel()
         }
@@ -151,25 +162,27 @@ struct SearchView: View {
                         .fill(Color.white.opacity(0.1))
                 )
 
-                Menu {
-                    ForEach(OnlineTrackProvider.allCases) { provider in
-                        Button {
-                            selectProvider(provider)
-                        } label: {
-                            SearchProviderMenuRow(
-                                provider: provider,
-                                isSelected: provider == selectedProvider,
-                                isAvailable: isProviderAvailable(provider)
-                            )
+                if shouldShowProviderSwitcher {
+                    Menu {
+                        ForEach(supportedOnlineProviders) { provider in
+                            Button {
+                                selectProvider(provider)
+                            } label: {
+                                SearchProviderMenuRow(
+                                    provider: provider,
+                                    isSelected: provider == selectedProvider,
+                                    isAvailable: isProviderAvailable(provider)
+                                )
+                            }
                         }
+                    } label: {
+                        SearchProviderButton(
+                            provider: selectedProvider,
+                            isAvailable: isProviderAvailable(selectedProvider)
+                        )
                     }
-                } label: {
-                    SearchProviderButton(
-                        provider: selectedProvider,
-                        isAvailable: isProviderAvailable(selectedProvider)
-                    )
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
             searchCategoryTabs
@@ -311,20 +324,14 @@ struct SearchView: View {
                     subtitle: onlineSearchSubtitle(for: .tracks)
                 )
             } else if !onlineTrackResults.isEmpty {
-                ForEach(onlineTrackResults) { result in
-                    OnlineSearchTrackRow(
-                        result: result,
-                        isPerformingPrimaryAction: downloadingIDs.contains(result.id),
-                        isSaving: savingIDs.contains(result.id),
-                        isSaved: dataManager.track(withSourceID: result.id) != nil,
-                        primaryAction: { handlePrimaryAction(for: result) },
-                        saveAction: result.supportsOfflineDownload ? { saveOnlineResult(result) } : nil
-                    )
-                    if result.id != onlineTrackResults.last?.id {
-                        Divider()
-                            .background(Color.white.opacity(0.06))
+                OnlineTrackResultsList(
+                    results: onlineTrackResults,
+                    statusMessage: $onlineStatusMessage,
+                    onSaveCompletion: {
+                        localResults = localMatches(for: searchText)
+                        debugLog("Local result count after save: \(localResults.count)")
                     }
-                }
+                )
             } else {
                 onlineStatusRow(for: .tracks)
             }
@@ -372,7 +379,8 @@ struct SearchView: View {
             } else if !onlineArtistResults.isEmpty {
                 ForEach(onlineArtistResults) { result in
                     OnlineSearchArtistRow(result: result) {
-                        openExternalResult(result.externalURL, failureMessage: "Couldn't open that artist result.")
+                        debugLog("Search online artist row tapped: \(result.name) [\(result.providerArtistID)]")
+                        router.openOnlineArtist(result)
                     }
 
                     if result.id != onlineArtistResults.last?.id {
@@ -616,110 +624,18 @@ struct SearchView: View {
         }
     }
 
-    private func handlePrimaryAction(for result: OnlineTrackResult) {
-        if result.supportsInAppPlayback {
-            playOnlineResult(result)
-        } else {
-            debugLog("External result open pressed: \(result.title) [\(result.providerTrackID)]")
-            openExternalResult(
-                result.externalURL,
-                failureMessage: "\(result.providerDisplayName) could not be opened from this result."
-            )
-        }
-    }
-
-    private func playOnlineResult(_ result: OnlineTrackResult) {
-        guard !downloadingIDs.contains(result.id) else { return }
-        guard result.supportsInAppPlayback else {
-            onlineStatusMessage = result.playbackUnavailableMessage
-            return
-        }
-
-        debugLog("Online result play pressed: \(result.title) [\(result.providerTrackID)]")
-        downloadingIDs.insert(result.id)
-        onlineStatusMessage = nil
-        audioPlayer.clearPlaybackError()
-
-        Task {
-            defer {
-                Task { @MainActor in
-                    downloadingIDs.remove(result.id)
-                }
-            }
-
-            do {
-                let resolvedStream = try await OnlineMusicService.shared.resolvePlaybackStream(for: result)
-                let streamingTrack = await MainActor.run {
-                    dataManager.makeStreamingTrack(from: result, streamURL: resolvedStream.url)
-                }
-
-                await MainActor.run {
-                    let didStartPlayback = audioPlayer.playTrack(streamingTrack)
-                    if didStartPlayback {
-                        debugLog(
-                            "Playback success for \(result.providerTrackID) via \(resolvedStream.streamType)"
-                        )
-                    } else {
-                        onlineStatusMessage = audioPlayer.playbackErrorMessage ?? "Playback failed for the selected SoundCloud track."
-                    }
-                }
-            } catch {
-                debugLog("Playback error for \(result.providerTrackID): \(error.localizedDescription)")
-                await MainActor.run {
-                    onlineStatusMessage = error.localizedDescription
-                }
-            }
-        }
-    }
-
-    private func saveOnlineResult(_ result: OnlineTrackResult) {
-        guard !savingIDs.contains(result.id) else { return }
-        guard result.supportsOfflineDownload else {
-            onlineStatusMessage = result.offlineDownloadUnavailableMessage
-            return
-        }
-
-        if let savedTrack = dataManager.track(withSourceID: result.id) {
-            debugLog("Saved online result tapped again: \(result.title) [\(result.providerTrackID)]")
-            let didStartPlayback = audioPlayer.playTrack(savedTrack)
-            if !didStartPlayback {
-                onlineStatusMessage = audioPlayer.playbackErrorMessage ?? "Playback failed for the saved track."
-            }
-            return
-        }
-
-        debugLog("Online result save pressed: \(result.title) [\(result.providerTrackID)]")
-        savingIDs.insert(result.id)
-        onlineStatusMessage = nil
-
-        Task {
-            defer {
-                Task { @MainActor in
-                    savingIDs.remove(result.id)
-                }
-            }
-
-            do {
-                let tempURL = try await OnlineMusicService.shared.downloadAudio(for: result)
-                let savedTrack = try await MainActor.run {
-                    try dataManager.saveDownloadedOnlineTrack(result, from: tempURL)
-                }
-
-                await MainActor.run {
-                    audioPlayer.syncCurrentTrackReference(with: savedTrack)
-                    localResults = localMatches(for: searchText)
-                    debugLog("Local result count after save: \(localResults.count)")
-                }
-            } catch {
-                debugLog("Save error for \(result.providerTrackID): \(error.localizedDescription)")
-                await MainActor.run {
-                    onlineStatusMessage = error.localizedDescription
-                }
-            }
+    private func ensureSupportedProviderSelection() {
+        if selectedProviderRawValue != selectedProvider.rawValue {
+            debugLog("Selected provider reset to: \(selectedProvider.displayName)")
+            selectedProviderRawValue = selectedProvider.rawValue
         }
     }
 
     private func selectProvider(_ provider: OnlineTrackProvider) {
+        guard supportedOnlineProviders.contains(provider) else {
+            ensureSupportedProviderSelection()
+            return
+        }
         guard provider != selectedProvider else { return }
 
         debugLog("Selected provider switched to: \(provider.displayName)")
@@ -830,23 +746,19 @@ struct SearchView: View {
             return "SoundCloud playlist search is not available in this app yet."
         }
 
-        return "Try another query or switch providers."
+        return "Try another query."
     }
 
     private var unavailableOnlineTitle: String {
-        if selectedProvider == .spotify && !isSpotifyProviderAvailable {
-            return "Spotify setup required"
-        }
-
         return "\(selectedProvider.displayName) search unavailable"
     }
 
     private func isProviderAvailable(_ provider: OnlineTrackProvider) -> Bool {
         switch provider {
         case .soundcloud:
-            return true
+            return supportedOnlineProviders.contains(.soundcloud)
         case .spotify:
-            return isSpotifyProviderAvailable
+            return supportedOnlineProviders.contains(.spotify) && isSpotifyProviderAvailable
         }
     }
 
@@ -1650,7 +1562,7 @@ struct OnlineSearchArtistRow: View {
 
             Spacer()
 
-            Image(systemName: "arrow.up.right")
+            Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.28))
         }
