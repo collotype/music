@@ -49,7 +49,7 @@ struct OnlineArtistDetailView: View {
 
                     VStack(alignment: .leading, spacing: 20) {
                         if let profileErrorMessage {
-                            SearchSectionCard(title: "Artist") {
+                            ArtistDetailSection(title: "Artist") {
                                 SearchStatusRow(
                                     icon: "info.circle",
                                     title: "Some artist details are unavailable",
@@ -64,8 +64,11 @@ struct OnlineArtistDetailView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
                     .padding(.bottom, 64)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .ignoresSafeArea(edges: .top)
         .navigationTitle(profile.name)
@@ -169,7 +172,7 @@ struct OnlineArtistDetailView: View {
 
     @ViewBuilder
     private var popularTracksSection: some View {
-        SearchSectionCard(title: "Popular Tracks") {
+        ArtistDetailSection(title: "Popular Tracks") {
             if let actionStatusMessage, !popularTracks.isEmpty {
                 SearchStatusRow(
                     icon: "exclamationmark.circle",
@@ -212,7 +215,7 @@ struct OnlineArtistDetailView: View {
 
     @ViewBuilder
     private var releasesSection: some View {
-        SearchSectionCard(title: "Releases") {
+        ArtistDetailSection(title: "Releases") {
             if isLoadingPage && releases.isEmpty && releaseErrorMessage == nil {
                 SearchStatusRow(
                     icon: "arrow.triangle.2.circlepath",
@@ -456,7 +459,7 @@ struct OnlineReleaseDetailView: View {
                     releaseHeroCard
 
                     VStack(alignment: .leading, spacing: 20) {
-                        SearchSectionCard(title: "Tracks") {
+                        ArtistDetailSection(title: "Tracks") {
                             if let actionStatusMessage, !tracks.isEmpty {
                                 SearchStatusRow(
                                     icon: "exclamationmark.circle",
@@ -499,8 +502,11 @@ struct OnlineReleaseDetailView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 20)
                     .padding(.bottom, 64)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .ignoresSafeArea(edges: .top)
         .navigationTitle(release.title)
@@ -1165,6 +1171,36 @@ private struct HeroMetadataChip: View {
                 Capsule()
                     .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
+    }
+}
+
+private struct ArtistDetailSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(.white)
+
+            VStack(spacing: 0) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
