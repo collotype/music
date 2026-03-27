@@ -14,39 +14,41 @@ struct ContentView: View {
     @State private var showPlayer: Bool = false
     
     var body: some View {
-        NavigationStack(path: $router.path) {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                
-                VStack(spacing: 0) {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                NavigationStack(path: $router.path) {
                     currentTabView
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    
-                    if audioPlayer.currentTrack != nil {
-                        MiniPlayer(showPlayer: $showPlayer)
-                            .padding(.horizontal, 12)
-                            .padding(.top, 6)
-                            .padding(.bottom, 8)
-                            .transition(.move(edge: .bottom))
-                    }
-                    
-                    CustomTabBar()
+                        .navigationDestination(for: AppRoute.self) { route in
+                            switch route {
+                            case .playlist(let playlistId):
+                                PlaylistView(playlistId: playlistId)
+                            case .onlineArtist(let artist):
+                                OnlineArtistDetailView(route: artist)
+                            case .onlineRelease(let release):
+                                OnlineReleaseDetailView(route: release)
+                            }
+                        }
                 }
-                
-                if showPlayer {
-                    PlayerView(isPresented: $showPlayer)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+                if audioPlayer.currentTrack != nil {
+                    MiniPlayer(showPlayer: $showPlayer)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 6)
+                        .padding(.bottom, 8)
                         .transition(.move(edge: .bottom))
-                        .zIndex(1)
                 }
+
+                CustomTabBar()
             }
-            .navigationDestination(for: AppRoute.self) { route in
-                switch route {
-                case .playlist(let playlistId):
-                    PlaylistView(playlistId: playlistId)
-                case .onlineArtist(let artist):
-                    OnlineArtistDetailView(route: artist)
-                case .onlineRelease(let release):
-                    OnlineReleaseDetailView(route: release)
+
+            if showPlayer {
+                PlayerView(isPresented: $showPlayer)
+                    .transition(.move(edge: .bottom))
+                    .zIndex(1)
                 }
             }
         }
