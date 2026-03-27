@@ -1139,7 +1139,7 @@ private func resolvedArtworkURL(from reference: String?) -> URL? {
 }
 
 private func preferredArtworkReference(_ candidates: String?...) -> String? {
-    candidates.first { resolvedArtworkURL(from: $0) != nil }
+    candidates.compactMap { $0 }.first { resolvedArtworkURL(from: $0) != nil }
 }
 
 private func formattedCount(_ value: Int) -> String {
