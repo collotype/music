@@ -8,6 +8,18 @@
 import AVFoundation
 import Foundation
 import SwiftUI
+import UIKit
+
+enum PlaylistCoverPersistenceError: LocalizedError {
+    case invalidImageData
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidImageData:
+            return "The selected image could not be used as a playlist cover."
+        }
+    }
+}
 
 final class DataManager: ObservableObject {
     static let shared = DataManager()
@@ -342,6 +354,53 @@ final class DataManager: ObservableObject {
         playlist.updatedAt = Date()
         playlists[index] = playlist
         saveData()
+    }
+
+    func setPlaylistCoverImage(_ imageData: Data, forPlaylistID playlistId: String) throws {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+        guard let image = UIImage(data: imageData) else {
+            throw PlaylistCoverPersistenceError.invalidImageData
+        }
+
+        let normalizedImageData: Data
+        let fileExtension: String
+
+        if let jpegData = image.jpegData(compressionQuality: 0.92) {
+            normalizedImageData = jpegData
+            fileExtension = "jpg"
+        } else if let pngData = image.pngData() {
+            normalizedImageData = pngData
+            fileExtension = "png"
+        } else {
+            throw PlaylistCoverPersistenceError.invalidImageData
+        }
+
+        let previousCoverReference = playlists[index].coverArtURL
+        let storedURL = try AppFileManager.shared.savePersistentImageData(
+            normalizedImageData,
+            preferredName: "playlist-\(playlistId)-cover",
+            fileExtension: fileExtension
+        )
+
+        playlists[index].coverArtURL = AppFileManager.shared.relativePath(for: storedURL)
+        playlists[index].updatedAt = Date()
+        saveData()
+
+        if previousCoverReference != playlists[index].coverArtURL {
+            deleteStoredImageIfNeeded(reference: previousCoverReference)
+        }
+    }
+
+    func removePlaylistCover(forPlaylistID playlistId: String) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+
+        let previousCoverReference = playlists[index].coverArtURL
+        guard previousCoverReference != nil else { return }
+
+        playlists[index].coverArtURL = nil
+        playlists[index].updatedAt = Date()
+        saveData()
+        deleteStoredImageIfNeeded(reference: previousCoverReference)
     }
 
     func removeTrack(_ track: Track, fromPlaylistID playlistId: String) {
@@ -1067,6 +1126,20 @@ final class DataManager: ObservableObject {
 
         guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    private func deleteStoredImageIfNeeded(reference: String?) {
+        guard let reference = cleanedImageReference(reference) else { return }
+
+        if let parsedURL = URL(string: reference), parsedURL.scheme != nil {
+            guard parsedURL.isFileURL else { return }
+            try? FileManager.default.removeItem(at: parsedURL)
+            return
+        }
+
+        let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: reference)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else { return }
+        try? FileManager.default.removeItem(at: resolvedURL)
     }
 
     private func deduplicatedFavoriteArtists(_ artists: [FavoriteArtist]) -> [FavoriteArtist] {

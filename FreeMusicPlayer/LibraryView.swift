@@ -422,13 +422,13 @@ struct LibraryView: View {
                                     router.openPlaylist(playlist.id)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(Color.white.opacity(0.08))
-                                            .frame(width: 52, height: 52)
-                                            .overlay(
-                                                Image(systemName: playlist.isStarred ? "star.circle.fill" : "music.note.list")
-                                                    .foregroundColor(playlist.isStarred ? .yellow : .white.opacity(0.5))
-                                            )
+                                        PlaylistArtworkView(
+                                            coverArtURL: playlist.coverArtURL,
+                                            representativeTrack: representativePlaylistTrack(for: playlist),
+                                            fallbackTitle: playlist.displayName,
+                                            size: 52,
+                                            cornerRadius: 10
+                                        )
 
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(playlist.displayName)
@@ -466,6 +466,11 @@ struct LibraryView: View {
                 }
             }
         }
+    }
+
+    private func representativePlaylistTrack(for playlist: Playlist) -> Track? {
+        let playlistTracks = dataManager.tracks(for: playlist.id)
+        return playlistTracks.first(where: { $0.preferredArtworkReference != nil }) ?? playlistTracks.first
     }
 
     var emptyStateView: some View {

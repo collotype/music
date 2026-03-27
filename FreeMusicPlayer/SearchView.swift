@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct SearchView: View {
     private let onlineSearchTimeoutNanoseconds: UInt64 = 15_000_000_000
@@ -428,7 +429,8 @@ struct SearchView: View {
             } else if !onlineAlbumResults.isEmpty {
                 ForEach(onlineAlbumResults) { result in
                     OnlineSearchAlbumRow(result: result) {
-                        openExternalResult(result.externalURL, failureMessage: "Couldn't open that album result.")
+                        debugLog("Search online album row tapped: \(result.title) [\(result.providerAlbumID)]")
+                        router.openOnlineRelease(result.route)
                     }
 
                     if result.id != onlineAlbumResults.last?.id {
@@ -758,6 +760,13 @@ struct SearchView: View {
         }
 
         return resultsByID.values.sorted { left, right in
+            let leftPriority = albumSearchPriority(for: left, query: normalized)
+            let rightPriority = albumSearchPriority(for: right, query: normalized)
+
+            if leftPriority != rightPriority {
+                return leftPriority < rightPriority
+            }
+
             if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
                 return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
             }
@@ -920,6 +929,31 @@ struct SearchView: View {
             return left.addedAt > right.addedAt
         }
         return left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
+    }
+
+    private func albumSearchPriority(for album: LocalAlbumSearchResult, query: String) -> Int {
+        let normalizedQuery = normalizedSearchTokens(from: query).joined(separator: " ")
+        guard !normalizedQuery.isEmpty else { return 2 }
+
+        let normalizedAlbumTitle = normalizedSearchTokens(from: album.title).joined(separator: " ")
+        if normalizedAlbumTitle == normalizedQuery {
+            return 0
+        }
+
+        let queryTokens = normalizedSearchTokens(from: query)
+        if !queryTokens.isEmpty && queryTokens.allSatisfy({ normalizedAlbumTitle.contains($0) }) {
+            return 1
+        }
+
+        return 2
+    }
+
+    private func normalizedSearchTokens(from value: String) -> [String] {
+        value
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
     }
 
     private func matchesSearchQuery(_ query: String, fields: [String]) -> Bool {
@@ -1211,7 +1245,7 @@ struct SearchPlaylistRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SearchPlaylistArtworkView(
+            PlaylistArtworkView(
                 coverArtURL: result.coverArtURL,
                 representativeTrack: result.representativeTrack,
                 fallbackTitle: result.playlist.displayName,
@@ -1303,16 +1337,21 @@ struct SearchTrackRow: View {
     }
 }
 
-struct SearchPlaylistArtworkView: View {
+struct PlaylistArtworkView: View {
     let coverArtURL: String?
     let representativeTrack: Track?
     let fallbackTitle: String
     let size: CGFloat
+    var cornerRadius: CGFloat = 12
 
     var body: some View {
         Group {
-            if let artworkURL = artworkURL {
-                AsyncImage(url: artworkURL) { phase in
+            if let localArtworkImage {
+                Image(uiImage: localArtworkImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if let remoteArtworkURL {
+                AsyncImage(url: remoteArtworkURL) { phase in
                     switch phase {
                     case .success(let image):
                         image
@@ -1323,16 +1362,16 @@ struct SearchPlaylistArtworkView: View {
                     }
                 }
                 .frame(width: size, height: size)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             } else if let representativeTrack {
                 TrackArtworkView(
                     track: representativeTrack,
                     size: size,
-                    cornerRadius: 12,
+                    cornerRadius: cornerRadius,
                     showsSourceBadge: false
                 )
             } else {
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(
                         LinearGradient(
                             colors: [
@@ -1366,7 +1405,8 @@ struct SearchPlaylistArtworkView: View {
         }
 
         if let parsedURL = URL(string: coverArtURL), parsedURL.scheme != nil {
-            guard parsedURL.isFileURL || parsedURL.scheme?.lowercased() == "http" || parsedURL.scheme?.lowercased() == "https" else {
+            let scheme = parsedURL.scheme?.lowercased()
+            guard parsedURL.isFileURL || scheme == "http" || scheme == "https" else {
                 return nil
             }
 
@@ -1386,8 +1426,28 @@ struct SearchPlaylistArtworkView: View {
         return resolvedURL
     }
 
+    private var localArtworkURL: URL? {
+        guard let artworkURL, artworkURL.isFileURL else { return nil }
+        return artworkURL
+    }
+
+    private var localArtworkImage: UIImage? {
+        guard let localArtworkURL,
+              let data = try? Data(contentsOf: localArtworkURL),
+              let image = UIImage(data: data) else {
+            return nil
+        }
+
+        return image
+    }
+
+    private var remoteArtworkURL: URL? {
+        guard let artworkURL, !artworkURL.isFileURL else { return nil }
+        return artworkURL
+    }
+
     private var fallbackArtwork: some View {
-        RoundedRectangle(cornerRadius: 12)
+        RoundedRectangle(cornerRadius: cornerRadius)
             .fill(
                 LinearGradient(
                     colors: [
@@ -1558,7 +1618,7 @@ struct OnlineSearchAlbumRow: View {
 
             Spacer()
 
-            Image(systemName: "arrow.up.right")
+            Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.white.opacity(0.28))
         }

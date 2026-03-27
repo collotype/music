@@ -357,6 +357,70 @@ extension OnlineArtistRoute {
     }
 }
 
+extension OnlineAlbumResult {
+    var route: OnlineReleaseRoute {
+        OnlineReleaseRoute(
+            provider: provider,
+            providerReleaseID: providerAlbumID,
+            title: title,
+            artistName: artist,
+            imageURL: coverArtURL,
+            webpageURL: webpageURL
+        )
+    }
+}
+
+extension Playlist {
+    var preferredCoverReference: String? {
+        cleanedImageReference(coverArtURL)
+    }
+
+    var localCoverFileURL: URL? {
+        resolvedLocalImageURL(from: coverArtURL)
+    }
+
+    var resolvedRemoteCoverURL: URL? {
+        resolvedRemoteImageURL(from: coverArtURL)
+    }
+
+    private func cleanedImageReference(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+
+    private func resolvedLocalImageURL(from reference: String?) -> URL? {
+        guard let reference = cleanedImageReference(reference) else { return nil }
+
+        if let parsedURL = URL(string: reference), parsedURL.scheme != nil {
+            guard parsedURL.isFileURL,
+                  FileManager.default.fileExists(atPath: parsedURL.path) else {
+                return nil
+            }
+
+            return parsedURL
+        }
+
+        let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: reference)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+            return nil
+        }
+
+        return resolvedURL
+    }
+
+    private func resolvedRemoteImageURL(from reference: String?) -> URL? {
+        guard let reference = cleanedImageReference(reference),
+              let parsedURL = URL(string: reference),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+}
+
 extension Track {
     var onlineArtistRoute: OnlineArtistRoute? {
         guard let provider = source.onlineProvider,

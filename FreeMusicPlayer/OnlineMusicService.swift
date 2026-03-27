@@ -365,6 +365,8 @@ final class OnlineMusicService {
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
     private let soundCloudSearchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
     private let soundCloudSearchLimit = 60
+    private let soundCloudDirectReleaseSearchLimit = 20
+    private let soundCloudReleaseFallbackTrackLimit = 100
     private let soundCloudArtistTrackLimit = 50
     private let bundledFallbackClientIDs = [
         "GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7",
@@ -549,18 +551,33 @@ final class OnlineMusicService {
         }
 
         let clientID = try await soundCloudClientID()
-        let playlist = try await fetchSoundCloudPlaylist(
-            releaseID: release.providerReleaseID,
-            clientID: clientID
-        )
-        await soundCloudRuntimeState.setClientID(clientID)
 
-        let hydratedTracks = await hydrateReleaseTracks(from: playlist, clientID: clientID)
-        return makeOnlineReleasePageData(
-            from: playlist,
-            fallbackRoute: release,
-            tracks: hydratedTracks
-        )
+        do {
+            if Int(release.providerReleaseID) == nil {
+                throw OnlineMusicServiceError.unsupportedSource("Release lookup requires fallback search.")
+            }
+
+            let playlist = try await fetchSoundCloudPlaylist(
+                releaseID: release.providerReleaseID,
+                clientID: clientID
+            )
+            await soundCloudRuntimeState.setClientID(clientID)
+
+            let hydratedTracks = await hydrateReleaseTracks(from: playlist, clientID: clientID)
+            return makeOnlineReleasePageData(
+                from: playlist,
+                fallbackRoute: release,
+                tracks: hydratedTracks
+            )
+        } catch {
+            debugLog("SoundCloud release detail fallback for \(release.providerReleaseID): \(error.localizedDescription)")
+            let fallbackData = try await fetchFallbackSoundCloudReleaseDetail(
+                for: release,
+                clientID: clientID
+            )
+            await soundCloudRuntimeState.setClientID(clientID)
+            return fallbackData
+        }
     }
 
     func resolvePlaybackStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
@@ -759,12 +776,23 @@ final class OnlineMusicService {
     private func executeSoundCloudSearch(query: String, clientID: String) async throws -> OnlineSearchResults {
         debugLog("Provider start: SoundCloud for query \(query) using client_id \(maskedClientID(clientID))")
 
-        let tracks = try await searchTracksViaSoundCloud(
+        async let tracksTask = searchTracksViaSoundCloud(
             query: query,
             clientID: clientID,
             limit: soundCloudSearchLimit
         )
-        let results = makeSoundCloudSearchResults(from: tracks)
+        async let directAlbumsTask = searchReleasesViaSoundCloud(
+            query: query,
+            clientID: clientID
+        )
+
+        let tracks = try await tracksTask
+        let directAlbums = await directAlbumsTask
+        let results = makeSoundCloudSearchResults(
+            from: tracks,
+            directAlbumMatches: directAlbums,
+            query: query
+        )
         await soundCloudRuntimeState.setClientID(clientID)
 
         logMappedResultCounts(provider: .soundcloud, results: results)
@@ -1505,11 +1533,19 @@ final class OnlineMusicService {
         return "Spotify search failed: \(message)"
     }
 
-    private func makeSoundCloudSearchResults(from tracks: [OnlineTrackResult]) -> OnlineSearchResults {
+    private func makeSoundCloudSearchResults(
+        from tracks: [OnlineTrackResult],
+        directAlbumMatches: [OnlineAlbumResult],
+        query: String
+    ) -> OnlineSearchResults {
         OnlineSearchResults(
             tracks: tracks,
             artists: makeSoundCloudArtistResults(from: tracks),
-            albums: makeSoundCloudAlbumResults(from: tracks),
+            albums: mergeSoundCloudAlbumResults(
+                directMatches: directAlbumMatches,
+                inferredMatches: makeSoundCloudAlbumResults(from: tracks),
+                query: query
+            ),
             playlists: []
         )
     }
@@ -1596,6 +1632,194 @@ final class OnlineMusicService {
 
             return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
         }
+    }
+
+    private func searchReleasesViaSoundCloud(
+        query: String,
+        clientID: String
+    ) async -> [OnlineAlbumResult] {
+        async let albums = try? searchSoundCloudCollectionResults(
+            query: query,
+            path: "albums",
+            clientID: clientID,
+            limit: soundCloudDirectReleaseSearchLimit
+        )
+        async let releases = try? searchSoundCloudCollectionResults(
+            query: query,
+            path: "playlists_without_albums",
+            clientID: clientID,
+            limit: soundCloudDirectReleaseSearchLimit
+        )
+
+        let mergedResults = (await albums ?? []) + (await releases ?? [])
+        return deduplicatedAlbumResults(mergedResults)
+    }
+
+    private func searchSoundCloudCollectionResults(
+        query: String,
+        path: String,
+        clientID: String,
+        limit: Int
+    ) async throws -> [OnlineAlbumResult] {
+        guard var components = URLComponents(
+            url: soundCloudAPIBaseURL
+                .appendingPathComponent("search")
+                .appendingPathComponent(path),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud release search URL could not be created.")
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "offset", value: "0")
+        ]
+
+        guard let requestURL = components.url else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud release search URL could not be created.")
+        }
+
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
+
+        let response: SoundCloudPlaylistCollectionResponse
+        do {
+            response = try decoder.decode(SoundCloudPlaylistCollectionResponse.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("SoundCloud release search returned malformed JSON.")
+        }
+
+        return deduplicatedAlbumResults(
+            response.collection.compactMap { makeOnlineAlbumResult(from: $0) }
+        )
+    }
+
+    private func fetchFallbackSoundCloudReleaseDetail(
+        for release: OnlineReleaseRoute,
+        clientID: String
+    ) async throws -> OnlineReleasePageData {
+        let combinedQuery = [release.artistName, release.title]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        let searchResults = try await searchTracksViaSoundCloud(
+            query: combinedQuery.isEmpty ? release.title : combinedQuery,
+            clientID: clientID,
+            limit: soundCloudReleaseFallbackTrackLimit
+        )
+
+        let normalizedReleaseTitle = normalizedSearchText(release.title)
+        let normalizedArtistName = normalizedSearchText(release.artistName)
+
+        let albumMatchedTracks = searchResults.filter { track in
+            let normalizedAlbum = normalizedSearchText(track.album ?? "")
+            guard !normalizedAlbum.isEmpty else { return false }
+            return normalizedAlbum == normalizedReleaseTitle
+        }
+
+        let artistMatchedTracks = albumMatchedTracks.filter { track in
+            let normalizedTrackArtist = normalizedSearchText(track.artist)
+            guard !normalizedArtistName.isEmpty else { return true }
+            return normalizedTrackArtist == normalizedArtistName || normalizedTrackArtist.contains(normalizedArtistName)
+        }
+
+        let finalTracks = deduplicatedTrackResults(
+            artistMatchedTracks.isEmpty ? albumMatchedTracks : artistMatchedTracks
+        )
+
+        guard !finalTracks.isEmpty else {
+            throw OnlineMusicServiceError.noResults("No playable tracks were found for this SoundCloud release.")
+        }
+
+        let fallbackRelease = OnlineAlbumResult(
+            provider: release.provider,
+            providerAlbumID: release.providerReleaseID,
+            title: release.title,
+            artist: release.artistName,
+            coverArtURL: release.imageURL ?? finalTracks.first?.coverArtURL,
+            webpageURL: release.webpageURL ?? finalTracks.first?.webpageURL ?? "",
+            trackCount: finalTracks.count,
+            releaseDate: finalTracks.compactMap(\.releaseDate).sorted(by: >).first,
+            releaseKind: "release"
+        )
+
+        return OnlineReleasePageData(
+            release: fallbackRelease,
+            tracks: finalTracks
+        )
+    }
+
+    private func mergeSoundCloudAlbumResults(
+        directMatches: [OnlineAlbumResult],
+        inferredMatches: [OnlineAlbumResult],
+        query: String
+    ) -> [OnlineAlbumResult] {
+        let sortedDirectMatches = directMatches.sorted { left, right in
+            let leftRank = albumSearchPriority(for: left, query: query)
+            let rightRank = albumSearchPriority(for: right, query: query)
+
+            if leftRank != rightRank {
+                return leftRank < rightRank
+            }
+
+            if left.releaseDate != right.releaseDate {
+                return (left.releaseDate ?? .distantPast) > (right.releaseDate ?? .distantPast)
+            }
+
+            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
+                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
+            }
+
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
+
+        var seenKeys: Set<String> = []
+        var mergedResults: [OnlineAlbumResult] = []
+
+        for result in sortedDirectMatches + inferredMatches {
+            let identityKey = albumIdentityKey(for: result)
+            guard seenKeys.insert(identityKey).inserted else { continue }
+            mergedResults.append(result)
+        }
+
+        return mergedResults
+    }
+
+    private func albumSearchPriority(for album: OnlineAlbumResult, query: String) -> Int {
+        let normalizedQuery = normalizedSearchText(query)
+        guard !normalizedQuery.isEmpty else { return 3 }
+
+        let normalizedTitle = normalizedSearchText(album.title)
+        if normalizedTitle == normalizedQuery {
+            return 0
+        }
+
+        let queryTokens = normalizedQuery.split(separator: " ").map(String.init)
+        if !queryTokens.isEmpty && queryTokens.allSatisfy({ normalizedTitle.contains($0) }) {
+            return 1
+        }
+
+        let normalizedArtist = normalizedSearchText(album.artist)
+        if normalizedArtist == normalizedQuery {
+            return 2
+        }
+
+        return 3
+    }
+
+    private func albumIdentityKey(for album: OnlineAlbumResult) -> String {
+        "\(normalizedSearchText(album.title))::\(normalizedSearchText(album.artist))"
+    }
+
+    private func normalizedSearchText(_ value: String) -> String {
+        value
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func makeOnlineTrackResult(from track: SoundCloudSearchTrack) -> OnlineTrackResult? {

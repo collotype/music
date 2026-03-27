@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 struct PlaylistView: View {
     let playlistId: String
@@ -13,6 +14,9 @@ struct PlaylistView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @State private var showingAddTracksSheet = false
+    @State private var selectedCoverPickerItem: PhotosPickerItem?
+    @State private var isSavingCustomCover = false
+    @State private var coverErrorMessage: String?
 
     private var playlist: Playlist? {
         dataManager.playlist(withID: playlistId)
@@ -26,6 +30,10 @@ struct PlaylistView: View {
         guard let playlist else { return [] }
         let existingTrackIDs = Set(playlist.trackIDs)
         return dataManager.tracks.filter { !existingTrackIDs.contains($0.id) }
+    }
+
+    private var representativeTrack: Track? {
+        playlistTracks.first(where: { $0.preferredArtworkReference != nil }) ?? playlistTracks.first
     }
 
     private var addTracksEmptyTitle: String {
@@ -53,9 +61,36 @@ struct PlaylistView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(alignment: .top) {
-                                Text(playlist.displayName)
-                                    .font(.system(size: 28, weight: .bold))
-                                    .foregroundColor(.white)
+                                PlaylistArtworkView(
+                                    coverArtURL: playlist.coverArtURL,
+                                    representativeTrack: representativeTrack,
+                                    fallbackTitle: playlist.displayName,
+                                    size: 92,
+                                    cornerRadius: 18
+                                )
+
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(playlist.displayName)
+                                        .font(.system(size: 28, weight: .bold))
+                                        .foregroundColor(.white)
+
+                                    HStack(spacing: 8) {
+                                        Text("\(playlistTracks.count) tracks")
+                                            .foregroundColor(.gray)
+
+                                        if playlist.isStarred {
+                                            Text("Favorite")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .foregroundColor(.yellow)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(
+                                                    Capsule()
+                                                        .fill(Color.yellow.opacity(0.12))
+                                                )
+                                        }
+                                    }
+                                }
 
                                 Spacer()
 
@@ -75,20 +110,53 @@ struct PlaylistView: View {
                                 .buttonStyle(.plain)
                             }
 
-                            HStack(spacing: 8) {
-                                Text("\(playlistTracks.count) tracks")
-                                    .foregroundColor(.gray)
+                            HStack(spacing: 10) {
+                                PhotosPicker(
+                                    selection: $selectedCoverPickerItem,
+                                    matching: .images
+                                ) {
+                                    HStack(spacing: 8) {
+                                        if isSavingCustomCover {
+                                            ProgressView()
+                                                .tint(.white)
+                                        } else {
+                                            Image(systemName: playlist.preferredCoverReference == nil ? "photo.badge.plus" : "photo")
+                                        }
 
-                                if playlist.isStarred {
-                                    Text("Favorite")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundColor(.yellow)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        Text(playlist.preferredCoverReference == nil ? "Add cover" : "Change cover")
+                                    }
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.white.opacity(0.12))
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isSavingCustomCover)
+
+                                if playlist.preferredCoverReference != nil {
+                                    Button {
+                                        debugLog("Playlist remove cover button pressed: \(playlist.displayName)")
+                                        dataManager.removePlaylistCover(forPlaylistID: playlist.id)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "trash")
+                                            Text("Remove cover")
+                                        }
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.82))
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 10)
                                         .background(
                                             Capsule()
-                                                .fill(Color.yellow.opacity(0.12))
+                                                .fill(Color.white.opacity(0.08))
                                         )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(isSavingCustomCover)
                                 }
                             }
 
@@ -237,6 +305,21 @@ struct PlaylistView: View {
                         dataManager.addTracks(selectedTracks, toPlaylistID: playlistId)
                     }
                 }
+                .onChange(of: selectedCoverPickerItem) { newValue in
+                    guard let newValue else { return }
+                    updatePlaylistCover(using: newValue, playlistID: playlist.id)
+                }
+                .alert(
+                    "Couldn't Update Cover",
+                    isPresented: Binding(
+                        get: { coverErrorMessage != nil },
+                        set: { if !$0 { coverErrorMessage = nil } }
+                    )
+                ) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(coverErrorMessage ?? "Unknown error")
+                }
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "music.note.list")
@@ -247,6 +330,36 @@ struct PlaylistView: View {
                         .foregroundColor(.white)
                 }
                 .navigationTitle("Playlist")
+            }
+        }
+    }
+
+    private func updatePlaylistCover(using item: PhotosPickerItem, playlistID: String) {
+        Task {
+            await MainActor.run {
+                isSavingCustomCover = true
+                coverErrorMessage = nil
+            }
+
+            defer {
+                Task { @MainActor in
+                    isSavingCustomCover = false
+                    selectedCoverPickerItem = nil
+                }
+            }
+
+            do {
+                guard let imageData = try await item.loadTransferable(type: Data.self) else {
+                    throw PlaylistCoverPersistenceError.invalidImageData
+                }
+
+                try await MainActor.run {
+                    try dataManager.setPlaylistCoverImage(imageData, forPlaylistID: playlistID)
+                }
+            } catch {
+                await MainActor.run {
+                    coverErrorMessage = error.localizedDescription
+                }
             }
         }
     }

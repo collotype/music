@@ -272,41 +272,33 @@ struct PlaylistsSection: View {
 
 struct PlaylistCard: View {
     let playlist: Playlist
+    @EnvironmentObject var dataManager: DataManager
+
+    private var playlistTracks: [Track] {
+        dataManager.tracks(for: playlist.id)
+    }
+
+    private var representativeTrack: Track? {
+        playlistTracks.first(where: { $0.preferredArtworkReference != nil }) ?? playlistTracks.first
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.7, green: 0.2, blue: 0.2),
-                            Color(red: 0.3, green: 0.1, blue: 0.1)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 140, height: 140)
-                .overlay(
-                    ZStack {
-                        Image(systemName: playlist.isStarred ? "star.circle.fill" : "music.note.list")
-                            .font(.system(size: 40))
-                            .foregroundColor(playlist.isStarred ? .yellow.opacity(0.9) : .white.opacity(0.3))
-
-                        VStack {
-                            HStack {
-                                Spacer()
-                                if playlist.isStarred {
-                                    Image(systemName: "star.fill")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.yellow)
-                                        .padding(8)
-                                }
-                            }
-                            Spacer()
-                        }
-                    }
-                )
+            PlaylistArtworkView(
+                coverArtURL: playlist.coverArtURL,
+                representativeTrack: representativeTrack,
+                fallbackTitle: playlist.displayName,
+                size: 140,
+                cornerRadius: 12
+            )
+            .overlay(alignment: .topTrailing) {
+                if playlist.isStarred {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.yellow)
+                        .padding(8)
+                }
+            }
 
             Text(playlist.displayName)
                 .font(.system(size: 14, weight: .medium))
