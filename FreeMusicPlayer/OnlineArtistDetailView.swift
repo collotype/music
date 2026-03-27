@@ -1199,12 +1199,6 @@ private struct ArtistDetailSection<Content: View>: View {
                 content
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color.white.opacity(0.05))
-            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
