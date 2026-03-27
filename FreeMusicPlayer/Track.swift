@@ -35,6 +35,10 @@ struct Track: Identifiable, Codable, Equatable {
     var remoteArtistImageURL: String?
     var providerArtistID: String?
     var artistWebpageURL: String?
+    var lyricsText: String?
+    var lyricsSource: String?
+    var lyricsLastUpdated: Date?
+    var lyricsURL: String?
     var source: TrackSource
     var isFavorite: Bool
     var playCount: Int
@@ -66,7 +70,11 @@ struct Track: Identifiable, Codable, Equatable {
         artistImageURL: String? = nil,
         remoteArtistImageURL: String? = nil,
         providerArtistID: String? = nil,
-        artistWebpageURL: String? = nil
+        artistWebpageURL: String? = nil,
+        lyricsText: String? = nil,
+        lyricsSource: String? = nil,
+        lyricsLastUpdated: Date? = nil,
+        lyricsURL: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -80,6 +88,10 @@ struct Track: Identifiable, Codable, Equatable {
         self.remoteArtistImageURL = remoteArtistImageURL
         self.providerArtistID = providerArtistID
         self.artistWebpageURL = artistWebpageURL
+        self.lyricsText = lyricsText
+        self.lyricsSource = lyricsSource
+        self.lyricsLastUpdated = lyricsLastUpdated
+        self.lyricsURL = lyricsURL
         self.source = source
         self.isFavorite = isFavorite
         self.playCount = playCount
@@ -104,6 +116,10 @@ struct Track: Identifiable, Codable, Equatable {
         case remoteArtistImageURL
         case providerArtistID
         case artistWebpageURL
+        case lyricsText
+        case lyricsSource
+        case lyricsLastUpdated
+        case lyricsURL
         case source
         case isFavorite
         case playCount
@@ -130,6 +146,10 @@ struct Track: Identifiable, Codable, Equatable {
         remoteArtistImageURL = try container.decodeIfPresent(String.self, forKey: .remoteArtistImageURL)
         providerArtistID = try container.decodeIfPresent(String.self, forKey: .providerArtistID)
         artistWebpageURL = try container.decodeIfPresent(String.self, forKey: .artistWebpageURL)
+        lyricsText = try container.decodeIfPresent(String.self, forKey: .lyricsText)
+        lyricsSource = try container.decodeIfPresent(String.self, forKey: .lyricsSource)
+        lyricsLastUpdated = try container.decodeIfPresent(Date.self, forKey: .lyricsLastUpdated)
+        lyricsURL = try container.decodeIfPresent(String.self, forKey: .lyricsURL)
         source = try container.decodeIfPresent(TrackSource.self, forKey: .source) ?? .local
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
@@ -155,6 +175,10 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encodeIfPresent(remoteArtistImageURL, forKey: .remoteArtistImageURL)
         try container.encodeIfPresent(providerArtistID, forKey: .providerArtistID)
         try container.encodeIfPresent(artistWebpageURL, forKey: .artistWebpageURL)
+        try container.encodeIfPresent(lyricsText, forKey: .lyricsText)
+        try container.encodeIfPresent(lyricsSource, forKey: .lyricsSource)
+        try container.encodeIfPresent(lyricsLastUpdated, forKey: .lyricsLastUpdated)
+        try container.encodeIfPresent(lyricsURL, forKey: .lyricsURL)
         try container.encode(source, forKey: .source)
         try container.encode(isFavorite, forKey: .isFavorite)
         try container.encode(playCount, forKey: .playCount)

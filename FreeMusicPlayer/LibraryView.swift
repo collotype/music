@@ -1789,6 +1789,10 @@ struct TrackCollectionView: View {
 
     @EnvironmentObject var audioPlayer: AudioPlayer
 
+    private var canAddCollectionToPlaylist: Bool {
+        contextName.hasPrefix("album:") && !tracks.isEmpty
+    }
+
     var body: some View {
         List {
             Section {
@@ -1839,6 +1843,22 @@ struct TrackCollectionView: View {
         .background(Color.black)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if canAddCollectionToPlaylist {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        TrackGroupPlaylistPickerView(
+                            collectionTitle: title,
+                            tracks: tracks
+                        )
+                    } label: {
+                        Image(systemName: "text.badge.plus")
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
     }
 }
 
@@ -1981,6 +2001,87 @@ struct AddToPlaylistMenu: View {
             }
         } message: {
             Text("Create a playlist and add this track to it.")
+        }
+    }
+}
+
+struct TrackGroupPlaylistPickerView: View {
+    let collectionTitle: String
+    let tracks: [Track]
+
+    @EnvironmentObject var dataManager: DataManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showingCreatePlaylistPrompt = false
+    @State private var newPlaylistName = ""
+
+    private var trackIDs: Set<String> {
+        Set(tracks.map(\.id))
+    }
+
+    var body: some View {
+        List {
+            if dataManager.sortedPlaylists.isEmpty {
+                Section {
+                    Text("No playlists yet")
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Section("Playlists") {
+                    ForEach(dataManager.sortedPlaylists) { playlist in
+                        Button {
+                            debugLog("Add collection \(collectionTitle) to playlist \(playlist.displayName)")
+                            dataManager.addTracks(tracks, toPlaylistID: playlist.id)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(playlist.displayName)
+                                        .foregroundColor(.white)
+                                    Text("\(playlist.trackCount) tracks")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white.opacity(0.45))
+                                }
+
+                                Spacer()
+
+                                if trackIDs.isSubset(of: Set(playlist.trackIDs)) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Section {
+                Button {
+                    newPlaylistName = collectionTitle
+                    showingCreatePlaylistPrompt = true
+                } label: {
+                    TrackActionRowLabel(title: "New Playlist", systemImage: "plus.circle")
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.black)
+        .navigationTitle("Add Album to Playlist")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("New Playlist", isPresented: $showingCreatePlaylistPrompt) {
+            TextField("Playlist name", text: $newPlaylistName)
+            Button("Cancel", role: .cancel) {
+                newPlaylistName = ""
+            }
+            Button("Create") {
+                let playlist = dataManager.createPlaylist(name: newPlaylistName)
+                dataManager.addTracks(tracks, toPlaylistID: playlist.id)
+                newPlaylistName = ""
+                dismiss()
+            }
+        } message: {
+            Text("Create a playlist and add every album track in order.")
         }
     }
 }

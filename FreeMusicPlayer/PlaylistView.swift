@@ -198,6 +198,14 @@ struct PlaylistView: View {
                                     .listRowBackground(Color.clear)
                                     .listRowInsets(EdgeInsets())
                             }
+                            .onMove { source, destination in
+                                debugLog("Playlist reorder requested: \(playlist.name) from \(source) to \(destination)")
+                                dataManager.moveTracks(inPlaylistID: playlist.id, fromOffsets: source, toOffset: destination)
+                                audioPlayer.refreshPlaybackContextIfNeeded(
+                                    name: "playlist:\(playlist.id)",
+                                    tracks: dataManager.tracks(for: playlist.id)
+                                )
+                            }
                         }
                     }
                 }
@@ -206,6 +214,13 @@ struct PlaylistView: View {
                 .background(Color.black)
                 .navigationTitle(playlist.displayName)
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    if playlistTracks.count > 1 {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            EditButton()
+                        }
+                    }
+                }
                 .sheet(isPresented: $showingAddTracksSheet) {
                     TrackSelectionSheet(
                         title: playlist.displayName,

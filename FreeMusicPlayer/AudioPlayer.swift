@@ -450,6 +450,41 @@ final class AudioPlayer: ObservableObject {
         updateNowPlayingInfo(refreshArtwork: true)
     }
 
+    func refreshPlaybackContextIfNeeded(name: String, tracks: [Track]) {
+        let deduplicatedContextTracks = deduplicatedTracks(from: tracks)
+
+        if playbackContext?.name == name {
+            guard !deduplicatedContextTracks.isEmpty else {
+                clearPlaybackContext()
+                return
+            }
+
+            playbackContext = PlaybackContext(
+                name: name,
+                kind: playbackContextKind(for: name),
+                tracks: deduplicatedContextTracks
+            )
+            debugLog("Playback context refreshed: \(name) with \(deduplicatedContextTracks.count) tracks")
+        }
+
+        if let queueResumeContext, queueResumeContext.context.name == name {
+            guard !deduplicatedContextTracks.isEmpty else {
+                self.queueResumeContext = nil
+                return
+            }
+
+            self.queueResumeContext = QueueResumeContext(
+                context: PlaybackContext(
+                    name: name,
+                    kind: playbackContextKind(for: name),
+                    tracks: deduplicatedContextTracks
+                ),
+                anchorTrack: resolvedTrackForPlayback(queueResumeContext.anchorTrack)
+            )
+            debugLog("Queue resume context refreshed: \(name) with \(deduplicatedContextTracks.count) tracks")
+        }
+    }
+
     private func getFileURL(for track: Track) -> URL? {
         guard let filename = track.fileURL else { return nil }
         return AppFileManager.shared.resolveStoredFileURL(for: filename)

@@ -106,6 +106,19 @@ final class DataManager: ObservableObject {
                 newValue: track.artistWebpageURL,
                 existingValue: tracks[existingIndex].artistWebpageURL
             )
+            updatedTrack.lyricsText = resolvedPreferredTextValue(
+                newValue: track.lyricsText,
+                existingValue: tracks[existingIndex].lyricsText
+            )
+            updatedTrack.lyricsSource = resolvedPreferredTextValue(
+                newValue: track.lyricsSource,
+                existingValue: tracks[existingIndex].lyricsSource
+            )
+            updatedTrack.lyricsURL = resolvedPreferredTextValue(
+                newValue: track.lyricsURL,
+                existingValue: tracks[existingIndex].lyricsURL
+            )
+            updatedTrack.lyricsLastUpdated = track.lyricsLastUpdated ?? tracks[existingIndex].lyricsLastUpdated
             updatedTrack.isFavorite = favorites.contains(updatedTrack.id)
             tracks[existingIndex] = updatedTrack
             saveData()
@@ -225,6 +238,7 @@ final class DataManager: ObservableObject {
                 preferredCoverReference: storedTrack.remoteCoverArtURL ?? storedTrack.coverArtURL,
                 preferredArtistReference: storedTrack.remoteArtistImageURL ?? storedTrack.artistImageURL
             )
+            scheduleLyricsPersistenceIfNeeded(for: storedTrack)
         }
     }
 
@@ -315,6 +329,16 @@ final class DataManager: ObservableObject {
 
         guard didAddTrack else { return }
 
+        playlist.updatedAt = Date()
+        playlists[index] = playlist
+        saveData()
+    }
+
+    func moveTracks(inPlaylistID playlistId: String, fromOffsets: IndexSet, toOffset: Int) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistId }) else { return }
+
+        var playlist = playlists[index]
+        playlist.trackIDs.move(fromOffsets: fromOffsets, toOffset: toOffset)
         playlist.updatedAt = Date()
         playlists[index] = playlist
         saveData()
@@ -463,17 +487,14 @@ final class DataManager: ObservableObject {
                 preferredCoverReference: result.coverArtURL ?? existingTrack.remoteCoverArtURL,
                 preferredArtistReference: result.artistImageURL ?? existingTrack.remoteArtistImageURL
             ) {
-                if let existingIndex {
-                    return tracks[existingIndex]
-                }
-                return refreshedTrack
+                let resolvedTrack = existingIndex.map { tracks[$0] } ?? refreshedTrack
+                scheduleLyricsPersistenceIfNeeded(for: resolvedTrack)
+                return resolvedTrack
             }
 
-            if let existingIndex {
-                return tracks[existingIndex]
-            }
-
-            return existingTrack
+            let resolvedTrack = existingIndex.map { tracks[$0] } ?? existingTrack
+            scheduleLyricsPersistenceIfNeeded(for: resolvedTrack)
+            return resolvedTrack
         }
 
         async let localArtworkPath = persistImageReferenceIfNeeded(
@@ -517,7 +538,50 @@ final class DataManager: ObservableObject {
             artistWebpageURL: result.artistWebpageURL
         )
 
-        return addTrack(track)
+        let savedTrack = addTrack(track)
+        scheduleLyricsPersistenceIfNeeded(for: savedTrack)
+        return savedTrack
+    }
+
+    @MainActor
+    @discardableResult
+    func persistLyrics(_ lyrics: ResolvedTrackLyrics, for track: Track) -> Track? {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id })
+            ?? tracks.firstIndex(where: { $0.sourceID != nil && $0.sourceID == track.sourceID }) else {
+            return nil
+        }
+
+        var updatedTrack = tracks[index]
+        var didUpdateTrack = false
+
+        if updatedTrack.lyricsText != lyrics.text {
+            updatedTrack.lyricsText = lyrics.text
+            didUpdateTrack = true
+        }
+
+        if updatedTrack.lyricsSource != lyrics.source {
+            updatedTrack.lyricsSource = lyrics.source
+            didUpdateTrack = true
+        }
+
+        if updatedTrack.lyricsURL != lyrics.url {
+            updatedTrack.lyricsURL = lyrics.url
+            didUpdateTrack = true
+        }
+
+        if updatedTrack.lyricsLastUpdated != lyrics.lastUpdated {
+            updatedTrack.lyricsLastUpdated = lyrics.lastUpdated
+            didUpdateTrack = true
+        }
+
+        guard didUpdateTrack else {
+            return updatedTrack
+        }
+
+        tracks[index] = updatedTrack
+        saveData()
+        AudioPlayer.shared.syncCurrentTrackReference(with: updatedTrack)
+        return updatedTrack
     }
 
     private func resolvedDownloadedTrackMetadata(from result: OnlineTrackResult, localFileURL: URL) -> DownloadedTrackMetadata {
@@ -787,6 +851,22 @@ final class DataManager: ObservableObject {
                     webpageURL: self.favoriteArtists[index].webpageURL
                 )
                 self.saveData()
+            }
+        }
+    }
+
+    private func scheduleLyricsPersistenceIfNeeded(for track: Track) {
+        guard cleanedImageReference(track.lyricsText) == nil else { return }
+        guard track.storageLocation == .library || favorites.contains(track.id) else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            guard let resolvedLyrics = await LyricsMetadataResolver.shared.resolvedLyrics(for: track) else {
+                return
+            }
+
+            await MainActor.run {
+                _ = self.persistLyrics(resolvedLyrics, for: track)
             }
         }
     }

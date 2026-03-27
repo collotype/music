@@ -364,6 +364,8 @@ final class OnlineMusicService {
     private let soundCloudAPIBaseURL = URL(string: "https://api-v2.soundcloud.com")!
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
     private let soundCloudSearchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
+    private let soundCloudSearchLimit = 60
+    private let soundCloudArtistTrackLimit = 50
     private let bundledFallbackClientIDs = [
         "GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7",
     ]
@@ -494,7 +496,7 @@ final class OnlineMusicService {
             )
         }
 
-        let finalTracks = Array(sortedPopularTracks(fetchedTracks).prefix(20))
+        let finalTracks = Array(sortedPopularTracks(fetchedTracks).prefix(soundCloudArtistTrackLimit))
         await soundCloudRuntimeState.setClientID(clientID)
 
         debugLog("Provider finish: SoundCloud artist \(artist.artistName) with tracks=\(finalTracks.count)")
@@ -553,7 +555,12 @@ final class OnlineMusicService {
         )
         await soundCloudRuntimeState.setClientID(clientID)
 
-        return makeOnlineReleasePageData(from: playlist, fallbackRoute: release)
+        let hydratedTracks = await hydrateReleaseTracks(from: playlist, clientID: clientID)
+        return makeOnlineReleasePageData(
+            from: playlist,
+            fallbackRoute: release,
+            tracks: hydratedTracks
+        )
     }
 
     func resolvePlaybackStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
@@ -752,9 +759,12 @@ final class OnlineMusicService {
     private func executeSoundCloudSearch(query: String, clientID: String) async throws -> OnlineSearchResults {
         debugLog("Provider start: SoundCloud for query \(query) using client_id \(maskedClientID(clientID))")
 
-        let tracks = try await searchTracksViaSoundCloud(query: query, clientID: clientID)
-        let finalTracks = Array(tracks.prefix(20))
-        let results = makeSoundCloudSearchResults(from: finalTracks)
+        let tracks = try await searchTracksViaSoundCloud(
+            query: query,
+            clientID: clientID,
+            limit: soundCloudSearchLimit
+        )
+        let results = makeSoundCloudSearchResults(from: tracks)
         await soundCloudRuntimeState.setClientID(clientID)
 
         logMappedResultCounts(provider: .soundcloud, results: results)
@@ -772,7 +782,7 @@ final class OnlineMusicService {
     private func searchTracksViaSoundCloud(
         query: String,
         clientID: String,
-        limit: Int = 20
+        limit: Int
     ) async throws -> [OnlineTrackResult] {
         var components = URLComponents(url: soundCloudSearchURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
@@ -876,7 +886,7 @@ final class OnlineMusicService {
         let searchResults = try await searchTracksViaSoundCloud(
             query: artist.artistName,
             clientID: clientID,
-            limit: 50
+            limit: soundCloudArtistTrackLimit
         )
 
         let filteredResults = searchResults.filter { track in
@@ -953,6 +963,37 @@ final class OnlineMusicService {
             return try decoder.decode(SoundCloudPlaylist.self, from: data)
         } catch {
             throw OnlineMusicServiceError.extractionFailure("SoundCloud release detail returned malformed JSON.")
+        }
+    }
+
+    private func fetchSoundCloudTrack(
+        trackID: String,
+        clientID: String
+    ) async throws -> SoundCloudSearchTrack {
+        guard var components = URLComponents(
+            url: soundCloudAPIBaseURL
+                .appendingPathComponent("tracks")
+                .appendingPathComponent(trackID),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud track detail URL could not be created.")
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "representation", value: "full")
+        ]
+
+        guard let requestURL = components.url else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud track detail URL could not be created.")
+        }
+
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
+
+        do {
+            return try decoder.decode(SoundCloudSearchTrack.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("SoundCloud track detail returned malformed JSON.")
         }
     }
 
@@ -1705,7 +1746,8 @@ final class OnlineMusicService {
 
     private func makeOnlineReleasePageData(
         from playlist: SoundCloudPlaylist,
-        fallbackRoute: OnlineReleaseRoute
+        fallbackRoute: OnlineReleaseRoute,
+        tracks: [OnlineTrackResult]
     ) -> OnlineReleasePageData {
         let release = makeOnlineAlbumResult(from: playlist) ?? OnlineAlbumResult(
             provider: fallbackRoute.provider,
@@ -1721,14 +1763,61 @@ final class OnlineMusicService {
             releaseKind: cleanedText(playlist.setType) ?? ((playlist.isAlbum ?? false) ? "album" : "release")
         )
 
-        let tracks = deduplicatedTrackResults(
-            (playlist.tracks ?? []).compactMap { makeOnlineTrackResult(from: $0) }
-        )
-
         return OnlineReleasePageData(
             release: release,
             tracks: tracks
         )
+    }
+
+    private func hydrateReleaseTracks(
+        from playlist: SoundCloudPlaylist,
+        clientID: String
+    ) async -> [OnlineTrackResult] {
+        guard let rawTracks = playlist.tracks, !rawTracks.isEmpty else {
+            return []
+        }
+
+        let orderedTrackKeys = rawTracks.compactMap { trackHydrationKey(from: $0) }
+        guard !orderedTrackKeys.isEmpty else {
+            return deduplicatedTrackResults(rawTracks.compactMap { makeOnlineTrackResult(from: $0) })
+        }
+
+        var resultsByKey: [String: OnlineTrackResult] = [:]
+
+        for rawTrack in rawTracks {
+            guard let hydrationKey = trackHydrationKey(from: rawTrack) else { continue }
+
+            if let mappedTrack = makeOnlineTrackResult(from: rawTrack) {
+                resultsByKey[hydrationKey] = mappedTrack
+                continue
+            }
+
+            guard let numericTrackID = rawTrack.id.map(String.init),
+                  let hydratedTrack = try? await fetchSoundCloudTrack(trackID: numericTrackID, clientID: clientID),
+                  let mappedTrack = makeOnlineTrackResult(from: hydratedTrack) else {
+                continue
+            }
+
+            resultsByKey[hydrationKey] = mappedTrack
+        }
+
+        var seenResultIDs: Set<String> = []
+        var orderedResults: [OnlineTrackResult] = []
+
+        for key in orderedTrackKeys {
+            guard let result = resultsByKey[key],
+                  seenResultIDs.insert(result.id).inserted else {
+                continue
+            }
+
+            orderedResults.append(result)
+        }
+
+        return orderedResults
+    }
+
+    private func trackHydrationKey(from track: SoundCloudSearchTrack) -> String? {
+        cleanedText(track.urn) ?? track.id.map { "id:\($0)" }
     }
 
     private func sortedPopularTracks(_ tracks: [OnlineTrackResult]) -> [OnlineTrackResult] {
@@ -2431,6 +2520,7 @@ private struct SoundCloudSearchTrack: Decodable {
     let artworkURL: String?
     let duration: Int?
     let fullDuration: Int?
+    let id: Int?
     let likesCount: Int?
     let media: SoundCloudMedia?
     let permalinkURL: String?
@@ -2446,6 +2536,7 @@ private struct SoundCloudSearchTrack: Decodable {
         case artworkURL = "artwork_url"
         case duration
         case fullDuration = "full_duration"
+        case id
         case likesCount = "likes_count"
         case media
         case permalinkURL = "permalink_url"

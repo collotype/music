@@ -209,9 +209,41 @@ struct OnlineArtistDetailView: View {
                 )
             } else {
                 OnlineTrackResultsList(
-                    results: popularTracks,
+                    results: displayedPopularTracks,
                     statusMessage: $actionStatusMessage
                 )
+
+                if hasAdditionalPopularTracks {
+                    Divider()
+                        .background(Color.white.opacity(0.06))
+
+                    NavigationLink {
+                        OnlineArtistTrackListView(
+                            artistName: profile.name,
+                            tracks: popularTracks
+                        )
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("See more")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.white)
+
+                            Spacer()
+
+                            Text("\(popularTracks.count) tracks")
+                                .font(.system(size: 13))
+                                .foregroundColor(.white.opacity(0.42))
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.32))
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 14)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }
@@ -271,6 +303,14 @@ struct OnlineArtistDetailView: View {
 
     private var primaryPlayableTrack: OnlineTrackResult? {
         popularTracks.first(where: \.supportsInAppPlayback)
+    }
+
+    private var displayedPopularTracks: [OnlineTrackResult] {
+        Array(popularTracks.prefix(5))
+    }
+
+    private var hasAdditionalPopularTracks: Bool {
+        popularTracks.count > displayedPopularTracks.count
     }
 
     private var isFavoriteArtist: Bool {
@@ -824,6 +864,57 @@ struct OnlineTrackResultsList: View {
                 statusMessage = failureMessage
             }
         }
+    }
+}
+
+struct OnlineArtistTrackListView: View {
+    let artistName: String
+    let tracks: [OnlineTrackResult]
+
+    @State private var actionStatusMessage: String?
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(artistName)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.white)
+
+                        Text("\(tracks.count) popular track\(tracks.count == 1 ? "" : "s")")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+
+                    ArtistDetailSection(title: "Popular Tracks") {
+                        if let actionStatusMessage, !tracks.isEmpty {
+                            SearchStatusRow(
+                                icon: "exclamationmark.circle",
+                                title: "Track action unavailable",
+                                subtitle: actionStatusMessage
+                            )
+
+                            Divider()
+                                .background(Color.white.opacity(0.06))
+                        }
+
+                        OnlineTrackResultsList(
+                            results: tracks,
+                            statusMessage: $actionStatusMessage
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 16)
+                .padding(.bottom, 48)
+            }
+        }
+        .navigationTitle("Popular Tracks")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

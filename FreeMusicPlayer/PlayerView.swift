@@ -399,7 +399,10 @@ struct PlayerLyricsSheet: View {
 struct TrackLyricsView: View {
     let track: Track?
 
+    @EnvironmentObject private var dataManager: DataManager
+
     @State private var lyricsText: String?
+    @State private var lyricsSourceLabel: String?
     @State private var isLoadingLyrics = false
 
     private var trackIdentity: String {
@@ -430,17 +433,25 @@ struct TrackLyricsView: View {
                         }
                         .padding(.top, 12)
                     } else if let lyricsText {
-                        Text(lyricsText)
-                            .font(.system(size: 16))
-                            .foregroundColor(.white.opacity(0.9))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 4)
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let lyricsSourceLabel {
+                                Text(lyricsSourceLabel)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.48))
+                            }
+
+                            Text(lyricsText)
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.9))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.top, 4)
                     } else {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Lyrics unavailable")
                                 .font(.system(size: 18, weight: .semibold))
                                 .foregroundColor(.white)
-                            Text("No embedded lyrics were found for this track yet.")
+                            Text("No saved, embedded, or Genius lyrics were found for this track.")
                                 .font(.system(size: 14))
                                 .foregroundColor(.white.opacity(0.58))
                         }
@@ -460,20 +471,52 @@ struct TrackLyricsView: View {
     private func loadLyrics() async {
         guard let track else {
             lyricsText = nil
+            lyricsSourceLabel = nil
             isLoadingLyrics = false
             debugLog("Lyrics unavailable because there is no current track")
             return
         }
 
+        if let storedLyrics = cleanedLyricsText(track.lyricsText) {
+            lyricsText = storedLyrics
+            lyricsSourceLabel = lyricsSourceLabel(for: track.lyricsSource)
+        }
+
         isLoadingLyrics = true
         let currentIdentity = trackIdentity
-        let resolvedLyrics = await LyricsMetadataResolver.shared.lyrics(for: track)
+        let resolvedLyrics = await LyricsMetadataResolver.shared.resolvedLyrics(for: track)
 
         guard currentIdentity == trackIdentity else { return }
 
-        lyricsText = resolvedLyrics
+        lyricsText = resolvedLyrics?.text
+        lyricsSourceLabel = resolvedLyrics.flatMap { lyricsSourceLabel(for: $0.source) }
         isLoadingLyrics = false
+        if let resolvedLyrics {
+            _ = dataManager.persistLyrics(resolvedLyrics, for: track)
+        }
         debugLog("Lyrics \(resolvedLyrics == nil ? "unavailable" : "loaded") for \(track.displayTitle)")
+    }
+
+    private func cleanedLyricsText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+
+    private func lyricsSourceLabel(for source: String?) -> String? {
+        guard let source = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !source.isEmpty else {
+            return nil
+        }
+
+        switch source {
+        case "embedded":
+            return "Embedded lyrics"
+        case "genius":
+            return "Lyrics from Genius"
+        default:
+            return source.capitalized
+        }
     }
 }
 
@@ -487,17 +530,63 @@ private struct DismissButton: View {
     }
 }
 
+struct ResolvedTrackLyrics: Equatable {
+    let text: String
+    let source: String
+    let url: String?
+    let lastUpdated: Date
+}
+
 private actor LyricsMetadataResolver {
     static let shared = LyricsMetadataResolver()
 
-    func lyrics(for track: Track) -> String? {
+    private let session: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 10
+        configuration.timeoutIntervalForResource = 20
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }()
+    private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    private var resolvedLyricsCache: [String: ResolvedTrackLyrics] = [:]
+
+    func resolvedLyrics(for track: Track) async -> ResolvedTrackLyrics? {
+        if let persistedLyrics = persistedLyrics(for: track) {
+            return persistedLyrics
+        }
+
+        let cacheKey = lyricsCacheKey(for: track)
+        if let cachedLyrics = resolvedLyricsCache[cacheKey] {
+            return cachedLyrics
+        }
+
         guard let fileURL = localFileURL(for: track),
               FileManager.default.fileExists(atPath: fileURL.path) else {
+            if let geniusLyrics = await geniusLyrics(for: track) {
+                resolvedLyricsCache[cacheKey] = geniusLyrics
+                return geniusLyrics
+            }
             return nil
         }
 
         let asset = AVURLAsset(url: fileURL)
-        return metadataLyrics(from: asset)
+        if let metadataLyrics = metadataLyrics(from: asset) {
+            let resolvedLyrics = ResolvedTrackLyrics(
+                text: metadataLyrics,
+                source: "embedded",
+                url: nil,
+                lastUpdated: Date()
+            )
+            resolvedLyricsCache[cacheKey] = resolvedLyrics
+            return resolvedLyrics
+        }
+
+        if let geniusLyrics = await geniusLyrics(for: track) {
+            resolvedLyricsCache[cacheKey] = geniusLyrics
+            return geniusLyrics
+        }
+
+        return nil
     }
 
     private func localFileURL(for track: Track) -> URL? {
@@ -513,6 +602,22 @@ private actor LyricsMetadataResolver {
         }
 
         return AppFileManager.shared.resolveStoredFileURL(for: fileURL)
+    }
+
+    private func persistedLyrics(for track: Track) -> ResolvedTrackLyrics? {
+        guard let lyricsText = cleanedLyricsText(track.lyricsText) else { return nil }
+
+        return ResolvedTrackLyrics(
+            text: lyricsText,
+            source: cleanedLyricsText(track.lyricsSource) ?? "saved",
+            url: cleanedLyricsText(track.lyricsURL),
+            lastUpdated: track.lyricsLastUpdated ?? Date()
+        )
+    }
+
+    private func lyricsCacheKey(for track: Track) -> String {
+        let identity = track.sourceID ?? track.id
+        return "\(identity)::\(track.displayArtist.lowercased())::\(track.displayTitle.lowercased())"
     }
 
     private func metadataLyrics(from asset: AVURLAsset) -> String? {
@@ -550,11 +655,348 @@ private actor LyricsMetadataResolver {
         return nil
     }
 
+    private func geniusLyrics(for track: Track) async -> ResolvedTrackLyrics? {
+        let normalizedTrackTitleCandidates = normalizedTitleCandidates(for: track.displayTitle)
+        let normalizedTrackArtistCandidates = normalizedArtistCandidates(for: track.displayArtist)
+
+        guard !normalizedTrackTitleCandidates.isEmpty,
+              !normalizedTrackArtistCandidates.isEmpty else {
+            return nil
+        }
+
+        guard let encodedQuery = "\(track.displayArtist) \(track.displayTitle)"
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let searchURL = URL(string: "https://genius.com/api/search/multi?per_page=8&q=\(encodedQuery)") else {
+            return nil
+        }
+
+        guard let searchData = try? await fetchData(from: searchURL),
+              let response = try? JSONDecoder().decode(GeniusSearchEnvelope.self, from: searchData),
+              let bestMatch = bestGeniusMatch(
+                forTitleCandidates: normalizedTrackTitleCandidates,
+                artistCandidates: normalizedTrackArtistCandidates,
+                in: response.response.sections.flatMap { $0.hits ?? [] }
+              ) else {
+            return nil
+        }
+
+        let lyricsPageURLString = cleanedLyricsText(bestMatch.url) ??
+            cleanedLyricsText(bestMatch.path).map { "https://genius.com\($0)" }
+
+        guard let lyricsPageURLString,
+              let lyricsPageURL = URL(string: lyricsPageURLString),
+              let pageHTML = try? await fetchHTML(from: lyricsPageURL),
+              let lyricsHTML = extractLyricsHTML(from: pageHTML),
+              let lyricsText = plainTextLyrics(fromHTML: lyricsHTML) else {
+            return nil
+        }
+
+        return ResolvedTrackLyrics(
+            text: lyricsText,
+            source: "genius",
+            url: lyricsPageURLString,
+            lastUpdated: Date()
+        )
+    }
+
+    private func fetchData(from url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return data
+    }
+
+    private func fetchHTML(from url: URL) async throws -> String {
+        var request = URLRequest(url: url)
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .unicode) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+
+        return html
+    }
+
+    private func bestGeniusMatch(
+        forTitleCandidates titleCandidates: Set<String>,
+        artistCandidates: Set<String>,
+        in hits: [GeniusSearchHit]
+    ) -> GeniusSongHitResult? {
+        hits.compactMap { hit -> (result: GeniusSongHitResult, score: Int, titleScore: Int, artistScore: Int)? in
+            let result = hit.result
+            guard let title = cleanedLyricsText(result.title),
+                  cleanedLyricsText(result.path) != nil || cleanedLyricsText(result.url) != nil else {
+                return nil
+            }
+
+            let candidateTitleScore = comparisonScore(
+                expectedCandidates: titleCandidates,
+                actualCandidates: normalizedTitleCandidates(for: title)
+            )
+            let candidateArtistScore = comparisonScore(
+                expectedCandidates: artistCandidates,
+                actualCandidates: normalizedArtistCandidates(for: result.artistNames ?? "")
+            )
+            var score = candidateTitleScore + candidateArtistScore
+
+            if result.lyricsState?.lowercased() == "complete" {
+                score += 10
+            }
+
+            if hasVersionMismatch(expectedCandidates: titleCandidates, candidateTitle: title) {
+                score -= 25
+            }
+
+            guard candidateTitleScore >= 75 else {
+                return nil
+            }
+
+            guard candidateArtistScore >= 55 || candidateTitleScore >= 95 else {
+                return nil
+            }
+
+            return (result, score, candidateTitleScore, candidateArtistScore)
+        }
+        .sorted { left, right in
+            if left.score != right.score {
+                return left.score > right.score
+            }
+
+            if left.titleScore != right.titleScore {
+                return left.titleScore > right.titleScore
+            }
+
+            return left.artistScore > right.artistScore
+        }
+        .first?.result
+    }
+
+    private func comparisonScore(expectedCandidates: Set<String>, actualCandidates: Set<String>) -> Int {
+        guard !expectedCandidates.isEmpty, !actualCandidates.isEmpty else { return 0 }
+
+        if !expectedCandidates.intersection(actualCandidates).isEmpty {
+            return 100
+        }
+
+        if expectedCandidates.contains(where: { expected in
+            actualCandidates.contains(where: { actual in
+                expected.count > 4 && actual.count > 4 && (expected.contains(actual) || actual.contains(expected))
+            })
+        }) {
+            return 82
+        }
+
+        let expectedTokens = Set(expectedCandidates.flatMap { $0.split(separator: " ").map(String.init) })
+        let actualTokens = Set(actualCandidates.flatMap { $0.split(separator: " ").map(String.init) })
+        let sharedTokens = expectedTokens.intersection(actualTokens)
+
+        if sharedTokens.count >= min(3, max(1, expectedTokens.count)) {
+            return 64
+        }
+
+        if sharedTokens.count >= 2 {
+            return 56
+        }
+
+        return 0
+    }
+
+    private func normalizedTitleCandidates(for title: String) -> Set<String> {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return [] }
+
+        var candidates: Set<String> = []
+        candidates.insert(normalizedComparisonText(trimmedTitle))
+
+        let titleWithoutBrackets = trimmedTitle.replacingOccurrences(
+            of: #"\[[^\]]*\]|\([^)]*\)"#,
+            with: " ",
+            options: .regularExpression
+        )
+        candidates.insert(normalizedComparisonText(titleWithoutBrackets))
+
+        if let hyphenPrefix = trimmedTitle.components(separatedBy: " - ").first {
+            candidates.insert(normalizedComparisonText(hyphenPrefix))
+        }
+
+        return Set(candidates.filter { !$0.isEmpty })
+    }
+
+    private func normalizedArtistCandidates(for artist: String) -> Set<String> {
+        let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedArtist.isEmpty, trimmedArtist != "Unknown Artist" else { return [] }
+
+        var candidates: Set<String> = []
+        candidates.insert(normalizedComparisonText(trimmedArtist))
+
+        let lowercasedArtist = trimmedArtist.lowercased()
+        let separators = [" feat", " ft", ",", "&", " x ", " and "]
+        let separatorIndex = separators.compactMap { lowercasedArtist.range(of: $0)?.lowerBound }.min()
+        if let separatorIndex {
+            let primaryArtist = String(lowercasedArtist[..<separatorIndex])
+            candidates.insert(normalizedComparisonText(primaryArtist))
+        }
+
+        return Set(candidates.filter { !$0.isEmpty })
+    }
+
+    private func normalizedComparisonText(_ value: String) -> String {
+        let strippedValue = value
+            .replacingOccurrences(of: "\u{0451}", with: "\u{0435}")
+            .replacingOccurrences(of: #"(feat\.?|ft\.?|featuring)\s+.+$"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)(version|remix|mix|edit|live|sped up|slowed|remaster(ed)?)"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+
+        return strippedValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func hasVersionMismatch(expectedCandidates: Set<String>, candidateTitle: String) -> Bool {
+        let normalizedCandidateTitle = candidateTitle.lowercased()
+        let versionMarkers = ["live", "remix", "edit", "sped up", "slowed", "remaster"]
+
+        return versionMarkers.contains { marker in
+            normalizedCandidateTitle.contains(marker) &&
+                !expectedCandidates.contains(where: { $0.contains(marker) })
+        }
+    }
+
+    private func extractLyricsHTML(from pageHTML: String) -> String? {
+        let marker = "window.__PRELOADED_STATE__ = JSON.parse('"
+        guard let markerRange = pageHTML.range(of: marker) else {
+            return nil
+        }
+
+        let stateStartIndex = markerRange.upperBound
+        var stateEndIndex = stateStartIndex
+        var isEscaped = false
+
+        while stateEndIndex < pageHTML.endIndex {
+            let currentCharacter = pageHTML[stateEndIndex]
+
+            if currentCharacter == "'" && !isEscaped {
+                break
+            }
+
+            isEscaped = currentCharacter == "\\" && !isEscaped
+            if currentCharacter != "\\" {
+                isEscaped = false
+            }
+            stateEndIndex = pageHTML.index(after: stateEndIndex)
+        }
+
+        guard stateEndIndex < pageHTML.endIndex else {
+            return nil
+        }
+
+        let escapedJSON = String(pageHTML[stateStartIndex..<stateEndIndex])
+        let wrappedJSONString = "\"\(escapedJSON)\""
+
+        guard let decodedJSONString = try? JSONDecoder().decode(String.self, from: Data(wrappedJSONString.utf8)),
+              let pageStateData = decodedJSONString.data(using: .utf8),
+              let pageState = try? JSONDecoder().decode(GeniusSongPageState.self, from: pageStateData) else {
+            return nil
+        }
+
+        return cleanedLyricsText(pageState.songPage?.lyricsData?.body?.html)
+    }
+
+    private func plainTextLyrics(fromHTML html: String) -> String? {
+        guard let data = html.data(using: .utf8),
+              let attributedString = try? NSAttributedString(
+                data: data,
+                options: [
+                    .documentType: NSAttributedString.DocumentType.html,
+                    .characterEncoding: String.Encoding.utf8.rawValue
+                ],
+                documentAttributes: nil
+              ) else {
+            return cleanedLyricsText(html
+                .replacingOccurrences(of: "<br>", with: "\n")
+                .replacingOccurrences(of: "<br/>", with: "\n")
+                .replacingOccurrences(of: "<br />", with: "\n"))
+        }
+
+        return cleanedLyricsText(
+            attributedString.string.replacingOccurrences(
+                of: #"\n{3,}"#,
+                with: "\n\n",
+                options: .regularExpression
+            )
+        )
+    }
+
     private func cleanedLyricsText(_ value: String?) -> String? {
         guard let value else { return nil }
         let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return cleanedValue.isEmpty ? nil : cleanedValue
     }
+}
+
+private struct GeniusSearchEnvelope: Decodable {
+    let response: GeniusSearchPayload
+}
+
+private struct GeniusSearchPayload: Decodable {
+    let sections: [GeniusSearchSection]
+}
+
+private struct GeniusSearchSection: Decodable {
+    let hits: [GeniusSearchHit]?
+}
+
+private struct GeniusSearchHit: Decodable {
+    let result: GeniusSongHitResult
+}
+
+private struct GeniusSongHitResult: Decodable {
+    let id: Int
+    let title: String?
+    let artistNames: String?
+    let path: String?
+    let url: String?
+    let lyricsState: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case artistNames = "artist_names"
+        case path
+        case url
+        case lyricsState = "lyrics_state"
+    }
+}
+
+private struct GeniusSongPageState: Decodable {
+    let songPage: GeniusSongPageLyricsData?
+}
+
+private struct GeniusSongPageLyricsData: Decodable {
+    let lyricsData: GeniusLyricsPayload?
+}
+
+private struct GeniusLyricsPayload: Decodable {
+    let body: GeniusLyricsBody?
+}
+
+private struct GeniusLyricsBody: Decodable {
+    let html: String?
 }
 
 #Preview {
