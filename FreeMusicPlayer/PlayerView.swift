@@ -537,7 +537,7 @@ struct ResolvedTrackLyrics: Equatable {
     let lastUpdated: Date
 }
 
-private actor LyricsMetadataResolver {
+actor LyricsMetadataResolver {
     static let shared = LyricsMetadataResolver()
 
     private let session: URLSession = {
