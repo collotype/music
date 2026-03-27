@@ -871,23 +871,11 @@ struct TrackArtworkView: View {
     }
 
     private var localArtworkURL: URL? {
-        guard let coverArtURL = track.coverArtURL else { return nil }
-        guard let parsedURL = URL(string: coverArtURL), parsedURL.scheme != nil else {
-            return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
-        }
-
-        return parsedURL.isFileURL ? parsedURL : nil
+        track.localArtworkURL
     }
 
     private var remoteArtworkURL: URL? {
-        guard let coverArtURL = track.coverArtURL,
-              let parsedURL = URL(string: coverArtURL),
-              let scheme = parsedURL.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            return nil
-        }
-
-        return parsedURL
+        track.resolvedRemoteArtworkURL
     }
 
     @ViewBuilder
@@ -1033,7 +1021,7 @@ struct TrackArtworkBackdrop: View {
     }
 
     private var backdropIdentity: String {
-        track?.coverArtURL ?? track?.sourceID ?? track?.id ?? "no-artwork"
+        track?.artworkCacheIdentity ?? track?.sourceID ?? track?.id ?? "no-artwork"
     }
 }
 
@@ -1078,30 +1066,11 @@ private actor TrackArtworkPaletteStore {
     }
 
     private func paletteCacheKey(for track: Track) -> String? {
-        let cleanedCoverArtPath = track.coverArtURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !cleanedCoverArtPath.isEmpty {
-            return cleanedCoverArtPath
-        }
-
-        return track.sourceID ?? track.id
+        track.preferredArtworkReference ?? track.sourceID ?? track.id
     }
 
     private func resolvedArtworkURL(for track: Track) -> URL? {
-        guard let coverArtURL = track.coverArtURL,
-              !coverArtURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-
-        if let parsedURL = URL(string: coverArtURL),
-           parsedURL.scheme != nil {
-            guard parsedURL.isFileURL || parsedURL.scheme?.lowercased() == "http" || parsedURL.scheme?.lowercased() == "https" else {
-                return nil
-            }
-
-            return parsedURL
-        }
-
-        return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+        track.localArtworkURL ?? track.resolvedRemoteArtworkURL
     }
 
     private func loadArtworkData(from url: URL) async -> Data? {

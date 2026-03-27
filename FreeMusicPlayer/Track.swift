@@ -30,6 +30,9 @@ struct Track: Identifiable, Codable, Equatable {
     var duration: TimeInterval
     var fileURL: String?
     var coverArtURL: String?
+    var remoteCoverArtURL: String?
+    var artistImageURL: String?
+    var remoteArtistImageURL: String?
     var source: TrackSource
     var isFavorite: Bool
     var playCount: Int
@@ -56,7 +59,10 @@ struct Track: Identifiable, Codable, Equatable {
         sourceID: String? = nil,
         remotePageURL: String? = nil,
         storageLocation: StorageLocation = .library,
-        importOriginID: String? = nil
+        importOriginID: String? = nil,
+        remoteCoverArtURL: String? = nil,
+        artistImageURL: String? = nil,
+        remoteArtistImageURL: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -65,6 +71,9 @@ struct Track: Identifiable, Codable, Equatable {
         self.duration = duration
         self.fileURL = fileURL
         self.coverArtURL = coverArtURL
+        self.remoteCoverArtURL = remoteCoverArtURL
+        self.artistImageURL = artistImageURL
+        self.remoteArtistImageURL = remoteArtistImageURL
         self.source = source
         self.isFavorite = isFavorite
         self.playCount = playCount
@@ -84,6 +93,9 @@ struct Track: Identifiable, Codable, Equatable {
         case duration
         case fileURL
         case coverArtURL
+        case remoteCoverArtURL
+        case artistImageURL
+        case remoteArtistImageURL
         case source
         case isFavorite
         case playCount
@@ -105,6 +117,9 @@ struct Track: Identifiable, Codable, Equatable {
         duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
         fileURL = try container.decodeIfPresent(String.self, forKey: .fileURL)
         coverArtURL = try container.decodeIfPresent(String.self, forKey: .coverArtURL)
+        remoteCoverArtURL = try container.decodeIfPresent(String.self, forKey: .remoteCoverArtURL)
+        artistImageURL = try container.decodeIfPresent(String.self, forKey: .artistImageURL)
+        remoteArtistImageURL = try container.decodeIfPresent(String.self, forKey: .remoteArtistImageURL)
         source = try container.decodeIfPresent(TrackSource.self, forKey: .source) ?? .local
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
@@ -125,6 +140,9 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encode(duration, forKey: .duration)
         try container.encodeIfPresent(fileURL, forKey: .fileURL)
         try container.encodeIfPresent(coverArtURL, forKey: .coverArtURL)
+        try container.encodeIfPresent(remoteCoverArtURL, forKey: .remoteCoverArtURL)
+        try container.encodeIfPresent(artistImageURL, forKey: .artistImageURL)
+        try container.encodeIfPresent(remoteArtistImageURL, forKey: .remoteArtistImageURL)
         try container.encode(source, forKey: .source)
         try container.encode(isFavorite, forKey: .isFavorite)
         try container.encode(playCount, forKey: .playCount)
@@ -270,6 +288,7 @@ struct FavoriteArtist: Identifiable, Codable, Hashable {
     let providerArtistID: String
     let artistName: String
     let imageURL: String?
+    let localImagePath: String?
     let webpageURL: String?
 
     var id: String {
@@ -296,8 +315,76 @@ extension OnlineArtistRoute {
             providerArtistID: providerArtistID,
             artistName: artistName,
             imageURL: imageURL,
+            localImagePath: nil,
             webpageURL: webpageURL
         )
+    }
+}
+
+extension Track {
+    var artworkCacheIdentity: String {
+        preferredArtworkReference ?? sourceID ?? id
+    }
+
+    var preferredArtworkReference: String? {
+        cleanedImageReference(coverArtURL) ?? cleanedImageReference(remoteCoverArtURL)
+    }
+
+    var localArtworkURL: URL? {
+        resolvedLocalImageURL(from: coverArtURL)
+    }
+
+    var resolvedRemoteArtworkURL: URL? {
+        resolvedRemoteImageURL(from: coverArtURL) ?? resolvedRemoteImageURL(from: remoteCoverArtURL)
+    }
+
+    var preferredArtistImageReference: String? {
+        cleanedImageReference(artistImageURL) ?? cleanedImageReference(remoteArtistImageURL)
+    }
+
+    var localArtistImageFileURL: URL? {
+        resolvedLocalImageURL(from: artistImageURL)
+    }
+
+    var resolvedRemoteArtistImageURL: URL? {
+        resolvedRemoteImageURL(from: artistImageURL) ?? resolvedRemoteImageURL(from: remoteArtistImageURL)
+    }
+
+    private func cleanedImageReference(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+
+    private func resolvedLocalImageURL(from reference: String?) -> URL? {
+        guard let reference = cleanedImageReference(reference) else { return nil }
+
+        if let parsedURL = URL(string: reference), parsedURL.scheme != nil {
+            guard parsedURL.isFileURL,
+                  FileManager.default.fileExists(atPath: parsedURL.path) else {
+                return nil
+            }
+
+            return parsedURL
+        }
+
+        let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: reference)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+            return nil
+        }
+
+        return resolvedURL
+    }
+
+    private func resolvedRemoteImageURL(from reference: String?) -> URL? {
+        guard let reference = cleanedImageReference(reference),
+              let parsedURL = URL(string: reference),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
     }
 }
 

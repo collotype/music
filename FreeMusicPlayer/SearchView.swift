@@ -1369,10 +1369,21 @@ struct SearchPlaylistArtworkView: View {
             guard parsedURL.isFileURL || parsedURL.scheme?.lowercased() == "http" || parsedURL.scheme?.lowercased() == "https" else {
                 return nil
             }
+
+            if parsedURL.isFileURL,
+               !FileManager.default.fileExists(atPath: parsedURL.path) {
+                return nil
+            }
+
             return parsedURL
         }
 
-        return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+        let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+            return nil
+        }
+
+        return resolvedURL
     }
 
     private var fallbackArtwork: some View {

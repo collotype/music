@@ -147,6 +147,22 @@ final class AppFileManager {
         return destinationURL
     }
 
+    func savePersistentImageData(_ data: Data, preferredName: String, fileExtension: String) throws -> URL {
+        let cleanBaseName = sanitizedFileName(preferredName)
+        let cleanExtension = sanitizedImageExtension(fileExtension)
+        let destinationURL = artworkDirectory
+            .appendingPathComponent(cleanBaseName)
+            .appendingPathExtension(cleanExtension)
+
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try? fileManager.removeItem(at: destinationURL)
+        }
+
+        try data.write(to: destinationURL, options: .atomic)
+        debugLog("Stored persistent image at \(destinationURL.lastPathComponent)")
+        return destinationURL
+    }
+
     func fileExists(at storedPath: String?) -> Bool {
         guard let storedPath else { return false }
         return fileManager.fileExists(atPath: resolveStoredFileURL(for: storedPath).path)
@@ -298,6 +314,15 @@ final class AppFileManager {
         return artworkDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(fileExtension)
+    }
+
+    private func sanitizedImageExtension(_ rawValue: String) -> String {
+        let trimmedValue = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ".", with: "")
+            .lowercased()
+
+        return trimmedValue.isEmpty ? "jpg" : trimmedValue
     }
 
     private func isPlayableAudioByProbe(_ url: URL) -> Bool {

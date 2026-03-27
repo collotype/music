@@ -40,31 +40,39 @@ struct OnlineArtistDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                artistHeroCard
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-                if let profileErrorMessage {
-                    SearchSectionCard(title: "Artist") {
-                        SearchStatusRow(
-                            icon: "info.circle",
-                            title: "Some artist details are unavailable",
-                            subtitle: profileErrorMessage
-                        )
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    artistHeroCard
+
+                    VStack(alignment: .leading, spacing: 20) {
+                        if let profileErrorMessage {
+                            SearchSectionCard(title: "Artist") {
+                                SearchStatusRow(
+                                    icon: "info.circle",
+                                    title: "Some artist details are unavailable",
+                                    subtitle: profileErrorMessage
+                                )
+                            }
+                        }
+
+                        popularTracksSection
+                        releasesSection
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 20)
+                    .padding(.bottom, 120)
                 }
-
-                popularTracksSection
-                releasesSection
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 120)
         }
-        .background(Color.black.ignoresSafeArea())
+        .ignoresSafeArea(edges: .top)
         .navigationTitle(profile.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .task(id: route.id) {
             await loadArtistPage()
         }
@@ -74,16 +82,17 @@ struct OnlineArtistDetailView: View {
         ZStack(alignment: .bottomLeading) {
             ArtistHeroArtworkView(
                 provider: route.provider,
-                artworkURLString: heroArtworkURLString,
+                artworkURLString: heroArtworkReference,
                 fallbackTitle: profile.name,
                 fallbackSystemImage: "person.fill",
-                cornerRadius: 28
+                cornerRadius: 0
             )
-            .frame(height: 320)
+            .frame(maxWidth: .infinity)
+            .frame(height: 400)
 
             LinearGradient(
                 colors: [
-                    Color.black.opacity(0.05),
+                    Color.black.opacity(0.08),
                     Color.black.opacity(0.35),
                     Color.black.opacity(0.88)
                 ],
@@ -92,13 +101,16 @@ struct OnlineArtistDetailView: View {
             )
 
             VStack(alignment: .leading, spacing: 18) {
+                Spacer(minLength: 0)
+
                 HStack(alignment: .bottom, spacing: 14) {
-                    OnlineResultArtworkView(
+                    ResolvedArtworkTileView(
                         provider: route.provider,
-                        artworkURLString: avatarArtworkURLString,
+                        artworkReference: avatarArtworkReference,
                         fallbackSystemImage: "person.fill",
                         size: 88,
-                        cornerRadius: 24
+                        cornerRadius: 24,
+                        showsProviderBadge: false
                     )
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -164,13 +176,11 @@ struct OnlineArtistDetailView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(22)
+            .padding(.horizontal, 20)
+            .padding(.top, 104)
+            .padding(.bottom, 26)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -285,25 +295,36 @@ struct OnlineArtistDetailView: View {
             provider: route.provider,
             providerArtistID: route.providerArtistID,
             artistName: profile.name,
-            imageURL: avatarArtworkURLString,
+            imageURL: profile.imageURL ?? route.imageURL,
+            localImagePath: persistedFavoriteArtist?.localImagePath,
             webpageURL: profile.webpageURL ?? route.webpageURL
         )
     }
 
-    private var heroArtworkURLString: String? {
-        profile.heroImageURL ??
-            profile.imageURL ??
-            route.imageURL ??
-            releases.first?.coverArtURL ??
-            popularTracks.first?.coverArtURL
+    private var persistedFavoriteArtist: FavoriteArtist? {
+        dataManager.favoriteArtist(provider: route.provider, artistID: route.providerArtistID)
     }
 
-    private var avatarArtworkURLString: String? {
-        profile.imageURL ??
-            route.imageURL ??
-            popularTracks.first?.artistImageURL ??
-            releases.first?.coverArtURL ??
+    private var heroArtworkReference: String? {
+        preferredArtworkReference(
+            profile.heroImageURL,
+            persistedFavoriteArtist?.localImagePath,
+            profile.imageURL,
+            route.imageURL,
+            releases.first?.coverArtURL,
             popularTracks.first?.coverArtURL
+        )
+    }
+
+    private var avatarArtworkReference: String? {
+        preferredArtworkReference(
+            persistedFavoriteArtist?.localImagePath,
+            profile.imageURL,
+            route.imageURL,
+            popularTracks.first?.artistImageURL,
+            releases.first?.coverArtURL,
+            popularTracks.first?.coverArtURL
+        )
     }
 
     private var artistMetadataChips: [String] {
@@ -431,74 +452,92 @@ struct OnlineReleaseDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                releaseHeroCard
+        ZStack {
+            Color.black.ignoresSafeArea()
 
-                SearchSectionCard(title: "Tracks") {
-                    if let actionStatusMessage, !tracks.isEmpty {
-                        SearchStatusRow(
-                            icon: "exclamationmark.circle",
-                            title: "Track action unavailable",
-                            subtitle: actionStatusMessage
-                        )
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    releaseHeroCard
 
-                        Divider()
-                            .background(Color.white.opacity(0.06))
+                    VStack(alignment: .leading, spacing: 20) {
+                        SearchSectionCard(title: "Tracks") {
+                            if let actionStatusMessage, !tracks.isEmpty {
+                                SearchStatusRow(
+                                    icon: "exclamationmark.circle",
+                                    title: "Track action unavailable",
+                                    subtitle: actionStatusMessage
+                                )
+
+                                Divider()
+                                    .background(Color.white.opacity(0.06))
+                            }
+
+                            if isLoading && tracks.isEmpty && loadingErrorMessage == nil {
+                                SearchStatusRow(
+                                    icon: "arrow.triangle.2.circlepath",
+                                    title: "Loading release",
+                                    subtitle: "Fetching SoundCloud tracks for this release."
+                                )
+                            } else if let loadingErrorMessage, tracks.isEmpty {
+                                SearchStatusRow(
+                                    icon: "wifi.exclamationmark",
+                                    title: "Couldn't load release",
+                                    subtitle: loadingErrorMessage,
+                                    actionTitle: "Retry",
+                                    action: retryLoadRelease
+                                )
+                            } else if tracks.isEmpty {
+                                SearchStatusRow(
+                                    icon: "music.note.list",
+                                    title: "No tracks found",
+                                    subtitle: "This SoundCloud release does not include a playable track list."
+                                )
+                            } else {
+                                OnlineTrackResultsList(
+                                    results: tracks,
+                                    statusMessage: $actionStatusMessage
+                                )
+                            }
+                        }
                     }
-
-                    if isLoading && tracks.isEmpty && loadingErrorMessage == nil {
-                        SearchStatusRow(
-                            icon: "arrow.triangle.2.circlepath",
-                            title: "Loading release",
-                            subtitle: "Fetching SoundCloud tracks for this release."
-                        )
-                    } else if let loadingErrorMessage, tracks.isEmpty {
-                        SearchStatusRow(
-                            icon: "wifi.exclamationmark",
-                            title: "Couldn't load release",
-                            subtitle: loadingErrorMessage,
-                            actionTitle: "Retry",
-                            action: retryLoadRelease
-                        )
-                    } else if tracks.isEmpty {
-                        SearchStatusRow(
-                            icon: "music.note.list",
-                            title: "No tracks found",
-                            subtitle: "This SoundCloud release does not include a playable track list."
-                        )
-                    } else {
-                        OnlineTrackResultsList(
-                            results: tracks,
-                            statusMessage: $actionStatusMessage
-                        )
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 20)
+                    .padding(.bottom, 120)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 120)
         }
-        .background(Color.black.ignoresSafeArea())
+        .ignoresSafeArea(edges: .top)
         .navigationTitle(release.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .task(id: route.providerReleaseID) {
             await loadRelease()
         }
     }
 
     private var releaseHeroCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        ZStack(alignment: .bottomLeading) {
             ArtistHeroArtworkView(
                 provider: route.provider,
                 artworkURLString: release.coverArtURL,
                 fallbackTitle: release.title,
                 fallbackSystemImage: "square.stack.fill",
-                cornerRadius: 24
+                cornerRadius: 0
             )
-            .frame(height: 240)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .frame(maxWidth: .infinity)
+            .frame(height: 360)
+
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.06),
+                    Color.black.opacity(0.30),
+                    Color.black.opacity(0.86)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
 
             VStack(alignment: .leading, spacing: 10) {
                 Text(release.title)
@@ -536,16 +575,11 @@ struct OnlineReleaseDetailView: View {
                 .disabled(primaryPlayableTrack == nil || isPlayingPrimaryAction)
                 .opacity(primaryPlayableTrack == nil ? 0.45 : 1)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 104)
+            .padding(.bottom, 24)
         }
-        .padding(18)
-        .background(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var primaryPlayableTrack: OnlineTrackResult? {
@@ -808,9 +842,85 @@ private enum OnlineTrackActionHelper {
         }
 
         let tempURL = try await OnlineMusicService.shared.downloadAudio(for: result)
+        return try await dataManager.saveDownloadedOnlineTrack(result, from: tempURL)
+    }
+}
 
-        return try await MainActor.run {
-            try dataManager.saveDownloadedOnlineTrack(result, from: tempURL)
+private struct ResolvedArtworkTileView: View {
+    let provider: OnlineTrackProvider
+    let artworkReference: String?
+    let fallbackSystemImage: String
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    let showsProviderBadge: Bool
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            provider.accentColor,
+                            provider.secondaryAccentColor
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            artworkContent
+
+            if showsProviderBadge {
+                ProviderIconView(provider: provider, size: 13)
+                    .padding(5)
+                    .background(Circle().fill(Color.black.opacity(0.82)))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(4)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+
+    @ViewBuilder
+    private var artworkContent: some View {
+        if let artworkURL = resolvedArtworkURL(from: artworkReference) {
+            if artworkURL.isFileURL {
+                if let image = UIImage(contentsOfFile: artworkURL.path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    fallbackArtwork
+                }
+            } else {
+                AsyncImage(url: artworkURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        fallbackArtwork
+                    }
+                }
+            }
+        } else {
+            fallbackArtwork
+        }
+    }
+
+    private var fallbackArtwork: some View {
+        ZStack {
+            LinearGradient(
+                colors: [provider.accentColor, provider.secondaryAccentColor],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Image(systemName: fallbackSystemImage)
+                .font(.system(size: size * 0.36, weight: .semibold))
+                .foregroundColor(.white.opacity(0.8))
         }
     }
 }
@@ -820,12 +930,13 @@ private struct OnlineReleaseCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            OnlineResultArtworkView(
+            ResolvedArtworkTileView(
                 provider: release.provider,
-                artworkURLString: release.coverArtURL,
+                artworkReference: release.coverArtURL,
                 fallbackSystemImage: "square.stack.fill",
                 size: 168,
-                cornerRadius: 18
+                cornerRadius: 18,
+                showsProviderBadge: true
             )
 
             Text(release.title)
@@ -885,14 +996,20 @@ private struct ArtistHeroArtworkView: View {
             )
 
             if let artworkURL = artworkURL {
-                AsyncImage(url: artworkURL) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        fallbackContent
+                if artworkURL.isFileURL, let image = UIImage(contentsOfFile: artworkURL.path) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    AsyncImage(url: artworkURL) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        default:
+                            fallbackContent
+                        }
                     }
                 }
             } else {
@@ -903,14 +1020,7 @@ private struct ArtistHeroArtworkView: View {
     }
 
     private var artworkURL: URL? {
-        guard let artworkURLString,
-              let artworkURL = URL(string: artworkURLString),
-              let scheme = artworkURL.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else {
-            return nil
-        }
-
-        return artworkURL
+        resolvedArtworkURL(from: artworkURLString)
     }
 
     private var fallbackContent: some View {
@@ -998,6 +1108,38 @@ private extension OnlineAlbumResult {
             webpageURL: webpageURL
         )
     }
+}
+
+private func resolvedArtworkURL(from reference: String?) -> URL? {
+    guard let reference = reference?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !reference.isEmpty else {
+        return nil
+    }
+
+    if let parsedURL = URL(string: reference), parsedURL.scheme != nil {
+        let scheme = parsedURL.scheme?.lowercased()
+        guard parsedURL.isFileURL || scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        if parsedURL.isFileURL,
+           !FileManager.default.fileExists(atPath: parsedURL.path) {
+            return nil
+        }
+
+        return parsedURL
+    }
+
+    let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: reference)
+    guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+        return nil
+    }
+
+    return resolvedURL
+}
+
+private func preferredArtworkReference(_ candidates: String?...) -> String? {
+    candidates.first { resolvedArtworkURL(from: $0) != nil }
 }
 
 private func formattedCount(_ value: Int) -> String {

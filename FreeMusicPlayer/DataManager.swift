@@ -82,6 +82,22 @@ final class DataManager: ObservableObject {
         if let existingIndex = existingTrackIndex(for: track) {
             var updatedTrack = track
             updatedTrack.id = tracks[existingIndex].id
+            updatedTrack.coverArtURL = resolvedPreferredStoredImageReference(
+                newValue: track.coverArtURL,
+                existingValue: tracks[existingIndex].coverArtURL
+            )
+            updatedTrack.remoteCoverArtURL = resolvedPreferredRemoteImageReference(
+                newValue: track.remoteCoverArtURL,
+                existingValue: tracks[existingIndex].remoteCoverArtURL
+            )
+            updatedTrack.artistImageURL = resolvedPreferredStoredImageReference(
+                newValue: track.artistImageURL,
+                existingValue: tracks[existingIndex].artistImageURL
+            )
+            updatedTrack.remoteArtistImageURL = resolvedPreferredRemoteImageReference(
+                newValue: track.remoteArtistImageURL,
+                existingValue: tracks[existingIndex].remoteArtistImageURL
+            )
             updatedTrack.isFavorite = favorites.contains(updatedTrack.id)
             tracks[existingIndex] = updatedTrack
             saveData()
@@ -193,6 +209,15 @@ final class DataManager: ObservableObject {
         tracks[trackIndex].isFavorite = favorites.contains(trackID)
 
         saveData()
+
+        if favorites.contains(trackID) {
+            let storedTrack = tracks[trackIndex]
+            scheduleOfflineVisualPersistenceIfNeeded(
+                forTrackID: storedTrack.id,
+                preferredCoverReference: storedTrack.remoteCoverArtURL ?? storedTrack.coverArtURL,
+                preferredArtistReference: storedTrack.remoteArtistImageURL ?? storedTrack.artistImageURL
+            )
+        }
     }
 
     @discardableResult
@@ -218,6 +243,10 @@ final class DataManager: ObservableObject {
         favoriteArtists.contains { $0.provider == provider && $0.providerArtistID == artistID }
     }
 
+    func favoriteArtist(provider: OnlineTrackProvider, artistID: String) -> FavoriteArtist? {
+        favoriteArtists.first { $0.provider == provider && $0.providerArtistID == artistID }
+    }
+
     func toggleFavoriteArtist(_ artist: FavoriteArtist) {
         debugLog("Toggle favorite artist: \(artist.artistName)")
 
@@ -230,6 +259,14 @@ final class DataManager: ObservableObject {
         }
 
         saveData()
+
+        guard favoriteArtists.contains(where: {
+            $0.provider == artist.provider && $0.providerArtistID == artist.providerArtistID
+        }) else {
+            return
+        }
+
+        persistFavoriteArtistImageIfNeeded(artist: artist)
     }
 
     func deletePlaylist(_ playlist: Playlist) {
@@ -336,6 +373,9 @@ final class DataManager: ObservableObject {
             duration: metadata.duration,
             fileURL: storedPath,
             coverArtURL: result.coverArtURL,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL,
             source: result.trackSource,
             isFavorite: false,
             playCount: 0,
@@ -357,6 +397,9 @@ final class DataManager: ObservableObject {
             duration: result.duration,
             fileURL: streamURL.absoluteString,
             coverArtURL: result.coverArtURL,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL,
             source: result.trackSource,
             isFavorite: false,
             playCount: 0,
@@ -368,12 +411,29 @@ final class DataManager: ObservableObject {
         )
     }
 
+    @MainActor
     @discardableResult
-    func saveDownloadedOnlineTrack(_ result: OnlineTrackResult, from tempFileURL: URL) throws -> Track {
+    func saveDownloadedOnlineTrack(_ result: OnlineTrackResult, from tempFileURL: URL) async throws -> Track {
         if let existingTrack = track(withSourceID: result.id) {
             debugLog("Reuse existing saved online track: \(existingTrack.displayTitle)")
+            if let refreshedTrack = await persistOfflineVisualsIfNeeded(
+                forTrackID: existingTrack.id,
+                preferredCoverReference: result.coverArtURL ?? existingTrack.remoteCoverArtURL,
+                preferredArtistReference: result.artistImageURL ?? existingTrack.remoteArtistImageURL
+            ) {
+                return refreshedTrack
+            }
             return existingTrack
         }
+
+        async let localArtworkPath = persistImageReferenceIfNeeded(
+            result.coverArtURL,
+            preferredName: "track-\(result.id)-cover"
+        )
+        async let localArtistImagePath = persistImageReferenceIfNeeded(
+            result.artistImageURL,
+            preferredName: "artist-\(result.providerArtistID ?? result.id)-avatar"
+        )
 
         let destinationURL = try AppFileManager.shared.copyToLibrary(
             from: tempFileURL,
@@ -381,6 +441,8 @@ final class DataManager: ObservableObject {
         )
         let storedPath = AppFileManager.shared.relativePath(for: destinationURL) ?? destinationURL.path
         let metadata = resolvedDownloadedTrackMetadata(from: result, localFileURL: destinationURL)
+        let resolvedArtworkPath = await localArtworkPath
+        let resolvedArtistImagePath = await localArtistImagePath
         debugLog("Register saved online track in library: \(result.title) at \(storedPath)")
 
         let track = Track(
@@ -389,7 +451,10 @@ final class DataManager: ObservableObject {
             album: metadata.album,
             duration: metadata.duration,
             fileURL: storedPath,
-            coverArtURL: result.coverArtURL,
+            coverArtURL: resolvedArtworkPath ?? result.coverArtURL,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: resolvedArtistImagePath ?? result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL,
             source: result.trackSource,
             isFavorite: false,
             playCount: 0,
@@ -586,11 +651,269 @@ final class DataManager: ObservableObject {
             try? FileManager.default.removeItem(at: resolvedURL)
         }
 
-        if let coverArtURL = track.coverArtURL,
-           URL(string: coverArtURL)?.scheme == nil {
-            let artworkURL = AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
+        if let artworkURL = track.localArtworkURL {
             try? FileManager.default.removeItem(at: artworkURL)
         }
+    }
+
+    private func resolvedPreferredStoredImageReference(newValue: String?, existingValue: String?) -> String? {
+        let cleanedNewValue = cleanedImageReference(newValue)
+        let cleanedExistingValue = cleanedImageReference(existingValue)
+
+        if let cleanedExistingValue,
+           !isRemoteImageReference(cleanedExistingValue),
+           hasAccessibleLocalImageReference(cleanedExistingValue) {
+            return cleanedExistingValue
+        }
+
+        if let cleanedNewValue,
+           !isRemoteImageReference(cleanedNewValue),
+           hasAccessibleLocalImageReference(cleanedNewValue) {
+            return cleanedNewValue
+        }
+
+        if let cleanedExistingValue, isRemoteImageReference(cleanedExistingValue) {
+            return cleanedExistingValue
+        }
+
+        if let cleanedNewValue, isRemoteImageReference(cleanedNewValue) {
+            return cleanedNewValue
+        }
+
+        return cleanedNewValue ?? cleanedExistingValue
+    }
+
+    private func resolvedPreferredRemoteImageReference(newValue: String?, existingValue: String?) -> String? {
+        if let cleanedNewValue = cleanedImageReference(newValue),
+           isRemoteImageReference(cleanedNewValue) {
+            return cleanedNewValue
+        }
+
+        if let cleanedExistingValue = cleanedImageReference(existingValue),
+           isRemoteImageReference(cleanedExistingValue) {
+            return cleanedExistingValue
+        }
+
+        return nil
+    }
+
+    private func persistFavoriteArtistImageIfNeeded(artist: FavoriteArtist) {
+        guard !hasAccessibleLocalImageReference(artist.localImagePath),
+              let preferredImageReference = cleanedImageReference(artist.imageURL) else {
+            return
+        }
+
+        let preferredName = "favorite-artist-\(artist.id)-avatar"
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            let localImagePath = await self.persistImageReferenceIfNeeded(
+                preferredImageReference,
+                preferredName: preferredName
+            )
+
+            guard let localImagePath else { return }
+
+            await MainActor.run {
+                guard let index = self.favoriteArtists.firstIndex(where: {
+                    $0.provider == artist.provider && $0.providerArtistID == artist.providerArtistID
+                }) else {
+                    return
+                }
+
+                self.favoriteArtists[index] = FavoriteArtist(
+                    provider: artist.provider,
+                    providerArtistID: artist.providerArtistID,
+                    artistName: self.favoriteArtists[index].artistName,
+                    imageURL: self.favoriteArtists[index].imageURL,
+                    localImagePath: localImagePath,
+                    webpageURL: self.favoriteArtists[index].webpageURL
+                )
+                self.saveData()
+            }
+        }
+    }
+
+    private func scheduleOfflineVisualPersistenceIfNeeded(
+        forTrackID trackID: String,
+        preferredCoverReference: String?,
+        preferredArtistReference: String?
+    ) {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.persistOfflineVisualsIfNeeded(
+                forTrackID: trackID,
+                preferredCoverReference: preferredCoverReference,
+                preferredArtistReference: preferredArtistReference
+            )
+        }
+    }
+
+    @MainActor
+    @discardableResult
+    private func persistOfflineVisualsIfNeeded(
+        forTrackID trackID: String,
+        preferredCoverReference: String?,
+        preferredArtistReference: String?
+    ) async -> Track? {
+        guard let index = tracks.firstIndex(where: { $0.id == trackID }) else {
+            return nil
+        }
+
+        let existingTrack = tracks[index]
+        let resolvedCoverReference = cleanedImageReference(preferredCoverReference) ??
+            cleanedImageReference(existingTrack.remoteCoverArtURL) ??
+            cleanedImageReference(existingTrack.coverArtURL)
+        let resolvedArtistReference = cleanedImageReference(preferredArtistReference) ??
+            cleanedImageReference(existingTrack.remoteArtistImageURL) ??
+            cleanedImageReference(existingTrack.artistImageURL)
+
+        async let localArtworkPath = persistImageReferenceIfNeeded(
+            resolvedCoverReference,
+            preferredName: "track-\(existingTrack.sourceID ?? existingTrack.id)-cover"
+        )
+        async let localArtistPath = persistImageReferenceIfNeeded(
+            resolvedArtistReference,
+            preferredName: "artist-\(existingTrack.sourceID ?? existingTrack.id)-avatar"
+        )
+
+        let resolvedArtworkPath = await localArtworkPath
+        let resolvedArtistPath = await localArtistPath
+
+        var updatedTrack = existingTrack
+        var didUpdateTrack = false
+
+        if let resolvedCoverReference,
+           updatedTrack.remoteCoverArtURL == nil,
+           isRemoteImageReference(resolvedCoverReference) {
+            updatedTrack.remoteCoverArtURL = resolvedCoverReference
+            didUpdateTrack = true
+        }
+
+        if let resolvedArtistReference,
+           updatedTrack.remoteArtistImageURL == nil,
+           isRemoteImageReference(resolvedArtistReference) {
+            updatedTrack.remoteArtistImageURL = resolvedArtistReference
+            didUpdateTrack = true
+        }
+
+        if let resolvedArtworkPath,
+           updatedTrack.coverArtURL != resolvedArtworkPath {
+            updatedTrack.coverArtURL = resolvedArtworkPath
+            didUpdateTrack = true
+        }
+
+        if let resolvedArtistPath,
+           updatedTrack.artistImageURL != resolvedArtistPath {
+            updatedTrack.artistImageURL = resolvedArtistPath
+            didUpdateTrack = true
+        }
+
+        guard didUpdateTrack else {
+            return existingTrack
+        }
+
+        tracks[index] = updatedTrack
+        saveData()
+        return updatedTrack
+    }
+
+    private func persistImageReferenceIfNeeded(
+        _ reference: String?,
+        preferredName: String
+    ) async -> String? {
+        guard let reference = cleanedImageReference(reference) else {
+            return nil
+        }
+
+        if let parsedURL = URL(string: reference), parsedURL.scheme != nil {
+            if parsedURL.isFileURL {
+                guard FileManager.default.fileExists(atPath: parsedURL.path) else { return nil }
+                return AppFileManager.shared.relativePath(for: parsedURL) ?? parsedURL.path
+            }
+
+            guard let scheme = parsedURL.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else {
+                return nil
+            }
+
+            do {
+                var request = URLRequest(url: parsedURL)
+                request.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+                request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+
+                let (data, response) = try await URLSession.shared.data(for: request)
+                if let httpResponse = response as? HTTPURLResponse,
+                   !(200...299).contains(httpResponse.statusCode) {
+                    return nil
+                }
+
+                guard !data.isEmpty else { return nil }
+
+                let fileExtension = preferredImageFileExtension(
+                    mimeType: response.mimeType,
+                    fallbackURL: parsedURL
+                )
+                let storedURL = try AppFileManager.shared.savePersistentImageData(
+                    data,
+                    preferredName: preferredName,
+                    fileExtension: fileExtension
+                )
+                return AppFileManager.shared.relativePath(for: storedURL) ?? storedURL.path
+            } catch {
+                debugLog("Image persistence skipped for \(preferredName): \(error.localizedDescription)")
+                return nil
+            }
+        }
+
+        guard AppFileManager.shared.fileExists(at: reference) else {
+            return nil
+        }
+
+        return reference
+    }
+
+    private func preferredImageFileExtension(mimeType: String?, fallbackURL: URL) -> String {
+        if let mimeType = mimeType?.lowercased() {
+            if mimeType.contains("png") { return "png" }
+            if mimeType.contains("webp") { return "webp" }
+            if mimeType.contains("gif") { return "gif" }
+            if mimeType.contains("heic") || mimeType.contains("heif") { return "heic" }
+            if mimeType.contains("jpeg") || mimeType.contains("jpg") { return "jpg" }
+        }
+
+        let fallbackExtension = fallbackURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallbackExtension.isEmpty ? "jpg" : fallbackExtension
+    }
+
+    private func cleanedImageReference(_ value: String?) -> String? {
+        guard let value else { return nil }
+
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+
+    private func isRemoteImageReference(_ value: String) -> Bool {
+        guard let parsedURL = URL(string: value),
+              let scheme = parsedURL.scheme?.lowercased() else {
+            return false
+        }
+
+        return scheme == "http" || scheme == "https"
+    }
+
+    private func hasAccessibleLocalImageReference(_ value: String?) -> Bool {
+        guard let value = cleanedImageReference(value) else {
+            return false
+        }
+
+        if let parsedURL = URL(string: value), parsedURL.scheme != nil {
+            guard parsedURL.isFileURL else { return false }
+            return FileManager.default.fileExists(atPath: parsedURL.path)
+        }
+
+        return AppFileManager.shared.fileExists(at: value)
     }
 
     private func readJSON<T: Decodable>(from url: URL) -> T? {

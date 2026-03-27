@@ -187,7 +187,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func refreshNowPlayingArtwork(for track: Track) {
-        let identifier = "\(track.id)::\(track.coverArtURL ?? "no-artwork")"
+        let identifier = "\(track.id)::\(track.artworkCacheIdentity)"
         guard identifier != nowPlayingArtworkIdentifier else { return }
 
         nowPlayingArtworkIdentifier = identifier
@@ -925,18 +925,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func resolvedArtworkURL(for track: Track) -> URL? {
-        guard let coverArtURL = track.coverArtURL else { return nil }
-
-        guard let parsedURL = URL(string: coverArtURL), parsedURL.scheme != nil else {
-            return AppFileManager.shared.resolveStoredFileURL(for: coverArtURL)
-        }
-
-        let scheme = parsedURL.scheme?.lowercased()
-        if parsedURL.isFileURL || scheme == "http" || scheme == "https" {
-            return parsedURL
-        }
-
-        return nil
+        track.localArtworkURL ?? track.resolvedRemoteArtworkURL
     }
 
     deinit {
