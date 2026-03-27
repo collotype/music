@@ -40,35 +40,38 @@ struct OnlineArtistDetailView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    artistHeroCard
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        artistHeroCard
 
-                    VStack(alignment: .leading, spacing: 20) {
-                        if let profileErrorMessage {
-                            ArtistDetailSection(title: "Artist") {
-                                SearchStatusRow(
-                                    icon: "info.circle",
-                                    title: "Some artist details are unavailable",
-                                    subtitle: profileErrorMessage
-                                )
+                        VStack(alignment: .leading, spacing: 20) {
+                            if let profileErrorMessage {
+                                ArtistDetailSection(title: "Artist") {
+                                    SearchStatusRow(
+                                        icon: "info.circle",
+                                        title: "Some artist details are unavailable",
+                                        subtitle: profileErrorMessage
+                                    )
+                                }
                             }
-                        }
 
-                        popularTracksSection
-                        releasesSection
+                            popularTracksSection
+                            releasesSection
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 20)
+                        .padding(.bottom, 64)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 20)
-                    .padding(.bottom, 64)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: geometry.size.width, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
         .ignoresSafeArea(edges: .top)
         .navigationTitle(profile.name)
@@ -451,62 +454,65 @@ struct OnlineReleaseDetailView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    releaseHeroCard
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        releaseHeroCard
 
-                    VStack(alignment: .leading, spacing: 20) {
-                        ArtistDetailSection(title: "Tracks") {
-                            if let actionStatusMessage, !tracks.isEmpty {
-                                SearchStatusRow(
-                                    icon: "exclamationmark.circle",
-                                    title: "Track action unavailable",
-                                    subtitle: actionStatusMessage
-                                )
+                        VStack(alignment: .leading, spacing: 20) {
+                            ArtistDetailSection(title: "Tracks") {
+                                if let actionStatusMessage, !tracks.isEmpty {
+                                    SearchStatusRow(
+                                        icon: "exclamationmark.circle",
+                                        title: "Track action unavailable",
+                                        subtitle: actionStatusMessage
+                                    )
 
-                                Divider()
-                                    .background(Color.white.opacity(0.06))
-                            }
+                                    Divider()
+                                        .background(Color.white.opacity(0.06))
+                                }
 
-                            if isLoading && tracks.isEmpty && loadingErrorMessage == nil {
-                                SearchStatusRow(
-                                    icon: "arrow.triangle.2.circlepath",
-                                    title: "Loading release",
-                                    subtitle: "Fetching SoundCloud tracks for this release."
-                                )
-                            } else if let loadingErrorMessage, tracks.isEmpty {
-                                SearchStatusRow(
-                                    icon: "wifi.exclamationmark",
-                                    title: "Couldn't load release",
-                                    subtitle: loadingErrorMessage,
-                                    actionTitle: "Retry",
-                                    action: retryLoadRelease
-                                )
-                            } else if tracks.isEmpty {
-                                SearchStatusRow(
-                                    icon: "music.note.list",
-                                    title: "No tracks found",
-                                    subtitle: "This SoundCloud release does not include a playable track list."
-                                )
-                            } else {
-                                OnlineTrackResultsList(
-                                    results: tracks,
-                                    statusMessage: $actionStatusMessage
-                                )
+                                if isLoading && tracks.isEmpty && loadingErrorMessage == nil {
+                                    SearchStatusRow(
+                                        icon: "arrow.triangle.2.circlepath",
+                                        title: "Loading release",
+                                        subtitle: "Fetching SoundCloud tracks for this release."
+                                    )
+                                } else if let loadingErrorMessage, tracks.isEmpty {
+                                    SearchStatusRow(
+                                        icon: "wifi.exclamationmark",
+                                        title: "Couldn't load release",
+                                        subtitle: loadingErrorMessage,
+                                        actionTitle: "Retry",
+                                        action: retryLoadRelease
+                                    )
+                                } else if tracks.isEmpty {
+                                    SearchStatusRow(
+                                        icon: "music.note.list",
+                                        title: "No tracks found",
+                                        subtitle: "This SoundCloud release does not include a playable track list."
+                                    )
+                                } else {
+                                    OnlineTrackResultsList(
+                                        results: tracks,
+                                        statusMessage: $actionStatusMessage
+                                    )
+                                }
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 20)
+                        .padding(.bottom, 64)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 20)
-                    .padding(.bottom, 64)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: geometry.size.width, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
         }
         .ignoresSafeArea(edges: .top)
         .navigationTitle(release.title)
