@@ -24,8 +24,6 @@ struct SearchView: View {
     @State private var onlineStatusMessage: String?
     @State private var searchTask: Task<Void, Never>?
     @State private var selectedCategory: SearchCategory = .tracks
-    @State private var onlinePrompt: OnlineSearchPrompt?
-    @State private var isAuthorizingSpotify: Bool = false
 
     private var selectedProvider: OnlineTrackProvider {
         guard let provider = OnlineTrackProvider(rawValue: selectedProviderRawValue),
@@ -38,10 +36,6 @@ struct SearchView: View {
 
     private var shouldShowProviderSwitcher: Bool {
         supportedOnlineProviders.count > 1
-    }
-
-    private var isSpotifyProviderAvailable: Bool {
-        OnlineMusicService.shared.isSpotifyConfigured
     }
 
     private var trimmedSearchText: String {
@@ -147,7 +141,6 @@ struct SearchView: View {
                             localResults = []
                             onlineResults = .empty
                             onlineStatusMessage = nil
-                            onlinePrompt = nil
                             isSearchingOnline = false
                         } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -380,7 +373,7 @@ struct SearchView: View {
                 ForEach(onlineArtistResults) { result in
                     OnlineSearchArtistRow(result: result) {
                         debugLog("Search online artist row tapped: \(result.name) [\(result.providerArtistID)]")
-                        router.openOnlineArtist(result)
+                        router.openOnlineArtist(result.route)
                     }
 
                     if result.id != onlineArtistResults.last?.id {
@@ -508,7 +501,6 @@ struct SearchView: View {
             localResults = []
             onlineResults = .empty
             onlineStatusMessage = nil
-            onlinePrompt = nil
             isSearchingOnline = false
             return
         }
@@ -520,7 +512,6 @@ struct SearchView: View {
         logResultCounts(for: trimmedQuery)
         onlineResults = .empty
         onlineStatusMessage = nil
-        onlinePrompt = nil
 
         guard shouldSearchOnline else {
             isSearchingOnline = false
@@ -545,7 +536,6 @@ struct SearchView: View {
                     onlineResults = fetchedResults
                     isSearchingOnline = false
                     onlineStatusMessage = nil
-                    onlinePrompt = nil
                     debugLog(
                         "Provider search end: \(provider.displayName) tracks=\(fetchedResults.tracks.count), artists=\(fetchedResults.artists.count), albums=\(fetchedResults.albums.count), playlists=\(fetchedResults.playlists.count)"
                     )
@@ -558,7 +548,6 @@ struct SearchView: View {
                           selectedProvider == provider else { return }
                     onlineResults = .empty
                     isSearchingOnline = false
-                    onlinePrompt = nil
 
                     switch onlineError {
                     case .noResults(_):
@@ -566,11 +555,6 @@ struct SearchView: View {
                         debugLog("Provider search end: \(provider.displayName) with 0 results")
                     case .timedOut(let message):
                         onlineStatusMessage = message
-                    case .authenticationRequired(let message):
-                        onlineStatusMessage = message
-                        if provider == .spotify && OnlineMusicService.shared.isSpotifyConfigured {
-                            onlinePrompt = .connectSpotify
-                        }
                     case .configurationMissing(let message):
                         onlineStatusMessage = message
                     default:
@@ -585,7 +569,6 @@ struct SearchView: View {
                           selectedProvider == provider else { return }
                     onlineResults = .empty
                     isSearchingOnline = false
-                    onlinePrompt = nil
                     onlineStatusMessage = error.localizedDescription
                 }
             }
@@ -642,44 +625,9 @@ struct SearchView: View {
         debugLog("Provider \(provider.displayName) enabled: \(isProviderAvailable(provider) ? "yes" : "no")")
         selectedProviderRawValue = provider.rawValue
         onlineStatusMessage = nil
-        onlinePrompt = nil
 
         guard !trimmedSearchText.isEmpty else { return }
         performSearch(searchText, shouldSearchOnline: true)
-    }
-
-    private func connectSpotify() {
-        guard !isAuthorizingSpotify else { return }
-
-        debugLog("Spotify connect button pressed")
-        isAuthorizingSpotify = true
-        onlineStatusMessage = nil
-
-        Task {
-            defer {
-                Task { @MainActor in
-                    isAuthorizingSpotify = false
-                }
-            }
-
-            do {
-                try await OnlineMusicService.shared.authorizeSpotify()
-                await MainActor.run {
-                    onlinePrompt = nil
-                    if !trimmedSearchText.isEmpty {
-                        performSearch(searchText, shouldSearchOnline: true)
-                    }
-                }
-            } catch {
-                debugLog("Spotify connect error: \(error.localizedDescription)")
-                await MainActor.run {
-                    onlineStatusMessage = error.localizedDescription
-                    if OnlineMusicService.shared.isSpotifyConfigured {
-                        onlinePrompt = .connectSpotify
-                    }
-                }
-            }
-        }
     }
 
     private func openExternalResult(_ url: URL?, failureMessage: String) {
@@ -701,10 +649,7 @@ struct SearchView: View {
             SearchStatusRow(
                 icon: "wifi.exclamationmark",
                 title: unavailableOnlineTitle,
-                subtitle: onlineStatusMessage,
-                actionTitle: onlinePrompt == .connectSpotify ? "Connect" : nil,
-                isActionLoading: isAuthorizingSpotify,
-                action: onlinePrompt == .connectSpotify ? connectSpotify : nil
+                subtitle: onlineStatusMessage
             )
         } else {
             SearchStatusRow(
@@ -758,7 +703,7 @@ struct SearchView: View {
         case .soundcloud:
             return supportedOnlineProviders.contains(.soundcloud)
         case .spotify:
-            return supportedOnlineProviders.contains(.spotify) && isSpotifyProviderAvailable
+            return supportedOnlineProviders.contains(.spotify)
         }
     }
 
@@ -1054,10 +999,6 @@ struct LocalPlaylistSearchResult: Identifiable {
     var id: String {
         playlist.id
     }
-}
-
-private enum OnlineSearchPrompt {
-    case connectSpotify
 }
 
 struct SearchProviderButton: View {

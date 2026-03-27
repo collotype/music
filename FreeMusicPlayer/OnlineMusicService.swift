@@ -12,7 +12,7 @@ import Foundation
 import Security
 import UIKit
 
-enum OnlineTrackProvider: String, Equatable, Hashable, CaseIterable, Identifiable {
+enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Identifiable {
     case soundcloud = "soundcloud"
     case spotify = "spotify"
 
@@ -99,6 +99,9 @@ struct OnlineTrackResult: Identifiable, Equatable {
     let artistImageURL: String?
     let webpageURL: String
     let artistWebpageURL: String?
+    let playbackCount: Int?
+    let likesCount: Int?
+    let releaseDate: Date?
     let directAudioURL: String?
     let directFileExtension: String?
     let trackAuthorization: String?
@@ -216,6 +219,16 @@ struct OnlineArtistResult: Identifiable, Equatable, Hashable {
     }
 }
 
+struct OnlineArtistProfile: Equatable {
+    let name: String
+    let imageURL: String?
+    let heroImageURL: String?
+    let followerCount: Int?
+    let trackCount: Int?
+    let isVerified: Bool
+    let webpageURL: String?
+}
+
 struct OnlineAlbumResult: Identifiable, Equatable {
     let provider: OnlineTrackProvider
     let providerAlbumID: String
@@ -223,6 +236,9 @@ struct OnlineAlbumResult: Identifiable, Equatable {
     let artist: String
     let coverArtURL: String?
     let webpageURL: String
+    let trackCount: Int?
+    let releaseDate: Date?
+    let releaseKind: String?
 
     var id: String {
         "\(provider.rawValue):album:\(providerAlbumID)"
@@ -241,6 +257,11 @@ struct OnlineAlbumResult: Identifiable, Equatable {
 
         return parsedURL
     }
+}
+
+struct OnlineReleasePageData: Equatable {
+    let release: OnlineAlbumResult
+    let tracks: [OnlineTrackResult]
 }
 
 struct OnlinePlaylistResult: Identifiable, Equatable {
@@ -359,6 +380,16 @@ final class OnlineMusicService {
         #"client_id\s*:\s*"([A-Za-z0-9]{8,})""#,
         #"client_id\s*=\s*"([A-Za-z0-9]{8,})""#,
     ]
+    private let iso8601DateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+    private let iso8601DateFormatterWithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     private init() {
         let configuration = URLSessionConfiguration.default
@@ -395,7 +426,30 @@ final class OnlineMusicService {
         _ = try await spotifyAccessToken(configuration: configuration, interactive: true)
     }
 
-    func fetchSoundCloudTracks(for artist: OnlineArtistResult) async throws -> [OnlineTrackResult] {
+    func fetchSoundCloudArtistProfile(for artist: OnlineArtistRoute) async throws -> OnlineArtistProfile {
+        guard artist.provider == .soundcloud else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "Only SoundCloud artist pages are supported in the app right now."
+            )
+        }
+
+        guard let providerArtistID = cleanedText(artist.providerArtistID) else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "The selected SoundCloud artist does not contain a valid user identifier."
+            )
+        }
+
+        let clientID = try await soundCloudClientID()
+        let profile = try await fetchSoundCloudUserProfile(
+            providerArtistID: providerArtistID,
+            clientID: clientID
+        )
+        await soundCloudRuntimeState.setClientID(clientID)
+
+        return makeOnlineArtistProfile(from: profile, fallbackRoute: artist)
+    }
+
+    func fetchSoundCloudTracks(for artist: OnlineArtistRoute) async throws -> [OnlineTrackResult] {
         guard artist.provider == .soundcloud else {
             throw OnlineMusicServiceError.unsupportedSource(
                 "Only SoundCloud artist pages are supported in the app right now."
@@ -410,23 +464,83 @@ final class OnlineMusicService {
 
         let clientID = try await soundCloudClientID()
         debugLog(
-            "Provider start: SoundCloud artist tracks for \(artist.name) [\(providerArtistID)] using client_id \(maskedClientID(clientID))"
+            "Provider start: SoundCloud artist tracks for \(artist.artistName) [\(providerArtistID)] using client_id \(maskedClientID(clientID))"
         )
 
-        let tracks = try await fetchTracksViaSoundCloudArtist(
-            providerArtistID: providerArtistID,
-            clientID: clientID
-        )
-        let finalTracks = Array(tracks.prefix(50))
+        let fetchedTracks: [OnlineTrackResult]
+        do {
+            fetchedTracks = try await fetchTracksViaSoundCloudArtist(
+                providerArtistID: providerArtistID,
+                clientID: clientID
+            )
+        } catch {
+            debugLog("SoundCloud artist tracks endpoint failed for \(providerArtistID): \(error.localizedDescription)")
+            fetchedTracks = try await fetchTracksViaSoundCloudArtistSearch(
+                artist: artist,
+                clientID: clientID
+            )
+        }
+
+        let finalTracks = Array(sortedPopularTracks(fetchedTracks).prefix(20))
         await soundCloudRuntimeState.setClientID(clientID)
 
-        debugLog("Provider finish: SoundCloud artist \(artist.name) with tracks=\(finalTracks.count)")
+        debugLog("Provider finish: SoundCloud artist \(artist.artistName) with tracks=\(finalTracks.count)")
 
         guard !finalTracks.isEmpty else {
-            throw OnlineMusicServiceError.noResults("No SoundCloud tracks were found for \"\(artist.name)\".")
+            throw OnlineMusicServiceError.noResults("No SoundCloud tracks were found for \"\(artist.artistName)\".")
         }
 
         return finalTracks
+    }
+
+    func fetchSoundCloudReleases(for artist: OnlineArtistRoute) async throws -> [OnlineAlbumResult] {
+        guard artist.provider == .soundcloud else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "Only SoundCloud artist pages are supported in the app right now."
+            )
+        }
+
+        guard let numericUserID = soundCloudNumericUserID(from: artist.providerArtistID) else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "The selected SoundCloud artist does not contain a valid numeric user identifier."
+            )
+        }
+
+        let clientID = try await soundCloudClientID()
+        async let albums = fetchSoundCloudReleases(
+            userID: numericUserID,
+            collectionPath: "albums",
+            clientID: clientID
+        )
+        async let playlists = fetchSoundCloudReleases(
+            userID: numericUserID,
+            collectionPath: "playlists_without_albums",
+            clientID: clientID
+        )
+
+        let albumResults = try await albums
+        let playlistResults = try await playlists
+        let mergedReleases = albumResults + playlistResults
+        await soundCloudRuntimeState.setClientID(clientID)
+
+        return sortReleases(mergedReleases)
+    }
+
+    func fetchSoundCloudReleaseDetail(for release: OnlineReleaseRoute) async throws -> OnlineReleasePageData {
+        guard release.provider == .soundcloud else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "Only SoundCloud releases are supported in the app right now."
+            )
+        }
+
+        let clientID = try await soundCloudClientID()
+        let playlist = try await fetchSoundCloudPlaylist(
+            releaseID: release.providerReleaseID,
+            clientID: clientID
+        )
+        await soundCloudRuntimeState.setClientID(clientID)
+
+        return makeOnlineReleasePageData(from: playlist, fallbackRoute: release)
     }
 
     func resolvePlaybackStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
@@ -635,12 +749,16 @@ final class OnlineMusicService {
         return results
     }
 
-    private func searchTracksViaSoundCloud(query: String, clientID: String) async throws -> [OnlineTrackResult] {
+    private func searchTracksViaSoundCloud(
+        query: String,
+        clientID: String,
+        limit: Int = 20
+    ) async throws -> [OnlineTrackResult] {
         var components = URLComponents(url: soundCloudSearchURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "client_id", value: clientID),
-            URLQueryItem(name: "limit", value: "20"),
+            URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "offset", value: "0")
         ]
 
@@ -660,6 +778,36 @@ final class OnlineMusicService {
         return deduplicatedTrackResults(
             response.collection.compactMap { makeOnlineTrackResult(from: $0) }
         )
+    }
+
+    private func fetchSoundCloudUserProfile(
+        providerArtistID: String,
+        clientID: String
+    ) async throws -> SoundCloudUser {
+        guard var components = URLComponents(
+            url: soundCloudAPIBaseURL
+                .appendingPathComponent("users")
+                .appendingPathComponent(providerArtistID),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud artist profile URL could not be created.")
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID)
+        ]
+
+        guard let requestURL = components.url else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud artist profile URL could not be created.")
+        }
+
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
+
+        do {
+            return try decoder.decode(SoundCloudUser.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("SoundCloud artist profile returned malformed JSON.")
+        }
     }
 
     private func fetchTracksViaSoundCloudArtist(
@@ -699,6 +847,93 @@ final class OnlineMusicService {
         return deduplicatedTrackResults(
             response.collection.compactMap { makeOnlineTrackResult(from: $0) }
         )
+    }
+
+    private func fetchTracksViaSoundCloudArtistSearch(
+        artist: OnlineArtistRoute,
+        clientID: String
+    ) async throws -> [OnlineTrackResult] {
+        let searchResults = try await searchTracksViaSoundCloud(
+            query: artist.artistName,
+            clientID: clientID,
+            limit: 50
+        )
+
+        let filteredResults = searchResults.filter { track in
+            track.providerArtistID == artist.providerArtistID
+        }
+
+        return deduplicatedTrackResults(filteredResults)
+    }
+
+    private func fetchSoundCloudReleases(
+        userID: String,
+        collectionPath: String,
+        clientID: String
+    ) async throws -> [OnlineAlbumResult] {
+        guard var components = URLComponents(
+            url: soundCloudAPIBaseURL
+                .appendingPathComponent("users")
+                .appendingPathComponent(userID)
+                .appendingPathComponent(collectionPath),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud artist releases URL could not be created.")
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "limit", value: "20"),
+            URLQueryItem(name: "offset", value: "0")
+        ]
+
+        guard let requestURL = components.url else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud artist releases URL could not be created.")
+        }
+
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
+
+        let response: SoundCloudPlaylistCollectionResponse
+        do {
+            response = try decoder.decode(SoundCloudPlaylistCollectionResponse.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("SoundCloud artist releases returned malformed JSON.")
+        }
+
+        return deduplicatedAlbumResults(
+            response.collection.compactMap { makeOnlineAlbumResult(from: $0) }
+        )
+    }
+
+    private func fetchSoundCloudPlaylist(
+        releaseID: String,
+        clientID: String
+    ) async throws -> SoundCloudPlaylist {
+        guard var components = URLComponents(
+            url: soundCloudAPIBaseURL
+                .appendingPathComponent("playlists")
+                .appendingPathComponent(releaseID),
+            resolvingAgainstBaseURL: false
+        ) else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud release detail URL could not be created.")
+        }
+
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "representation", value: "full")
+        ]
+
+        guard let requestURL = components.url else {
+            throw OnlineMusicServiceError.networkFailure("SoundCloud release detail URL could not be created.")
+        }
+
+        let data = try await fetchSoundCloudData(from: requestURL, accept: "application/json, text/plain, */*")
+
+        do {
+            return try decoder.decode(SoundCloudPlaylist.self, from: data)
+        } catch {
+            throw OnlineMusicServiceError.extractionFailure("SoundCloud release detail returned malformed JSON.")
+        }
     }
 
     private func searchViaSpotify(query: String) async throws -> OnlineSearchResults {
@@ -1218,6 +1453,21 @@ final class OnlineMusicService {
         )
     }
 
+    private func makeOnlineArtistProfile(
+        from user: SoundCloudUser,
+        fallbackRoute: OnlineArtistRoute
+    ) -> OnlineArtistProfile {
+        OnlineArtistProfile(
+            name: cleanedText(user.username) ?? fallbackRoute.artistName,
+            imageURL: normalizedArtworkURL(user.avatarURL) ?? fallbackRoute.imageURL,
+            heroImageURL: normalizedVisualURL(user.visuals?.visuals?.first?.visualURL),
+            followerCount: user.followersCount,
+            trackCount: user.trackCount,
+            isVerified: user.verified ?? false,
+            webpageURL: cleanedText(user.permalinkURL) ?? fallbackRoute.webpageURL
+        )
+    }
+
     private func makeSoundCloudArtistResults(from tracks: [OnlineTrackResult]) -> [OnlineArtistResult] {
         let groupedResults = Dictionary(grouping: tracks) { track in
             cleanedText(track.providerArtistID) ??
@@ -1272,7 +1522,10 @@ final class OnlineMusicService {
                 title: albumTitle,
                 artist: artistName,
                 coverArtURL: representativeTrack.coverArtURL,
-                webpageURL: webpageURL
+                webpageURL: webpageURL,
+                trackCount: groupedTracks.count,
+                releaseDate: representativeTrack.releaseDate,
+                releaseKind: "album"
             )
         }
         .sorted { left, right in
@@ -1317,6 +1570,9 @@ final class OnlineMusicService {
             artistImageURL: normalizedArtworkURL(track.user?.avatarURL) ?? coverArtURL,
             webpageURL: webpageURL,
             artistWebpageURL: cleanedText(track.user?.permalinkURL),
+            playbackCount: track.playbackCount,
+            likesCount: track.likesCount,
+            releaseDate: parsedISO8601Date(track.releaseDate),
             directAudioURL: nil,
             directFileExtension: nil,
             trackAuthorization: cleanedText(track.trackAuthorization),
@@ -1348,6 +1604,9 @@ final class OnlineMusicService {
             artistImageURL: nil,
             webpageURL: webpageURL,
             artistWebpageURL: cleanedText(track.artists.first?.externalURLs?.spotify),
+            playbackCount: nil,
+            likesCount: nil,
+            releaseDate: nil,
             directAudioURL: nil,
             directFileExtension: nil,
             trackAuthorization: nil,
@@ -1389,8 +1648,98 @@ final class OnlineMusicService {
             title: title,
             artist: primaryArtist,
             coverArtURL: spotifyArtworkURL(from: album.images),
-            webpageURL: webpageURL
+            webpageURL: webpageURL,
+            trackCount: nil,
+            releaseDate: nil,
+            releaseKind: "album"
         )
+    }
+
+    private func makeOnlineAlbumResult(from playlist: SoundCloudPlaylist) -> OnlineAlbumResult? {
+        guard let releaseID = playlist.id.map(String.init),
+              let title = cleanedText(playlist.title),
+              let webpageURL = cleanedText(playlist.permalinkURL) else {
+            return nil
+        }
+
+        let artistName = cleanedText(playlist.user?.username) ?? "Unknown Artist"
+        let trackCount = playlist.trackCount ?? playlist.tracks?.count
+        let releaseDate = parsedISO8601Date(playlist.releaseDate) ??
+            parsedISO8601Date(playlist.publishedAt) ??
+            parsedISO8601Date(playlist.displayDate)
+        let releaseKind = cleanedText(playlist.setType) ??
+            ((playlist.isAlbum ?? false) ? "album" : "release")
+
+        return OnlineAlbumResult(
+            provider: .soundcloud,
+            providerAlbumID: releaseID,
+            title: title,
+            artist: artistName,
+            coverArtURL: normalizedArtworkURL(playlist.artworkURL) ?? normalizedArtworkURL(playlist.user?.avatarURL),
+            webpageURL: webpageURL,
+            trackCount: trackCount,
+            releaseDate: releaseDate,
+            releaseKind: releaseKind
+        )
+    }
+
+    private func makeOnlineReleasePageData(
+        from playlist: SoundCloudPlaylist,
+        fallbackRoute: OnlineReleaseRoute
+    ) -> OnlineReleasePageData {
+        let release = makeOnlineAlbumResult(from: playlist) ?? OnlineAlbumResult(
+            provider: fallbackRoute.provider,
+            providerAlbumID: fallbackRoute.providerReleaseID,
+            title: fallbackRoute.title,
+            artist: fallbackRoute.artistName,
+            coverArtURL: fallbackRoute.imageURL,
+            webpageURL: fallbackRoute.webpageURL ?? "",
+            trackCount: playlist.trackCount ?? playlist.tracks?.count,
+            releaseDate: parsedISO8601Date(playlist.releaseDate) ??
+                parsedISO8601Date(playlist.publishedAt) ??
+                parsedISO8601Date(playlist.displayDate),
+            releaseKind: cleanedText(playlist.setType) ?? ((playlist.isAlbum ?? false) ? "album" : "release")
+        )
+
+        let tracks = deduplicatedTrackResults(
+            (playlist.tracks ?? []).compactMap { makeOnlineTrackResult(from: $0) }
+        )
+
+        return OnlineReleasePageData(
+            release: release,
+            tracks: tracks
+        )
+    }
+
+    private func sortedPopularTracks(_ tracks: [OnlineTrackResult]) -> [OnlineTrackResult] {
+        tracks.sorted { left, right in
+            let leftPlayback = left.playbackCount ?? -1
+            let rightPlayback = right.playbackCount ?? -1
+            if leftPlayback != rightPlayback {
+                return leftPlayback > rightPlayback
+            }
+
+            let leftLikes = left.likesCount ?? -1
+            let rightLikes = right.likesCount ?? -1
+            if leftLikes != rightLikes {
+                return leftLikes > rightLikes
+            }
+
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
+    }
+
+    private func sortReleases(_ releases: [OnlineAlbumResult]) -> [OnlineAlbumResult] {
+        releases.sorted { left, right in
+            let leftDate = left.releaseDate ?? .distantPast
+            let rightDate = right.releaseDate ?? .distantPast
+
+            if leftDate != rightDate {
+                return leftDate > rightDate
+            }
+
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
     }
 
     private func makeOnlinePlaylistResult(from playlist: SpotifyPlaylist) -> OnlinePlaylistResult? {
@@ -1699,12 +2048,33 @@ final class OnlineMusicService {
         return pathExtension.isEmpty ? "m4a" : pathExtension
     }
 
+    private func parsedISO8601Date(_ rawValue: String?) -> Date? {
+        guard let rawValue = cleanedText(rawValue) else { return nil }
+
+        return iso8601DateFormatterWithFractionalSeconds.date(from: rawValue) ??
+            iso8601DateFormatter.date(from: rawValue)
+    }
+
     private func normalizedArtworkURL(_ rawValue: String?) -> String? {
         guard let cleanedValue = cleanedText(rawValue) else { return nil }
 
         return cleanedValue
             .replacingOccurrences(of: "-large.", with: "-t500x500.")
             .replacingOccurrences(of: "-crop.", with: "-t500x500.")
+    }
+
+    private func normalizedVisualURL(_ rawValue: String?) -> String? {
+        cleanedText(rawValue)
+    }
+
+    private func soundCloudNumericUserID(from providerArtistID: String) -> String? {
+        let components = providerArtistID.split(separator: ":")
+        guard let lastComponent = components.last.map(String.init),
+              !lastComponent.isEmpty else {
+            return nil
+        }
+
+        return lastComponent
     }
 
     private func deduplicatedTrackResults(_ results: [OnlineTrackResult]) -> [OnlineTrackResult] {
@@ -2041,9 +2411,12 @@ private struct SoundCloudSearchTrack: Decodable {
     let artworkURL: String?
     let duration: Int?
     let fullDuration: Int?
+    let likesCount: Int?
     let media: SoundCloudMedia?
     let permalinkURL: String?
+    let playbackCount: Int?
     let publisherMetadata: SoundCloudPublisherMetadata?
+    let releaseDate: String?
     let title: String?
     let trackAuthorization: String?
     let urn: String?
@@ -2053,9 +2426,12 @@ private struct SoundCloudSearchTrack: Decodable {
         case artworkURL = "artwork_url"
         case duration
         case fullDuration = "full_duration"
+        case likesCount = "likes_count"
         case media
         case permalinkURL = "permalink_url"
+        case playbackCount = "playback_count"
         case publisherMetadata = "publisher_metadata"
+        case releaseDate = "release_date"
         case title
         case trackAuthorization = "track_authorization"
         case urn
@@ -2077,20 +2453,76 @@ private struct SoundCloudPublisherMetadata: Decodable {
 
 private struct SoundCloudUser: Decodable {
     let avatarURL: String?
+    let followersCount: Int?
+    let id: Int?
     let permalinkURL: String?
+    let trackCount: Int?
     let urn: String?
     let username: String?
+    let verified: Bool?
+    let visuals: SoundCloudVisuals?
 
     enum CodingKeys: String, CodingKey {
         case avatarURL = "avatar_url"
+        case followersCount = "followers_count"
+        case id
         case permalinkURL = "permalink_url"
+        case trackCount = "track_count"
         case urn
         case username
+        case verified
+        case visuals
+    }
+}
+
+private struct SoundCloudVisuals: Decodable {
+    let visuals: [SoundCloudVisual]?
+}
+
+private struct SoundCloudVisual: Decodable {
+    let visualURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case visualURL = "visual_url"
     }
 }
 
 private struct SoundCloudMedia: Decodable {
     let transcodings: [SoundCloudTranscoding]
+}
+
+private struct SoundCloudPlaylistCollectionResponse: Decodable {
+    let collection: [SoundCloudPlaylist]
+}
+
+private struct SoundCloudPlaylist: Decodable {
+    let artworkURL: String?
+    let displayDate: String?
+    let id: Int?
+    let isAlbum: Bool?
+    let permalinkURL: String?
+    let publishedAt: String?
+    let releaseDate: String?
+    let setType: String?
+    let title: String?
+    let trackCount: Int?
+    let tracks: [SoundCloudSearchTrack]?
+    let user: SoundCloudUser?
+
+    enum CodingKeys: String, CodingKey {
+        case artworkURL = "artwork_url"
+        case displayDate = "display_date"
+        case id
+        case isAlbum = "is_album"
+        case permalinkURL = "permalink_url"
+        case publishedAt = "published_at"
+        case releaseDate = "release_date"
+        case setType = "set_type"
+        case title
+        case trackCount = "track_count"
+        case tracks
+        case user
+    }
 }
 
 private struct SoundCloudTranscoding: Decodable {

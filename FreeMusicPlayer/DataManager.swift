@@ -15,6 +15,7 @@ final class DataManager: ObservableObject {
     @Published var tracks: [Track] = []
     @Published var playlists: [Playlist] = []
     @Published var favorites: Set<String> = []
+    @Published var favoriteArtists: [FavoriteArtist] = []
     @Published var settings: AppSettings = AppSettings()
 
     private let legacyTracksKey = "fmp_tracks"
@@ -25,6 +26,7 @@ final class DataManager: ObservableObject {
     private var tracksFileURL: URL { AppFileManager.shared.dataFileURL(named: "tracks.json") }
     private var playlistsFileURL: URL { AppFileManager.shared.dataFileURL(named: "playlists.json") }
     private var favoritesFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorites.json") }
+    private var favoriteArtistsFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorite_artists.json") }
     private var settingsFileURL: URL { AppFileManager.shared.dataFileURL(named: "settings.json") }
 
     var importFolders: [ImportedMusicFolder] {
@@ -69,6 +71,7 @@ final class DataManager: ObservableObject {
         writeJSON(persistedTracks, to: tracksFileURL)
         writeJSON(playlists, to: playlistsFileURL)
         writeJSON(favorites, to: favoritesFileURL)
+        writeJSON(favoriteArtists, to: favoriteArtistsFileURL)
         writeJSON(settings, to: settingsFileURL)
     }
 
@@ -208,6 +211,24 @@ final class DataManager: ObservableObject {
         playlists[index].isStarred.toggle()
         playlists[index].updatedAt = Date()
         debugLog("Toggle playlist favorite: \(playlists[index].name) -> \(playlists[index].isStarred)")
+        saveData()
+    }
+
+    func isFavoriteArtist(provider: OnlineTrackProvider, artistID: String) -> Bool {
+        favoriteArtists.contains { $0.provider == provider && $0.providerArtistID == artistID }
+    }
+
+    func toggleFavoriteArtist(_ artist: FavoriteArtist) {
+        debugLog("Toggle favorite artist: \(artist.artistName)")
+
+        if let index = favoriteArtists.firstIndex(where: {
+            $0.provider == artist.provider && $0.providerArtistID == artist.providerArtistID
+        }) {
+            favoriteArtists.remove(at: index)
+        } else {
+            favoriteArtists.insert(artist, at: 0)
+        }
+
         saveData()
     }
 
@@ -446,6 +467,7 @@ final class DataManager: ObservableObject {
         tracks.removeAll()
         playlists.removeAll()
         favorites.removeAll()
+        favoriteArtists.removeAll()
         settings = AppSettings()
 
         UserDefaults.standard.removeObject(forKey: legacyTracksKey)
@@ -461,9 +483,14 @@ final class DataManager: ObservableObject {
         let loadedTracks: [Track]? = readJSON(from: tracksFileURL)
         let loadedPlaylists: [Playlist]? = readJSON(from: playlistsFileURL)
         let loadedFavorites: Set<String>? = readJSON(from: favoritesFileURL)
+        let loadedFavoriteArtists: [FavoriteArtist]? = readJSON(from: favoriteArtistsFileURL)
         let loadedSettings: AppSettings? = readJSON(from: settingsFileURL)
 
-        let didLoadAnything = loadedTracks != nil || loadedPlaylists != nil || loadedFavorites != nil || loadedSettings != nil
+        let didLoadAnything = loadedTracks != nil ||
+            loadedPlaylists != nil ||
+            loadedFavorites != nil ||
+            loadedFavoriteArtists != nil ||
+            loadedSettings != nil
 
         if let loadedTracks {
             tracks = loadedTracks
@@ -475,6 +502,10 @@ final class DataManager: ObservableObject {
 
         if let loadedFavorites {
             favorites = loadedFavorites
+        }
+
+        if let loadedFavoriteArtists {
+            favoriteArtists = deduplicatedFavoriteArtists(loadedFavoriteArtists)
         }
 
         if let loadedSettings {
@@ -577,6 +608,17 @@ final class DataManager: ObservableObject {
 
         guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    private func deduplicatedFavoriteArtists(_ artists: [FavoriteArtist]) -> [FavoriteArtist] {
+        var seenIDs: Set<String> = []
+        var orderedArtists: [FavoriteArtist] = []
+
+        for artist in artists where seenIDs.insert(artist.id).inserted {
+            orderedArtists.append(artist)
+        }
+
+        return orderedArtists
     }
 
     private func importTracks(from urls: [URL], requiresSecurityScope: Bool) -> LibraryImportSummary {

@@ -44,7 +44,9 @@ struct ContentView: View {
                 case .playlist(let playlistId):
                     PlaylistView(playlistId: playlistId)
                 case .onlineArtist(let artist):
-                    OnlineArtistDetailView(artist: artist)
+                    OnlineArtistDetailView(route: artist)
+                case .onlineRelease(let release):
+                    OnlineReleaseDetailView(route: release)
                 }
             }
         }

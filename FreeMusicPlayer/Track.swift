@@ -244,6 +244,63 @@ struct ImportedMusicFolder: Identifiable, Codable, Equatable {
     }
 }
 
+struct OnlineArtistRoute: Hashable {
+    let provider: OnlineTrackProvider
+    let providerArtistID: String
+    let artistName: String
+    let imageURL: String?
+    let webpageURL: String?
+
+    var id: String {
+        "\(provider.rawValue):artist:\(providerArtistID)"
+    }
+}
+
+struct OnlineReleaseRoute: Hashable {
+    let provider: OnlineTrackProvider
+    let providerReleaseID: String
+    let title: String
+    let artistName: String
+    let imageURL: String?
+    let webpageURL: String?
+}
+
+struct FavoriteArtist: Identifiable, Codable, Hashable {
+    let provider: OnlineTrackProvider
+    let providerArtistID: String
+    let artistName: String
+    let imageURL: String?
+    let webpageURL: String?
+
+    var id: String {
+        "\(provider.rawValue):artist:\(providerArtistID)"
+    }
+}
+
+extension OnlineArtistResult {
+    var route: OnlineArtistRoute {
+        OnlineArtistRoute(
+            provider: provider,
+            providerArtistID: providerArtistID,
+            artistName: name,
+            imageURL: imageURL,
+            webpageURL: webpageURL
+        )
+    }
+}
+
+extension OnlineArtistRoute {
+    var favoriteArtist: FavoriteArtist {
+        FavoriteArtist(
+            provider: provider,
+            providerArtistID: providerArtistID,
+            artistName: artistName,
+            imageURL: imageURL,
+            webpageURL: webpageURL
+        )
+    }
+}
+
 enum Tab: String, CaseIterable, Hashable {
     case home
     case library
@@ -271,7 +328,8 @@ enum Tab: String, CaseIterable, Hashable {
 
 enum AppRoute: Hashable {
     case playlist(String)
-    case onlineArtist(OnlineArtistResult)
+    case onlineArtist(OnlineArtistRoute)
+    case onlineRelease(OnlineReleaseRoute)
 }
 
 final class AppRouter: ObservableObject {
@@ -289,9 +347,14 @@ final class AppRouter: ObservableObject {
         path.append(AppRoute.playlist(playlistId))
     }
 
-    func openOnlineArtist(_ artist: OnlineArtistResult) {
-        debugLog("Navigate to online artist: \(artist.name) [\(artist.providerArtistID)]")
+    func openOnlineArtist(_ artist: OnlineArtistRoute) {
+        debugLog("Navigate to online artist: \(artist.artistName) [\(artist.providerArtistID)]")
         path.append(AppRoute.onlineArtist(artist))
+    }
+
+    func openOnlineRelease(_ release: OnlineReleaseRoute) {
+        debugLog("Navigate to online release: \(release.title) [\(release.providerReleaseID)]")
+        path.append(AppRoute.onlineRelease(release))
     }
 
     func popToRoot() {
