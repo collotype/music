@@ -235,6 +235,23 @@ final class DataManager: ObservableObject {
         removeTrack(storedTrack)
     }
 
+    @MainActor
+    @discardableResult
+    func toggleTrackSavedState(for track: Track) async throws -> Track? {
+        debugLog("Toggle track saved state from current track context: \(track.displayTitle)")
+
+        if let storedTrack = storedLibraryTrack(for: track) {
+            removeTrack(storedTrack)
+            return nil
+        }
+
+        let resolvedResult = try await OnlineMusicService.shared.resolveTrackResult(for: track)
+        let tempURL = try await OnlineMusicService.shared.downloadAudio(for: resolvedResult)
+        let savedTrack = try await saveDownloadedOnlineTrack(resolvedResult, from: tempURL)
+        AudioPlayer.shared.syncCurrentTrackReference(with: savedTrack)
+        return savedTrack
+    }
+
     @discardableResult
     func createPlaylist(name: String) -> Playlist {
         let resolvedName = uniquePlaylistName(from: name)
@@ -829,6 +846,11 @@ final class DataManager: ObservableObject {
     }
 
     private func deleteStoredResources(for track: Track) {
+        if isCurrentPlaybackTrack(track) {
+            debugLog("Preserve stored resources for active playback track during library removal: \(track.displayTitle)")
+            return
+        }
+
         if let fileURL = track.fileURL,
            track.storageLocation == .library {
             let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
@@ -838,6 +860,23 @@ final class DataManager: ObservableObject {
         if let artworkURL = track.localArtworkURL {
             try? FileManager.default.removeItem(at: artworkURL)
         }
+    }
+
+    private func isCurrentPlaybackTrack(_ track: Track) -> Bool {
+        guard let currentTrack = AudioPlayer.shared.currentTrack else {
+            return false
+        }
+
+        if currentTrack.id == track.id {
+            return true
+        }
+
+        if let sourceID = currentTrack.sourceID,
+           sourceID == track.sourceID {
+            return true
+        }
+
+        return false
     }
 
     private func resolvedPreferredStoredImageReference(newValue: String?, existingValue: String?) -> String? {

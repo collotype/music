@@ -727,6 +727,32 @@ final class OnlineMusicService {
         return destinationURL
     }
 
+    func resolveTrackResult(for track: Track) async throws -> OnlineTrackResult {
+        guard track.source == .soundcloud else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "This track cannot be added to your library from the player."
+            )
+        }
+
+        guard let sourceID = cleanedText(track.sourceID),
+              let numericTrackID = soundCloudNumericTrackID(from: sourceID) else {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "This SoundCloud track is missing the metadata needed to add it to your library."
+            )
+        }
+
+        let clientID = try await soundCloudClientID()
+        let rawTrack = try await fetchSoundCloudTrack(trackID: numericTrackID, clientID: clientID)
+
+        guard let result = makeOnlineTrackResult(from: rawTrack) else {
+            throw OnlineMusicServiceError.extractionFailure(
+                "The SoundCloud track could not be prepared for saving."
+            )
+        }
+
+        return result
+    }
+
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
         let initialCandidates = await initialSoundCloudClientIDs()
         var attemptedClientIDs: [String] = []
@@ -2402,6 +2428,16 @@ final class OnlineMusicService {
 
     private func soundCloudNumericUserID(from providerArtistID: String) -> String? {
         let components = providerArtistID.split(separator: ":")
+        guard let lastComponent = components.last.map(String.init),
+              !lastComponent.isEmpty else {
+            return nil
+        }
+
+        return lastComponent
+    }
+
+    private func soundCloudNumericTrackID(from providerTrackID: String) -> String? {
+        let components = providerTrackID.split(separator: ":")
         guard let lastComponent = components.last.map(String.init),
               !lastComponent.isEmpty else {
             return nil

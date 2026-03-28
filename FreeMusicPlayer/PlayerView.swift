@@ -10,10 +10,13 @@ import SwiftUI
 
 struct PlayerView: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
+    @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var router: AppRouter
     @Binding var isPresented: Bool
     @State private var showLyrics: Bool = false
     @State private var showEQ: Bool = false
+    @State private var isTogglingFavorite = false
+    @State private var favoriteActionErrorMessage: String?
     
     var body: some View {
         ZStack {
@@ -41,6 +44,13 @@ struct PlayerView: View {
         }
         .sheet(isPresented: $showLyrics) {
             PlayerLyricsSheet(track: audioPlayer.currentTrack)
+        }
+        .alert("Favorites Unavailable", isPresented: favoriteActionErrorIsPresented) {
+            Button("OK", role: .cancel) {
+                favoriteActionErrorMessage = nil
+            }
+        } message: {
+            Text(favoriteActionErrorMessage ?? "This track could not be updated in your library.")
         }
     }
 
@@ -295,7 +305,25 @@ struct PlayerView: View {
             .frame(width: 50)
             
             Spacer()
-            
+
+            Button {
+                toggleFavoriteForCurrentTrack()
+            } label: {
+                if isTogglingFavorite {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: favoriteButtonSystemImage)
+                        .font(.system(size: 20))
+                        .foregroundColor(favoriteButtonTintColor)
+                }
+            }
+            .buttonStyle(.plain)
+            .frame(width: 50)
+            .disabled(!canToggleFavoriteForCurrentTrack || isTogglingFavorite)
+
+            Spacer()
+
             Button {
                 debugLog("Player lyrics button pressed")
                 showLyrics = true
@@ -341,6 +369,42 @@ struct PlayerView: View {
         audioPlayer.currentTrack?.onlineArtistRoute
     }
 
+    private var currentTrackIsSaved: Bool {
+        guard let currentTrack = audioPlayer.currentTrack else { return false }
+        return dataManager.isTrackSaved(currentTrack)
+    }
+
+    private var canToggleFavoriteForCurrentTrack: Bool {
+        guard let currentTrack = audioPlayer.currentTrack else { return false }
+
+        if dataManager.isTrackSaved(currentTrack) {
+            return true
+        }
+
+        return currentTrack.source == .soundcloud && currentTrack.sourceID != nil
+    }
+
+    private var favoriteButtonSystemImage: String {
+        guard canToggleFavoriteForCurrentTrack else { return "heart.slash" }
+        return currentTrackIsSaved ? "heart.fill" : "heart"
+    }
+
+    private var favoriteButtonTintColor: Color {
+        guard canToggleFavoriteForCurrentTrack else { return .white.opacity(0.24) }
+        return currentTrackIsSaved ? .red : .white.opacity(0.7)
+    }
+
+    private var favoriteActionErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { favoriteActionErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    favoriteActionErrorMessage = nil
+                }
+            }
+        )
+    }
+
     private func openArtistPage(_ route: OnlineArtistRoute) {
         debugLog("Player artist pressed: \(route.artistName) [\(route.providerArtistID)]")
 
@@ -351,6 +415,40 @@ struct PlayerView: View {
         Task { @MainActor in
             await Task.yield()
             router.openOnlineArtist(route)
+        }
+    }
+
+    private func toggleFavoriteForCurrentTrack() {
+        guard let currentTrack = audioPlayer.currentTrack,
+              canToggleFavoriteForCurrentTrack,
+              !isTogglingFavorite else {
+            return
+        }
+
+        isTogglingFavorite = true
+        favoriteActionErrorMessage = nil
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isTogglingFavorite = false
+                }
+            }
+
+            do {
+                let savedTrack = try await dataManager.toggleTrackSavedState(for: currentTrack)
+
+                await MainActor.run {
+                    if let savedTrack {
+                        audioPlayer.syncCurrentTrackReference(with: savedTrack)
+                    }
+                }
+            } catch {
+                debugLog("Player favorite toggle failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    favoriteActionErrorMessage = error.localizedDescription
+                }
+            }
         }
     }
 }
