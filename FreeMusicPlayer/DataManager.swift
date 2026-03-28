@@ -439,7 +439,7 @@ final class DataManager: ObservableObject {
         }
 
         if let sourceID = track.sourceID,
-           let storedTrack = track(withSourceID: sourceID) {
+           let storedTrack = self.track(withSourceID: sourceID) {
             return storedTrack
         }
 

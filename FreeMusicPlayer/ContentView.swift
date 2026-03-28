@@ -49,7 +49,6 @@ struct ContentView: View {
                 PlayerView(isPresented: $showPlayer)
                     .transition(.move(edge: .bottom))
                     .zIndex(1)
-                }
             }
         }
         .accentColor(.red)
