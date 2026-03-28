@@ -1780,7 +1780,7 @@ struct TrackCollectionView: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
 
     private var canAddCollectionToPlaylist: Bool {
-        contextName.hasPrefix("album:") && !tracks.isEmpty
+        (contextName.hasPrefix("album:") || contextName.hasPrefix("search:album:")) && !tracks.isEmpty
     }
 
     var body: some View {
@@ -1846,6 +1846,7 @@ struct TrackCollectionView: View {
                             .foregroundColor(.white)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Add album to playlist")
                 }
             }
         }

@@ -569,6 +569,25 @@ struct OnlineReleaseDetailView: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            if !tracks.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        OnlineTrackGroupPlaylistPickerView(
+                            collectionTitle: release.title,
+                            results: tracks
+                        )
+                    } label: {
+                        Image(systemName: "text.badge.plus")
+                            .foregroundColor(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canAddReleaseToPlaylist)
+                    .opacity(canAddReleaseToPlaylist ? 1 : 0.45)
+                    .accessibilityLabel("Add album to playlist")
+                }
+            }
+        }
         .task(id: route.providerReleaseID) {
             await loadRelease()
         }
@@ -660,6 +679,12 @@ struct OnlineReleaseDetailView: View {
 
     private var releasePlaybackContextName: String {
         "online:release:\(route.providerReleaseID)"
+    }
+
+    private var canAddReleaseToPlaylist: Bool {
+        !tracks.isEmpty && tracks.allSatisfy { result in
+            dataManager.isTrackSaved(sourceID: result.id) || result.supportsOfflineDownload
+        }
     }
 
     private var releaseMetadataChips: [String] {
@@ -932,6 +957,160 @@ struct OnlineArtistTrackListView: View {
         }
         .navigationTitle("Popular Tracks")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct OnlineTrackGroupPlaylistPickerView: View {
+    let collectionTitle: String
+    let results: [OnlineTrackResult]
+
+    @EnvironmentObject private var dataManager: DataManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showingCreatePlaylistPrompt = false
+    @State private var newPlaylistName = ""
+    @State private var isAddingTracks = false
+    @State private var addErrorMessage: String?
+
+    private var savedTrackIDs: Set<String> {
+        Set(
+            results.compactMap { result in
+                dataManager.track(withSourceID: result.id)?.id
+            }
+        )
+    }
+
+    var body: some View {
+        List {
+            if let addErrorMessage {
+                Section {
+                    SearchStatusRow(
+                        icon: "exclamationmark.circle",
+                        title: "Couldn't add album",
+                        subtitle: addErrorMessage
+                    )
+                }
+            } else if isAddingTracks {
+                Section {
+                    SearchStatusRow(
+                        icon: "arrow.triangle.2.circlepath",
+                        title: "Adding album",
+                        subtitle: "Saving album tracks and inserting them into the selected playlist."
+                    )
+                }
+            }
+
+            if dataManager.sortedPlaylists.isEmpty {
+                Section {
+                    Text("No playlists yet")
+                        .foregroundColor(.secondary)
+                }
+            } else {
+                Section("Playlists") {
+                    ForEach(dataManager.sortedPlaylists) { playlist in
+                        Button {
+                            addAlbum(toPlaylistID: playlist.id)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(playlist.displayName)
+                                        .foregroundColor(.white)
+                                    Text("\(playlist.trackCount) tracks")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white.opacity(0.45))
+                                }
+
+                                Spacer()
+
+                                if !savedTrackIDs.isEmpty && savedTrackIDs.isSubset(of: Set(playlist.trackIDs)) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.green)
+                                }
+                            }
+                        }
+                        .disabled(isAddingTracks)
+                    }
+                }
+            }
+
+            Section {
+                Button {
+                    newPlaylistName = collectionTitle
+                    showingCreatePlaylistPrompt = true
+                } label: {
+                    TrackActionRowLabel(title: "New Playlist", systemImage: "plus.circle")
+                }
+                .disabled(isAddingTracks)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.black)
+        .navigationTitle("Add Album to Playlist")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("New Playlist", isPresented: $showingCreatePlaylistPrompt) {
+            TextField("Playlist name", text: $newPlaylistName)
+            Button("Cancel", role: .cancel) {
+                newPlaylistName = ""
+            }
+            Button("Create") {
+                let playlist = dataManager.createPlaylist(name: newPlaylistName)
+                newPlaylistName = ""
+                addAlbum(toPlaylistID: playlist.id)
+            }
+        } message: {
+            Text("Create a playlist and add every album track in order.")
+        }
+    }
+
+    private func addAlbum(toPlaylistID playlistID: String) {
+        guard !isAddingTracks else { return }
+
+        isAddingTracks = true
+        addErrorMessage = nil
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isAddingTracks = false
+                }
+            }
+
+            do {
+                let savedTracks = try await saveAlbumTracks()
+
+                await MainActor.run {
+                    dataManager.addTracks(savedTracks, toPlaylistID: playlistID)
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    addErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func saveAlbumTracks() async throws -> [Track] {
+        var savedTracks: [Track] = []
+        savedTracks.reserveCapacity(results.count)
+
+        for result in results {
+            if let existingTrack = await MainActor.run(body: {
+                dataManager.track(withSourceID: result.id)
+            }) {
+                savedTracks.append(existingTrack)
+                continue
+            }
+
+            let savedTrack = try await OnlineTrackActionHelper.save(
+                result: result,
+                dataManager: dataManager
+            )
+            savedTracks.append(savedTrack)
+        }
+
+        return savedTracks
     }
 }
 
