@@ -738,7 +738,7 @@ struct LibraryTrackRow: View {
     }
 
     var isFavorite: Bool {
-        dataManager.favorites.contains(track.id)
+        dataManager.isTrackSaved(track)
     }
 
     var body: some View {
@@ -767,14 +767,8 @@ struct LibraryTrackRow: View {
                         .fill(Color.white.opacity(0.05))
                 )
 
-            Button {
-                debugLog("Library favorite button pressed: \(track.displayTitle)")
-                dataManager.toggleFavorite(track)
-            } label: {
-                Image(systemName: isFavorite ? "heart.fill" : "heart")
-                    .foregroundColor(isFavorite ? .red : .white.opacity(0.5))
-            }
-            .buttonStyle(.plain)
+            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                .foregroundColor(isFavorite ? .red : .white.opacity(0.5))
 
             AddToPlaylistMenu(track: track)
         }
@@ -1299,17 +1293,7 @@ struct TrackActionSheet: View {
     private let popupCornerRadius: CGFloat = 20
 
     private var effectiveFavoriteTrack: Track? {
-        if dataManager.tracks.contains(where: { $0.id == track.id }) {
-            return track
-        }
-
-        guard let sourceID = track.sourceID else { return nil }
-        return dataManager.track(withSourceID: sourceID)
-    }
-
-    private var isFavorite: Bool {
-        guard let effectiveFavoriteTrack else { return false }
-        return dataManager.favorites.contains(effectiveFavoriteTrack.id)
+        dataManager.storedLibraryTrack(for: track)
     }
 
     private var trimmedAlbum: String? {
@@ -1372,15 +1356,16 @@ struct TrackActionSheet: View {
                         if let effectiveFavoriteTrack {
                             CompactTrackActionDivider()
 
-                            Button {
-                                debugLog("Track context action selected: favorite toggle for \(track.displayTitle)")
-                                dataManager.toggleFavorite(effectiveFavoriteTrack)
+                            Button(role: .destructive) {
+                                debugLog("Track context action selected: remove from library for \(track.displayTitle)")
+                                dataManager.removeTrack(effectiveFavoriteTrack)
                                 dismiss()
                             } label: {
                                 CompactTrackActionRow {
                                     TrackActionRowLabel(
-                                        title: isFavorite ? "Unlike" : "Like",
-                                        systemImage: isFavorite ? "heart.slash" : "heart"
+                                        title: "Remove from Library",
+                                        systemImage: "trash",
+                                        tint: .red
                                     )
                                 }
                             }

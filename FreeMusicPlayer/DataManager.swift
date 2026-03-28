@@ -75,10 +75,12 @@ final class DataManager: ObservableObject {
         }
 
         refreshStoredLocalMetadataIfNeeded()
+        synchronizeUnifiedTrackLibraryState()
         saveData()
     }
 
     func saveData() {
+        synchronizeUnifiedTrackLibraryState()
         let persistedTracks = tracks.filter { $0.storageLocation != .temp }
         writeJSON(persistedTracks, to: tracksFileURL)
         writeJSON(playlists, to: playlistsFileURL)
@@ -131,14 +133,14 @@ final class DataManager: ObservableObject {
                 existingValue: tracks[existingIndex].lyricsURL
             )
             updatedTrack.lyricsLastUpdated = track.lyricsLastUpdated ?? tracks[existingIndex].lyricsLastUpdated
-            updatedTrack.isFavorite = favorites.contains(updatedTrack.id)
+            updatedTrack.isFavorite = updatedTrack.storageLocation == .library
             tracks[existingIndex] = updatedTrack
             saveData()
             return updatedTrack
         }
 
         var insertedTrack = track
-        insertedTrack.isFavorite = favorites.contains(insertedTrack.id)
+        insertedTrack.isFavorite = insertedTrack.storageLocation == .library
         tracks.insert(insertedTrack, at: 0)
         saveData()
         return insertedTrack
@@ -223,35 +225,14 @@ final class DataManager: ObservableObject {
     }
 
     func toggleFavorite(_ track: Track) {
-        debugLog("Toggle favorite: \(track.displayTitle)")
+        debugLog("Toggle library membership: \(track.displayTitle)")
 
-        guard let trackIndex = tracks.firstIndex(where: { $0.id == track.id })
-            ?? tracks.firstIndex(where: { $0.sourceID != nil && $0.sourceID == track.sourceID }) else {
-            debugLog("Favorite toggle ignored because the track is not stored locally")
+        guard let storedTrack = storedLibraryTrack(for: track) else {
+            debugLog("Library membership toggle ignored because the track is not stored locally")
             return
         }
 
-        let trackID = tracks[trackIndex].id
-
-        if favorites.contains(trackID) {
-            favorites.remove(trackID)
-        } else {
-            favorites.insert(trackID)
-        }
-
-        tracks[trackIndex].isFavorite = favorites.contains(trackID)
-
-        saveData()
-
-        if favorites.contains(trackID) {
-            let storedTrack = tracks[trackIndex]
-            scheduleOfflineVisualPersistenceIfNeeded(
-                forTrackID: storedTrack.id,
-                preferredCoverReference: storedTrack.remoteCoverArtURL ?? storedTrack.coverArtURL,
-                preferredArtistReference: storedTrack.remoteArtistImageURL ?? storedTrack.artistImageURL
-            )
-            scheduleLyricsPersistenceIfNeeded(for: storedTrack)
-        }
+        removeTrack(storedTrack)
     }
 
     @discardableResult
@@ -450,6 +431,34 @@ final class DataManager: ObservableObject {
 
     func track(withSourceID sourceID: String) -> Track? {
         tracks.first { $0.sourceID == sourceID && $0.storageLocation == .library }
+    }
+
+    func storedLibraryTrack(for track: Track) -> Track? {
+        if let storedTrack = tracks.first(where: { $0.id == track.id && $0.storageLocation == .library }) {
+            return storedTrack
+        }
+
+        if let sourceID = track.sourceID,
+           let storedTrack = track(withSourceID: sourceID) {
+            return storedTrack
+        }
+
+        if let importOriginID = track.importOriginID,
+           let storedTrack = tracks.first(where: {
+               $0.importOriginID == importOriginID && $0.storageLocation == .library
+           }) {
+            return storedTrack
+        }
+
+        return nil
+    }
+
+    func isTrackSaved(_ track: Track) -> Bool {
+        storedLibraryTrack(for: track) != nil
+    }
+
+    func isTrackSaved(sourceID: String) -> Bool {
+        track(withSourceID: sourceID) != nil
     }
 
     func makeTemporaryTrack(from result: OnlineTrackResult, tempFileURL: URL) -> Track {
@@ -681,7 +690,7 @@ final class DataManager: ObservableObject {
     }
 
     var favoriteTracks: [Track] {
-        tracks.filter { favorites.contains($0.id) }
+        tracks.filter { $0.storageLocation == .library }
     }
 
     var favoritePlaylists: [Playlist] {
@@ -916,7 +925,7 @@ final class DataManager: ObservableObject {
 
     private func scheduleLyricsPersistenceIfNeeded(for track: Track) {
         guard cleanedImageReference(track.lyricsText) == nil else { return }
-        guard track.storageLocation == .library || favorites.contains(track.id) else { return }
+        guard track.storageLocation == .library || isTrackSaved(track) else { return }
 
         Task { [weak self] in
             guard let self else { return }
@@ -1151,6 +1160,25 @@ final class DataManager: ObservableObject {
         }
 
         return orderedArtists
+    }
+
+    private func synchronizeUnifiedTrackLibraryState() {
+        let libraryTrackIDs = Set(
+            tracks
+                .filter { $0.storageLocation == .library }
+                .map(\.id)
+        )
+
+        if favorites != libraryTrackIDs {
+            favorites = libraryTrackIDs
+        }
+
+        for index in tracks.indices {
+            let isSavedToLibrary = tracks[index].storageLocation == .library && libraryTrackIDs.contains(tracks[index].id)
+            if tracks[index].isFavorite != isSavedToLibrary {
+                tracks[index].isFavorite = isSavedToLibrary
+            }
+        }
     }
 
     private func importTracks(from urls: [URL], requiresSecurityScope: Bool) -> LibraryImportSummary {

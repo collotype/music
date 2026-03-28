@@ -79,17 +79,9 @@ struct MiniPlayer: View {
 
             Spacer(minLength: 12)
 
-            Button {
-                debugLog("Mini player favorite button pressed")
-                if let track = audioPlayer.currentTrack {
-                    dataManager.toggleFavorite(track)
-                }
-            } label: {
-                Image(systemName: getHeartIcon())
-                    .foregroundColor(getHeartColor())
-                    .font(.system(size: 20))
-            }
-            .buttonStyle(.plain)
+            Image(systemName: getHeartIcon())
+                .foregroundColor(getHeartColor())
+                .font(.system(size: 20))
             .padding(.trailing, 8)
 
             Button {
@@ -144,34 +136,14 @@ struct MiniPlayer: View {
     
     func getHeartIcon() -> String {
         guard let track = audioPlayer.currentTrack else { return "heart" }
-        
-        if dataManager.favorites.contains(track.id) {
-            return "heart.fill"
-        }
-        
-        if let sourceID = track.sourceID,
-           let storedTrack = dataManager.track(withSourceID: sourceID),
-           dataManager.favorites.contains(storedTrack.id) {
-            return "heart.fill"
-        }
-        
-        return "heart"
+
+        return dataManager.isTrackSaved(track) ? "heart.fill" : "heart"
     }
     
     func getHeartColor() -> Color {
         guard let track = audioPlayer.currentTrack else { return .white.opacity(0.5) }
-        
-        if dataManager.favorites.contains(track.id) {
-            return .red
-        }
-        
-        if let sourceID = track.sourceID,
-           let storedTrack = dataManager.track(withSourceID: sourceID),
-           dataManager.favorites.contains(storedTrack.id) {
-            return .red
-        }
-        
-        return .white.opacity(0.5)
+
+        return dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5)
     }
 }
 

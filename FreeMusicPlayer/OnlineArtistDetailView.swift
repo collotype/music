@@ -773,7 +773,7 @@ struct OnlineTrackResultsList: View {
                 result: result,
                 isPerformingPrimaryAction: performingPrimaryActionIDs.contains(result.id),
                 isSaving: savingIDs.contains(result.id),
-                isSaved: dataManager.track(withSourceID: result.id) != nil,
+                isSaved: dataManager.isTrackSaved(sourceID: result.id),
                 primaryAction: { handlePrimaryAction(for: result) },
                 saveAction: result.supportsOfflineDownload ? { saveOnlineResult(result) } : nil
             )
@@ -833,15 +833,12 @@ struct OnlineTrackResultsList: View {
         }
 
         if let savedTrack = dataManager.track(withSourceID: result.id) {
-            debugLog("Saved online result tapped again: \(result.title) [\(result.providerTrackID)]")
-            let didStartPlayback = audioPlayer.playTrack(savedTrack)
-            if !didStartPlayback {
-                statusMessage = audioPlayer.playbackErrorMessage ?? "Playback failed for the saved track."
-            }
+            debugLog("Saved online result already in library: \(result.title) [\(result.providerTrackID)]")
+            audioPlayer.syncCurrentTrackReference(with: savedTrack)
             return
         }
 
-        debugLog("Online result save pressed: \(result.title) [\(result.providerTrackID)]")
+        debugLog("Online result add-to-library pressed: \(result.title) [\(result.providerTrackID)]")
         savingIDs.insert(result.id)
         statusMessage = nil
 

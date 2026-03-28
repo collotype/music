@@ -12,7 +12,6 @@ struct SearchView: View {
     private let onlineSearchTimeoutNanoseconds: UInt64 = 15_000_000_000
     private let supportedOnlineProviders: [OnlineTrackProvider] = [.soundcloud]
 
-    @Environment(\.openURL) private var openURL
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var router: AppRouter
@@ -482,7 +481,7 @@ struct SearchView: View {
             } else if !onlinePlaylistResults.isEmpty {
                 ForEach(onlinePlaylistResults) { result in
                     OnlineSearchPlaylistRow(result: result) {
-                        openExternalResult(result.externalURL, failureMessage: "Couldn't open that playlist result.")
+                        onlineStatusMessage = "Online playlist pages are not supported in-app yet."
                     }
 
                     if result.id != onlinePlaylistResults.last?.id {
@@ -631,19 +630,6 @@ struct SearchView: View {
 
         guard !trimmedSearchText.isEmpty else { return }
         performSearch(searchText, shouldSearchOnline: true)
-    }
-
-    private func openExternalResult(_ url: URL?, failureMessage: String) {
-        guard let url else {
-            onlineStatusMessage = failureMessage
-            return
-        }
-
-        openURL(url) { didOpen in
-            if !didOpen {
-                onlineStatusMessage = failureMessage
-            }
-        }
     }
 
     @ViewBuilder
@@ -1515,15 +1501,17 @@ struct OnlineSearchTrackRow: View {
                             .tint(.white)
                             .frame(width: 20, height: 20)
                     } else {
-                        Image(systemName: isSaved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                        Image(systemName: isSaved ? "heart.fill" : "heart")
                             .font(.system(size: 20))
-                            .foregroundColor(isSaved ? .green : .white.opacity(0.7))
+                            .foregroundColor(isSaved ? .red : .white.opacity(0.78))
                     }
                 }
                 .buttonStyle(.plain)
                 .frame(width: 28)
             } else {
-                Color.clear
+                Image(systemName: isSaved ? "heart.fill" : "heart.slash")
+                    .font(.system(size: 20))
+                    .foregroundColor(isSaved ? .red : .white.opacity(0.24))
                     .frame(width: 28, height: 28)
             }
 

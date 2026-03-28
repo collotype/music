@@ -391,14 +391,8 @@ struct PlaylistTrackRow: View {
 
             Spacer()
 
-            Button {
-                debugLog("Playlist favorite button pressed: \(track.displayTitle)")
-                dataManager.toggleFavorite(track)
-            } label: {
-                Image(systemName: dataManager.favorites.contains(track.id) ? "heart.fill" : "heart")
-                    .foregroundColor(dataManager.favorites.contains(track.id) ? .red : .white.opacity(0.5))
-            }
-            .buttonStyle(.plain)
+            Image(systemName: dataManager.isTrackSaved(track) ? "heart.fill" : "heart")
+                .foregroundColor(dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 10)

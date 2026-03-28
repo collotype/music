@@ -179,9 +179,9 @@ struct OnlineTrackResult: Identifiable, Equatable, Sendable {
     var offlineDownloadUnavailableMessage: String {
         switch provider {
         case .soundcloud:
-            return "Offline saving is not available for this SoundCloud track."
+            return "This SoundCloud track cannot be added to your library right now."
         case .spotify:
-            return "Spotify tracks cannot be downloaded or saved into the local library from this app."
+            return "Spotify tracks cannot be added to your library from this app."
         }
     }
 
