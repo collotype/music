@@ -49,6 +49,12 @@ final class AudioPlayer: ObservableObject {
         case one
     }
 
+    enum PlaybackMode: String, Sendable {
+        case ordered
+        case shuffled
+        case repeatOne
+    }
+
     private struct PlaybackContext {
         enum Kind: String {
             case playlist
@@ -86,6 +92,18 @@ final class AudioPlayer: ObservableObject {
 
     private var tracks: [Track] {
         DataManager.shared.tracks
+    }
+
+    var playbackMode: PlaybackMode {
+        if repeatMode == .one {
+            return .repeatOne
+        }
+
+        if isShuffle {
+            return .shuffled
+        }
+
+        return .ordered
     }
 
     init() {
@@ -736,8 +754,38 @@ final class AudioPlayer: ObservableObject {
         setPlaybackSpeed(availableSpeeds[nextIndex])
     }
 
+    func setPlaybackMode(_ mode: PlaybackMode) {
+        switch mode {
+        case .ordered:
+            isShuffle = false
+            repeatMode = .off
+        case .shuffled:
+            isShuffle = true
+            repeatMode = .off
+        case .repeatOne:
+            isShuffle = false
+            repeatMode = .one
+        }
+
+        debugLog("Playback mode set to: \(mode.rawValue)")
+    }
+
+    func cyclePlaybackMode() {
+        switch playbackMode {
+        case .ordered:
+            setPlaybackMode(.shuffled)
+        case .shuffled:
+            setPlaybackMode(.repeatOne)
+        case .repeatOne:
+            setPlaybackMode(.ordered)
+        }
+    }
+
     func toggleShuffle() {
         isShuffle.toggle()
+        if isShuffle {
+            repeatMode = .off
+        }
         debugLog("Shuffle set to: \(isShuffle)")
     }
 
@@ -747,6 +795,7 @@ final class AudioPlayer: ObservableObject {
             repeatMode = .all
         case .all:
             repeatMode = .one
+            isShuffle = false
         case .one:
             repeatMode = .off
         }

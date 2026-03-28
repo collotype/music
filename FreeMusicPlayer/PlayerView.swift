@@ -13,7 +13,6 @@ struct PlayerView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var router: AppRouter
     @Binding var isPresented: Bool
-    @State private var showLyrics: Bool = false
     @State private var showEQ: Bool = false
     @State private var isTogglingFavorite = false
     @State private var favoriteActionErrorMessage: String?
@@ -41,9 +40,6 @@ struct PlayerView: View {
                 title: "Equalizer",
                 description: "The button is wired up and ready for a real EQ screen."
             )
-        }
-        .sheet(isPresented: $showLyrics) {
-            PlayerLyricsSheet(track: audioPlayer.currentTrack)
         }
         .alert("Favorites Unavailable", isPresented: favoriteActionErrorIsPresented) {
             Button("OK", role: .cancel) {
@@ -198,10 +194,9 @@ struct PlayerView: View {
         VStack(spacing: 24) {
             progressSection
             primaryControls
-            secondaryControls
             Spacer(minLength: 20)
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 18)
         .padding(.bottom, 40)
     }
     
@@ -249,179 +244,16 @@ struct PlayerView: View {
     }
 
     var primaryControls: some View {
-        HStack(spacing: 28) {
-            Button {
-                debugLog("Player previous button pressed")
-                audioPlayer.playPrevious()
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.08))
-                        .frame(width: 58, height: 58)
-
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                }
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                debugLog("Player play/pause button pressed")
-                audioPlayer.togglePlayPause()
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 86, height: 86)
-
-                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.black)
-                        .offset(x: audioPlayer.isPlaying ? 0 : 2)
-                }
-                .shadow(color: .black.opacity(0.24), radius: 14, y: 6)
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                debugLog("Player next button pressed")
-                audioPlayer.playNext()
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.08))
-                        .frame(width: 58, height: 58)
-
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                }
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    var secondaryControls: some View {
-        LazyVGrid(
-            columns: [
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12),
-                GridItem(.flexible(), spacing: 12)
-            ],
-            alignment: .center,
-            spacing: 12
-        ) {
-            secondaryControlTile(title: "Shuffle", isActive: audioPlayer.isShuffle) {
-                debugLog("Player shuffle button pressed")
-                audioPlayer.toggleShuffle()
-            } content: {
-                Image(systemName: "shuffle")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(audioPlayer.isShuffle ? .red : .white.opacity(0.72))
-            }
-
-            secondaryControlTile(title: "Repeat", isActive: audioPlayer.repeatMode != .off) {
-                debugLog("Player repeat button pressed")
-                audioPlayer.toggleRepeat()
-            } content: {
-                Image(systemName: repeatIcon)
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(audioPlayer.repeatMode != .off ? .red : .white.opacity(0.72))
-            }
-
-            secondaryControlTile(title: "Speed", isActive: audioPlayer.playbackSpeed != 1.0) {
-                debugLog("Player speed button pressed")
-                audioPlayer.cyclePlaybackSpeed()
-            } content: {
-                Text(String(format: "%.2gx", audioPlayer.playbackSpeed))
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(.white.opacity(0.84))
-            }
-
-            secondaryControlTile(title: "Lyrics", isActive: showLyrics) {
-                debugLog("Player lyrics button pressed")
-                showLyrics = true
-            } content: {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(showLyrics ? .red : .white.opacity(0.72))
-            }
-
-            secondaryControlTile(
-                title: "Favorite",
-                isActive: currentTrackIsSaved,
-                isDisabled: !canToggleFavoriteForCurrentTrack || isTogglingFavorite
-            ) {
-                toggleFavoriteForCurrentTrack()
-            } content: {
-                Group {
-                    if isTogglingFavorite {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: favoriteButtonSystemImage)
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundColor(favoriteButtonTintColor)
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 24)
-                .fill(Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(Color.white.opacity(0.10), lineWidth: 1)
-        )
-    }
-
-    private func secondaryControlTile<Content: View>(
-        title: String,
-        isActive: Bool,
-        isDisabled: Bool = false,
-        action: @escaping () -> Void,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                content()
-                    .frame(height: 22)
-
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white.opacity(isDisabled ? 0.34 : 0.58))
-            }
-            .frame(maxWidth: .infinity, minHeight: 74)
-            .background(
-                RoundedRectangle(cornerRadius: 18)
-                    .fill(
-                        isActive
-                            ? Color.red.opacity(0.14)
-                            : Color.white.opacity(0.04)
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(
-                        isActive
-                            ? Color.red.opacity(0.24)
-                            : Color.white.opacity(0.08),
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(isDisabled)
-    }
-    
-    var repeatIcon: String {
-        switch audioPlayer.repeatMode {
-        case .off: return "repeat"
-        case .all: return "repeat"
-        case .one: return "repeat.1"
+        HStack(spacing: 0) {
+            playbackModeButton
+            Spacer(minLength: 6)
+            previousButton
+            Spacer(minLength: 6)
+            playPauseButton
+            Spacer(minLength: 6)
+            nextButton
+            Spacer(minLength: 6)
+            favoriteButton
         }
     }
     
@@ -461,6 +293,40 @@ struct PlayerView: View {
         return currentTrackIsSaved ? .red : .white.opacity(0.7)
     }
 
+    private var favoriteButtonBackgroundColor: Color {
+        guard canToggleFavoriteForCurrentTrack else { return Color.white.opacity(0.05) }
+        return currentTrackIsSaved ? Color.red.opacity(0.14) : Color.white.opacity(0.08)
+    }
+
+    private var playbackModeIcon: String {
+        switch audioPlayer.playbackMode {
+        case .ordered:
+            return "list.number"
+        case .shuffled:
+            return "shuffle"
+        case .repeatOne:
+            return "repeat.1"
+        }
+    }
+
+    private var playbackModeTintColor: Color {
+        switch audioPlayer.playbackMode {
+        case .ordered:
+            return .white.opacity(0.78)
+        case .shuffled, .repeatOne:
+            return .red
+        }
+    }
+
+    private var playbackModeBackgroundColor: Color {
+        switch audioPlayer.playbackMode {
+        case .ordered:
+            return Color.white.opacity(0.08)
+        case .shuffled, .repeatOne:
+            return Color.red.opacity(0.14)
+        }
+    }
+
     private var favoriteActionErrorIsPresented: Binding<Bool> {
         Binding(
             get: { favoriteActionErrorMessage != nil },
@@ -470,6 +336,105 @@ struct PlayerView: View {
                 }
             }
         )
+    }
+
+    private var playbackModeButton: some View {
+        Button {
+            debugLog("Player playback mode button pressed")
+            audioPlayer.cyclePlaybackMode()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(playbackModeBackgroundColor)
+                    .frame(width: 40, height: 40)
+
+                Image(systemName: playbackModeIcon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(playbackModeTintColor)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var previousButton: some View {
+        Button {
+            debugLog("Player previous button pressed")
+            audioPlayer.playPrevious()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 46, height: 46)
+
+                Image(systemName: "backward.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var playPauseButton: some View {
+        Button {
+            debugLog("Player play/pause button pressed")
+            audioPlayer.togglePlayPause()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 74, height: 74)
+
+                Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.black)
+                    .offset(x: audioPlayer.isPlaying ? 0 : 2)
+            }
+            .shadow(color: .black.opacity(0.24), radius: 14, y: 6)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var nextButton: some View {
+        Button {
+            debugLog("Player next button pressed")
+            audioPlayer.playNext()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 46, height: 46)
+
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var favoriteButton: some View {
+        Button {
+            toggleFavoriteForCurrentTrack()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(favoriteButtonBackgroundColor)
+                    .frame(width: 40, height: 40)
+
+                Group {
+                    if isTogglingFavorite {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: favoriteButtonSystemImage)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(favoriteButtonTintColor)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!canToggleFavoriteForCurrentTrack || isTogglingFavorite)
     }
 
     private func openArtistPage(_ route: OnlineArtistRoute) {
