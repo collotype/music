@@ -159,6 +159,10 @@ final class DataManager: ObservableObject {
                 newValue: track.lyricsText,
                 existingValue: tracks[existingIndex].lyricsText
             )
+            updatedTrack.lyricsSyncedText = resolvedPreferredTextValue(
+                newValue: track.lyricsSyncedText,
+                existingValue: tracks[existingIndex].lyricsSyncedText
+            )
             updatedTrack.lyricsSource = resolvedPreferredTextValue(
                 newValue: track.lyricsSource,
                 existingValue: tracks[existingIndex].lyricsSource
@@ -717,6 +721,11 @@ final class DataManager: ObservableObject {
 
         if updatedTrack.lyricsText != lyrics.text {
             updatedTrack.lyricsText = lyrics.text
+            didUpdateTrack = true
+        }
+
+        if updatedTrack.lyricsSyncedText != lyrics.syncedText {
+            updatedTrack.lyricsSyncedText = lyrics.syncedText
             didUpdateTrack = true
         }
 

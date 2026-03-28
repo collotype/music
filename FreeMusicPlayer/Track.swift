@@ -39,6 +39,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     var providerArtistID: String?
     var artistWebpageURL: String?
     var lyricsText: String?
+    var lyricsSyncedText: String?
     var lyricsSource: String?
     var lyricsLastUpdated: Date?
     var lyricsURL: String?
@@ -78,6 +79,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         providerArtistID: String? = nil,
         artistWebpageURL: String? = nil,
         lyricsText: String? = nil,
+        lyricsSyncedText: String? = nil,
         lyricsSource: String? = nil,
         lyricsLastUpdated: Date? = nil,
         lyricsURL: String? = nil
@@ -98,6 +100,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         self.providerArtistID = providerArtistID
         self.artistWebpageURL = artistWebpageURL
         self.lyricsText = lyricsText
+        self.lyricsSyncedText = lyricsSyncedText
         self.lyricsSource = lyricsSource
         self.lyricsLastUpdated = lyricsLastUpdated
         self.lyricsURL = lyricsURL
@@ -129,6 +132,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         case providerArtistID
         case artistWebpageURL
         case lyricsText
+        case lyricsSyncedText
         case lyricsSource
         case lyricsLastUpdated
         case lyricsURL
@@ -162,6 +166,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         providerArtistID = try container.decodeIfPresent(String.self, forKey: .providerArtistID)
         artistWebpageURL = try container.decodeIfPresent(String.self, forKey: .artistWebpageURL)
         lyricsText = try container.decodeIfPresent(String.self, forKey: .lyricsText)
+        lyricsSyncedText = try container.decodeIfPresent(String.self, forKey: .lyricsSyncedText)
         lyricsSource = try container.decodeIfPresent(String.self, forKey: .lyricsSource)
         lyricsLastUpdated = try container.decodeIfPresent(Date.self, forKey: .lyricsLastUpdated)
         lyricsURL = try container.decodeIfPresent(String.self, forKey: .lyricsURL)
@@ -194,6 +199,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         try container.encodeIfPresent(providerArtistID, forKey: .providerArtistID)
         try container.encodeIfPresent(artistWebpageURL, forKey: .artistWebpageURL)
         try container.encodeIfPresent(lyricsText, forKey: .lyricsText)
+        try container.encodeIfPresent(lyricsSyncedText, forKey: .lyricsSyncedText)
         try container.encodeIfPresent(lyricsSource, forKey: .lyricsSource)
         try container.encodeIfPresent(lyricsLastUpdated, forKey: .lyricsLastUpdated)
         try container.encodeIfPresent(lyricsURL, forKey: .lyricsURL)
@@ -528,6 +534,14 @@ enum Tab: String, CaseIterable, Hashable {
     case library
     case search
     case settings
+
+    static var allCases: [Tab] {
+        [
+            .home,
+            .library,
+            .search
+        ]
+    }
 
     var icon: String {
         switch self {

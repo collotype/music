@@ -123,6 +123,23 @@ struct MiniPlayer: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
         }
+        .overlay(alignment: .bottom) {
+            PlaybackProgressBar(
+                progress: playbackProgress,
+                barHeight: 3,
+                activeColor: .white.opacity(0.92),
+                inactiveColor: .white.opacity(0.12),
+                thumbColor: .clear,
+                maxWidth: nil,
+                showsThumb: false,
+                animationDuration: 0.45,
+                onSeek: nil
+            )
+            .frame(height: 10)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            .allowsHitTesting(false)
+        }
         .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
         .shadow(color: Color.black.opacity(0.24), radius: 20, x: 0, y: 8)
         .contentShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
@@ -132,6 +149,13 @@ struct MiniPlayer: View {
                 showPlayer = true
             }
         }
+    }
+
+    private var playbackProgress: Double {
+        resolvedPlaybackProgress(
+            currentTime: audioPlayer.currentTime,
+            duration: audioPlayer.duration
+        )
     }
     
     func getHeartIcon() -> String {
@@ -145,6 +169,81 @@ struct MiniPlayer: View {
 
         return dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5)
     }
+}
+
+struct PlaybackProgressBar: View {
+    let progress: Double
+    let barHeight: CGFloat
+    let activeColor: Color
+    let inactiveColor: Color
+    let thumbColor: Color
+    let maxWidth: CGFloat?
+    let showsThumb: Bool
+    let animationDuration: Double
+    let onSeek: ((Double) -> Void)?
+
+    private let thumbSize: CGFloat = 14
+
+    private var clampedProgress: CGFloat {
+        CGFloat(min(max(progress, 0), 1))
+    }
+
+    private var hitAreaHeight: CGFloat {
+        max(barHeight + (showsThumb ? 16 : 10), 22)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let availableWidth = geometry.size.width
+            let totalWidth = min(maxWidth ?? availableWidth, availableWidth)
+            let fillWidth = totalWidth * clampedProgress
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(inactiveColor)
+                    .frame(width: totalWidth, height: barHeight)
+
+                Capsule()
+                    .fill(activeColor)
+                    .frame(width: max(fillWidth, fillWidth > 0 ? barHeight : 0), height: barHeight)
+                    .shadow(color: activeColor.opacity(showsThumb ? 0.18 : 0.08), radius: showsThumb ? 8 : 4)
+
+                if showsThumb {
+                    Circle()
+                        .fill(thumbColor)
+                        .frame(width: thumbSize, height: thumbSize)
+                        .shadow(color: .black.opacity(0.28), radius: 8, y: 2)
+                        .offset(x: thumbOffset(fillWidth: fillWidth, totalWidth: totalWidth))
+                }
+            }
+            .frame(width: totalWidth, height: hitAreaHeight)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard let onSeek, totalWidth > 0 else { return }
+                        let percent = min(max(value.location.x / totalWidth, 0), 1)
+                        onSeek(percent)
+                    }
+            )
+        }
+        .frame(height: hitAreaHeight)
+        .animation(.linear(duration: animationDuration), value: clampedProgress)
+    }
+
+    private func thumbOffset(fillWidth: CGFloat, totalWidth: CGFloat) -> CGFloat {
+        let clampedOffset = min(max(fillWidth - (thumbSize / 2), 0), max(totalWidth - thumbSize, 0))
+        return clampedOffset
+    }
+}
+
+func resolvedPlaybackProgress(currentTime: TimeInterval, duration: TimeInterval) -> Double {
+    guard duration > 0, currentTime.isFinite, duration.isFinite else {
+        return 0
+    }
+
+    return min(max(currentTime / duration, 0), 1)
 }
 
 #Preview {

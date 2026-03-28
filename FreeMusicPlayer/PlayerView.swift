@@ -13,6 +13,7 @@ struct PlayerView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var router: AppRouter
     @Binding var isPresented: Bool
+    @State private var showInlineLyrics: Bool = false
     @State private var showEQ: Bool = false
     @State private var isTogglingFavorite = false
     @State private var favoriteActionErrorMessage: String?
@@ -23,9 +24,9 @@ struct PlayerView: View {
             
             VStack(spacing: 0) {
                 playerHeader
-                Spacer()
                 albumArt
-                Spacer()
+                    .padding(.top, 12)
+                Spacer(minLength: showInlineLyrics ? 72 : 56)
                 playerControls
             }
         }
@@ -34,6 +35,9 @@ struct PlayerView: View {
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Player background updated for track: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                showInlineLyrics = false
+            }
         }
         .sheet(isPresented: $showEQ) {
             PlayerPlaceholderSheet(
@@ -132,9 +136,40 @@ struct PlayerView: View {
                     .blur(radius: 42)
                     .opacity(0.68)
 
-                    TrackArtworkView(track: currentTrack, size: 320, cornerRadius: 24, showsSourceBadge: false)
-                        .aspectRatio(1, contentMode: .fit)
-                        .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
+                    ZStack {
+                        TrackArtworkView(track: currentTrack, size: 320, cornerRadius: 24, showsSourceBadge: false)
+                            .aspectRatio(1, contentMode: .fit)
+                            .opacity(showInlineLyrics ? 0 : 1)
+
+                        if showInlineLyrics {
+                            PlayerLyricsOverlay(
+                                track: currentTrack,
+                                playbackTime: audioPlayer.currentTime
+                            ) {
+                                withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                                    showInlineLyrics = false
+                                }
+                            }
+                            .transition(
+                                .asymmetric(
+                                    insertion: .opacity.combined(with: .scale(scale: 0.98)),
+                                    removal: .opacity
+                                )
+                            )
+                        } else {
+                            artworkHint
+                                .transition(.opacity)
+                        }
+                    }
+                    .frame(width: 320, height: 320)
+                    .clipShape(RoundedRectangle(cornerRadius: 24))
+                    .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
+                    .contentShape(RoundedRectangle(cornerRadius: 24))
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                            showInlineLyrics = true
+                        }
+                    }
                 } else {
                     ZStack {
                         RoundedRectangle(cornerRadius: 24)
@@ -155,6 +190,7 @@ struct PlayerView: View {
                             .font(.system(size: 80))
                             .foregroundColor(.white.opacity(0.3))
                     }
+                    .frame(width: 320, height: 320)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -194,35 +230,27 @@ struct PlayerView: View {
         VStack(spacing: 24) {
             progressSection
             primaryControls
-            Spacer(minLength: 20)
         }
         .padding(.horizontal, 18)
-        .padding(.bottom, 40)
+        .padding(.bottom, 46)
     }
     
     var progressSection: some View {
-        VStack(spacing: 8) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white.opacity(0.2))
-                        .frame(height: 4)
-                    
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.white)
-                        .frame(width: progressWidth(geometry.size.width), height: 4)
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let percent = max(0, min(1, value.location.x / geometry.size.width))
-                            audioPlayer.seek(to: percent * audioPlayer.duration)
-                        }
-                )
+        VStack(spacing: 10) {
+            PlaybackProgressBar(
+                progress: playbackProgress,
+                barHeight: 6,
+                activeColor: .white.opacity(0.98),
+                inactiveColor: .white.opacity(0.18),
+                thumbColor: .white,
+                maxWidth: 312,
+                showsThumb: true,
+                animationDuration: 0.12
+            ) { percent in
+                audioPlayer.seek(to: percent * audioPlayer.duration)
             }
-            .frame(height: 20)
-            
+            .frame(height: 26)
+
             HStack {
                 Text(formatTime(audioPlayer.currentTime))
                     .font(.system(size: 12))
@@ -234,13 +262,9 @@ struct PlayerView: View {
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.5))
             }
+            .frame(maxWidth: 312)
         }
-    }
-    
-    func progressWidth(_ totalWidth: CGFloat) -> CGFloat {
-        guard audioPlayer.duration > 0 else { return 0 }
-        let percent = audioPlayer.currentTime / audioPlayer.duration
-        return CGFloat(percent) * totalWidth
+        .frame(maxWidth: .infinity)
     }
 
     var primaryControls: some View {
@@ -262,6 +286,13 @@ struct PlayerView: View {
         let mins = Int(time) / 60
         let secs = Int(time.truncatingRemainder(dividingBy: 60))
         return String(format: "%d:%02d", mins, secs)
+    }
+
+    private var playbackProgress: Double {
+        resolvedPlaybackProgress(
+            currentTime: audioPlayer.currentTime,
+            duration: audioPlayer.duration
+        )
     }
 
     private var currentArtistRoute: OnlineArtistRoute? {
@@ -437,6 +468,28 @@ struct PlayerView: View {
         .disabled(!canToggleFavoriteForCurrentTrack || isTogglingFavorite)
     }
 
+    private var artworkHint: some View {
+        VStack {
+            Spacer()
+
+            HStack(spacing: 8) {
+                Image(systemName: "text.quote")
+                    .font(.system(size: 12, weight: .semibold))
+
+                Text("Tap artwork for lyrics")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(.white.opacity(0.82))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.42))
+            )
+            .padding(.bottom, 14)
+        }
+    }
+
     private func openArtistPage(_ route: OnlineArtistRoute) {
         debugLog("Player artist pressed: \(route.artistName) [\(route.providerArtistID)]")
 
@@ -528,113 +581,125 @@ struct PlayerLyricsSheet: View {
 
 struct TrackLyricsView: View {
     let track: Track?
+    let playbackTime: TimeInterval?
 
-    @EnvironmentObject private var dataManager: DataManager
-
-    @State private var lyricsText: String?
-    @State private var lyricsSourceLabel: String?
-    @State private var isLoadingLyrics = false
-
-    private var trackIdentity: String {
-        track?.sourceID ?? track?.id ?? "no-track"
+    init(track: Track?, playbackTime: TimeInterval? = nil) {
+        self.track = track
+        self.playbackTime = playbackTime
     }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(track?.displayTitle ?? "Nothing playing")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundColor(.white)
-                        Text(track?.displayArtist ?? "")
-                            .font(.system(size: 14))
-                            .foregroundColor(.white.opacity(0.6))
-                    }
-
-                    if isLoadingLyrics {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                                .tint(.white)
-                            Text("Loading lyrics...")
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                        .padding(.top, 12)
-                    } else if let lyricsText {
-                        VStack(alignment: .leading, spacing: 12) {
-                            if let lyricsSourceLabel {
-                                Text(lyricsSourceLabel)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(.white.opacity(0.48))
-                            }
-
-                            Text(lyricsText)
-                                .font(.system(size: 16))
-                                .foregroundColor(.white.opacity(0.9))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.top, 4)
-                    } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Lyrics unavailable")
-                                .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.white)
-                            Text("No saved, embedded, or online lyrics were found for this track.")
-                                .font(.system(size: 14))
-                                .foregroundColor(.white.opacity(0.58))
-                        }
-                        .padding(.top, 12)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
-            }
+            TrackLyricsContentView(
+                track: track,
+                playbackTime: playbackTime,
+                style: .fullscreen,
+                onClose: nil
+            )
         }
-        .task(id: trackIdentity) {
-            await loadLyrics()
+    }
+}
+
+private enum TrackLyricsPresentationStyle: Equatable {
+    case fullscreen
+    case inlineOverlay
+
+    var horizontalPadding: CGFloat {
+        switch self {
+        case .fullscreen:
+            return 20
+        case .inlineOverlay:
+            return 18
         }
     }
 
-    @MainActor
-    private func loadLyrics() async {
-        guard let track else {
-            lyricsText = nil
-            lyricsSourceLabel = nil
-            isLoadingLyrics = false
-            debugLog("Lyrics unavailable because there is no current track")
-            return
+    var verticalPadding: CGFloat {
+        switch self {
+        case .fullscreen:
+            return 20
+        case .inlineOverlay:
+            return 16
         }
+    }
+}
 
-        if let storedLyrics = cleanedLyricsText(track.lyricsText) {
-            lyricsText = storedLyrics
-            lyricsSourceLabel = lyricsSourceLabel(for: track.lyricsSource)
-        }
+private struct PlayerLyricsOverlay: View {
+    let track: Track
+    let playbackTime: TimeInterval
+    let onClose: () -> Void
 
-        isLoadingLyrics = true
-        let currentIdentity = trackIdentity
-        let resolvedLyrics = await LyricsMetadataResolver.shared.resolvedLyrics(for: track)
+    var body: some View {
+        TrackLyricsContentView(
+            track: track,
+            playbackTime: playbackTime,
+            style: .inlineOverlay,
+            onClose: onClose
+        )
+    }
+}
 
-        guard currentIdentity == trackIdentity else { return }
+private func cleanedPersistedLyricsText(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return cleanedValue.isEmpty ? nil : cleanedValue
+}
 
-        lyricsText = resolvedLyrics?.text
-        lyricsSourceLabel = resolvedLyrics.flatMap { lyricsSourceLabel(for: $0.source) }
-        isLoadingLyrics = false
-        if let resolvedLyrics {
-            _ = dataManager.persistLyrics(resolvedLyrics, for: track)
-        }
-        debugLog("Lyrics \(resolvedLyrics == nil ? "unavailable" : "loaded") for \(track.displayTitle)")
+private func strippedSyncedLyricsText(_ rawText: String) -> String? {
+    let parsedLines = SyncedLyricsParser.parse(rawText)
+    guard !parsedLines.isEmpty else { return nil }
+
+    var plainLines: [String] = []
+    var previousLineText: String?
+
+    for line in parsedLines {
+        guard line.text != previousLineText else { continue }
+        plainLines.append(line.text)
+        previousLineText = line.text
     }
 
-    private func cleanedLyricsText(_ value: String?) -> String? {
-        guard let value else { return nil }
-        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleanedValue.isEmpty ? nil : cleanedValue
+    return cleanedPersistedLyricsText(plainLines.joined(separator: "\n"))
+}
+
+private func persistedResolvedLyrics(for track: Track) -> ResolvedTrackLyrics? {
+    let storedSyncedText = cleanedPersistedLyricsText(track.lyricsSyncedText)
+    guard let persistedText = cleanedPersistedLyricsText(track.lyricsText)
+        ?? storedSyncedText.flatMap(strippedSyncedLyricsText) else {
+        return nil
     }
 
-    private func lyricsSourceLabel(for source: String?) -> String? {
-        guard let source = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+    let inferredSyncedText = storedSyncedText ??
+        (SyncedLyricsParser.parse(persistedText).isEmpty ? nil : persistedText)
+    let plainText = strippedSyncedLyricsText(inferredSyncedText ?? "") ?? persistedText
+
+    return ResolvedTrackLyrics(
+        text: plainText,
+        syncedText: inferredSyncedText,
+        source: cleanedPersistedLyricsText(track.lyricsSource) ?? "saved",
+        url: cleanedPersistedLyricsText(track.lyricsURL),
+        lastUpdated: track.lyricsLastUpdated ?? Date()
+    )
+}
+
+@MainActor
+private final class TrackLyricsViewModel: ObservableObject {
+    @Published private(set) var resolvedLyrics: ResolvedTrackLyrics?
+    @Published private(set) var isLoading = false
+
+    private let dataManager: DataManager
+    private var activeTrackIdentity: String?
+
+    init(dataManager: DataManager = .shared) {
+        self.dataManager = dataManager
+    }
+
+    var timedLines: [TimedLyricLine] {
+        resolvedLyrics?.timedLines ?? []
+    }
+
+    var lyricsSourceLabel: String? {
+        guard let source = resolvedLyrics?.source.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
               !source.isEmpty else {
             return nil
         }
@@ -645,11 +710,295 @@ struct TrackLyricsView: View {
         case "genius":
             return "Lyrics from Genius"
         case "lrclib":
-            return "Lyrics via LRCLIB"
+            return timedLines.isEmpty ? "Lyrics via LRCLIB" : "Synced lyrics via LRCLIB"
         case "lyricsovh":
             return "Lyrics via Lyrics.ovh"
         default:
             return source.capitalized
+        }
+    }
+
+    func load(track: Track?) async {
+        let trackIdentity = track?.sourceID ?? track?.id ?? "no-track"
+        activeTrackIdentity = trackIdentity
+
+        guard let track else {
+            resolvedLyrics = nil
+            isLoading = false
+            debugLog("Lyrics unavailable because there is no current track")
+            return
+        }
+
+        if let persistedLyrics = persistedLyrics(for: track) {
+            resolvedLyrics = persistedLyrics
+        } else {
+            resolvedLyrics = nil
+        }
+
+        isLoading = true
+        let resolvedLyrics = await LyricsMetadataResolver.shared.resolvedLyrics(for: track)
+        guard activeTrackIdentity == trackIdentity else { return }
+
+        if let resolvedLyrics {
+            self.resolvedLyrics = resolvedLyrics
+            _ = dataManager.persistLyrics(resolvedLyrics, for: track)
+        }
+
+        isLoading = false
+        debugLog("Lyrics \(resolvedLyrics == nil ? "unavailable" : "loaded") for \(track.displayTitle)")
+    }
+
+    private func persistedLyrics(for track: Track) -> ResolvedTrackLyrics? {
+        persistedResolvedLyrics(for: track)
+    }
+}
+
+private struct TrackLyricsContentView: View {
+    let track: Track?
+    let playbackTime: TimeInterval?
+    let style: TrackLyricsPresentationStyle
+    let onClose: (() -> Void)?
+
+    @StateObject private var viewModel = TrackLyricsViewModel()
+
+    private var trackIdentity: String {
+        track?.sourceID ?? track?.id ?? "no-track"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if style == .fullscreen {
+                header
+            } else {
+                inlineOverlayHeader
+            }
+
+            if viewModel.isLoading && viewModel.resolvedLyrics == nil {
+                lyricsLoadingState
+            } else if !viewModel.timedLines.isEmpty, let playbackTime {
+                SyncedLyricsView(
+                    lines: viewModel.timedLines,
+                    currentTime: playbackTime,
+                    compact: style == .inlineOverlay
+                )
+            } else if let lyricsText = viewModel.resolvedLyrics?.text {
+                PlainLyricsView(text: lyricsText, compact: style == .inlineOverlay)
+            } else {
+                lyricsUnavailableState
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, style.horizontalPadding)
+        .padding(.vertical, style.verticalPadding)
+        .background(backgroundView)
+        .task(id: trackIdentity) {
+            await viewModel.load(track: track)
+        }
+    }
+
+    @ViewBuilder
+    private var backgroundView: some View {
+        switch style {
+        case .fullscreen:
+            Color.clear
+        case .inlineOverlay:
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color.black.opacity(0.76))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(track?.displayTitle ?? "Nothing playing")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(.white)
+
+            Text(track?.displayArtist ?? "")
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.6))
+
+            if let lyricsSourceLabel = viewModel.lyricsSourceLabel {
+                TrackLyricsSourcePill(title: lyricsSourceLabel)
+                    .padding(.top, 6)
+            }
+        }
+    }
+
+    private var inlineOverlayHeader: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Lyrics")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
+
+                if let lyricsSourceLabel = viewModel.lyricsSourceLabel {
+                    Text(lyricsSourceLabel)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.48))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            if let onClose {
+                Button {
+                    onClose()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white.opacity(0.84))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var lyricsLoadingState: some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .tint(.white)
+
+            Text("Loading lyrics...")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(.white.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private var lyricsUnavailableState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Lyrics unavailable")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.white)
+
+            Text("No saved, embedded, or online lyrics were found for this track.")
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.58))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+}
+
+private struct TrackLyricsSourcePill: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.white.opacity(0.78))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.08))
+            )
+    }
+}
+
+private struct PlainLyricsView: View {
+    let text: String
+    let compact: Bool
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            Text(text)
+                .font(.system(size: compact ? 15 : 16, weight: .regular))
+                .foregroundColor(.white.opacity(0.9))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, compact ? 6 : 4)
+                .padding(.bottom, compact ? 22 : 28)
+        }
+    }
+}
+
+private struct SyncedLyricsView: View {
+    let lines: [TimedLyricLine]
+    let currentTime: TimeInterval
+    let compact: Bool
+
+    private var activeLineIndex: Int {
+        guard !lines.isEmpty else { return 0 }
+
+        return lines.lastIndex(where: { $0.time <= currentTime + 0.05 }) ?? 0
+    }
+
+    private var activeLineID: String? {
+        guard lines.indices.contains(activeLineIndex) else { return nil }
+        return lines[activeLineIndex].id
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: compact ? 14 : 18) {
+                    Color.clear
+                        .frame(height: compact ? 56 : 72)
+
+                    ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                        Text(line.text)
+                            .font(font(forDistance: abs(index - activeLineIndex)))
+                            .foregroundColor(color(forDistance: abs(index - activeLineIndex)))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                            .id(line.id)
+                    }
+
+                    Color.clear
+                        .frame(height: compact ? 96 : 128)
+                }
+                .animation(.easeInOut(duration: 0.22), value: activeLineIndex)
+            }
+            .onAppear {
+                scrollToActiveLine(with: proxy, animated: false)
+            }
+            .onChange(of: activeLineID) { _ in
+                scrollToActiveLine(with: proxy, animated: true)
+            }
+        }
+    }
+
+    private func scrollToActiveLine(with proxy: ScrollViewProxy, animated: Bool) {
+        guard let activeLineID else { return }
+
+        let scrollAction = {
+            proxy.scrollTo(activeLineID, anchor: .center)
+        }
+
+        if animated {
+            withAnimation(.easeInOut(duration: 0.28)) {
+                scrollAction()
+            }
+        } else {
+            scrollAction()
+        }
+    }
+
+    private func font(forDistance distance: Int) -> Font {
+        switch distance {
+        case 0:
+            return .system(size: compact ? 20 : 24, weight: .semibold)
+        case 1:
+            return .system(size: compact ? 17 : 19, weight: .medium)
+        default:
+            return .system(size: compact ? 14 : 16, weight: .regular)
+        }
+    }
+
+    private func color(forDistance distance: Int) -> Color {
+        switch distance {
+        case 0:
+            return .white
+        case 1:
+            return .white.opacity(0.72)
+        default:
+            return .white.opacity(0.38)
         }
     }
 }
@@ -664,11 +1013,98 @@ private struct DismissButton: View {
     }
 }
 
+struct TimedLyricLine: Identifiable, Equatable {
+    let time: TimeInterval
+    let text: String
+
+    var id: String {
+        "\(time)::\(text)"
+    }
+}
+
 struct ResolvedTrackLyrics: Equatable {
     let text: String
+    let syncedText: String?
     let source: String
     let url: String?
     let lastUpdated: Date
+
+    var timedLines: [TimedLyricLine] {
+        SyncedLyricsParser.parse(syncedText)
+    }
+}
+
+enum SyncedLyricsParser {
+    static func parse(_ rawText: String?) -> [TimedLyricLine] {
+        guard let rawText = cleanedLyricsText(rawText) else { return [] }
+        let lines = rawText.components(separatedBy: .newlines)
+
+        guard let regex = try? NSRegularExpression(
+            pattern: #"\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]"#,
+            options: []
+        ) else {
+            return []
+        }
+
+        var parsedLines: [TimedLyricLine] = []
+
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedLine.isEmpty else { continue }
+
+            let fullRange = NSRange(trimmedLine.startIndex..., in: trimmedLine)
+            let matches = regex.matches(in: trimmedLine, options: [], range: fullRange)
+            guard !matches.isEmpty else { continue }
+
+            let lyricText = regex.stringByReplacingMatches(
+                in: trimmedLine,
+                options: [],
+                range: fullRange,
+                withTemplate: ""
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !lyricText.isEmpty else { continue }
+
+            for match in matches {
+                guard let minutesRange = Range(match.range(at: 1), in: trimmedLine),
+                      let secondsRange = Range(match.range(at: 2), in: trimmedLine) else {
+                    continue
+                }
+
+                let minutes = Double(trimmedLine[minutesRange]) ?? 0
+                let seconds = Double(trimmedLine[secondsRange]) ?? 0
+                var fraction = 0.0
+
+                if let fractionRange = Range(match.range(at: 3), in: trimmedLine) {
+                    let fractionText = String(trimmedLine[fractionRange])
+                    let divisor = pow(10.0, Double(fractionText.count))
+                    fraction = (Double(fractionText) ?? 0) / divisor
+                }
+
+                parsedLines.append(
+                    TimedLyricLine(
+                        time: max((minutes * 60) + seconds + fraction, 0),
+                        text: lyricText
+                    )
+                )
+            }
+        }
+
+        return parsedLines.sorted { left, right in
+            if left.time != right.time {
+                return left.time < right.time
+            }
+
+            return left.text < right.text
+        }
+    }
+
+    private static func cleanedLyricsText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
 }
 
 actor LyricsMetadataResolver {
@@ -685,12 +1121,16 @@ actor LyricsMetadataResolver {
     private var resolvedLyricsCache: [String: ResolvedTrackLyrics] = [:]
 
     func resolvedLyrics(for track: Track) async -> ResolvedTrackLyrics? {
-        if let persistedLyrics = persistedLyrics(for: track) {
+        let persistedLyrics = persistedLyrics(for: track)
+        let shouldRefreshPersistedLyrics = shouldRefreshPersistedLyrics(persistedLyrics)
+
+        if let persistedLyrics, !shouldRefreshPersistedLyrics {
             return persistedLyrics
         }
 
         let cacheKey = lyricsCacheKey(for: track)
-        if let cachedLyrics = resolvedLyricsCache[cacheKey] {
+        if let cachedLyrics = resolvedLyricsCache[cacheKey],
+           !shouldRefreshPersistedLyrics || !cachedLyrics.timedLines.isEmpty {
             return cachedLyrics
         }
 
@@ -700,13 +1140,16 @@ actor LyricsMetadataResolver {
                 resolvedLyricsCache[cacheKey] = resolvedNetworkLyrics
                 return resolvedNetworkLyrics
             }
-            return nil
+            return persistedLyrics
         }
 
         let asset = AVURLAsset(url: fileURL)
         if let metadataLyrics = metadataLyrics(from: asset) {
             let resolvedLyrics = ResolvedTrackLyrics(
                 text: metadataLyrics,
+                syncedText: cleanedLyricsText(metadataLyrics).flatMap { lyricsText in
+                    SyncedLyricsParser.parse(lyricsText).isEmpty ? nil : lyricsText
+                },
                 source: "embedded",
                 url: nil,
                 lastUpdated: Date()
@@ -720,7 +1163,7 @@ actor LyricsMetadataResolver {
             return resolvedNetworkLyrics
         }
 
-        return nil
+        return persistedLyrics
     }
 
     private func localFileURL(for track: Track) -> URL? {
@@ -739,14 +1182,13 @@ actor LyricsMetadataResolver {
     }
 
     private func persistedLyrics(for track: Track) -> ResolvedTrackLyrics? {
-        guard let lyricsText = cleanedLyricsText(track.lyricsText) else { return nil }
+        persistedResolvedLyrics(for: track)
+    }
 
-        return ResolvedTrackLyrics(
-            text: lyricsText,
-            source: cleanedLyricsText(track.lyricsSource) ?? "saved",
-            url: cleanedLyricsText(track.lyricsURL),
-            lastUpdated: track.lyricsLastUpdated ?? Date()
-        )
+    private func shouldRefreshPersistedLyrics(_ lyrics: ResolvedTrackLyrics?) -> Bool {
+        guard let lyrics else { return false }
+        let normalizedSource = lyrics.source.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lyrics.syncedText == nil && (normalizedSource == "lrclib" || normalizedSource == "embedded")
     }
 
     private func lyricsCacheKey(for track: Track) -> String {
@@ -844,6 +1286,7 @@ actor LyricsMetadataResolver {
 
                 return ResolvedTrackLyrics(
                     text: lyricsText,
+                    syncedText: nil,
                     source: "genius",
                     url: lyricsPageURLString,
                     lastUpdated: Date()
@@ -873,14 +1316,16 @@ actor LyricsMetadataResolver {
             do {
                 let data = try await fetchData(from: requestURL)
                 let result = try JSONDecoder().decode(LRCLibLyricsResult.self, from: data)
+                let syncedLyricsText = cleanedLyricsText(result.syncedLyrics)
                 guard let lyricsText = cleanedLyricsText(result.plainLyrics) ??
-                        cleanedLyricsText(result.syncedLyrics).flatMap(strippedSyncedLyrics(from:)) else {
+                        syncedLyricsText.flatMap(strippedSyncedLyrics(from:)) else {
                     continue
                 }
 
                 debugLog("Lyrics resolved through LRCLIB for \(query.artist) - \(query.title)")
                 return ResolvedTrackLyrics(
                     text: lyricsText,
+                    syncedText: syncedLyricsText,
                     source: "lrclib",
                     url: result.url,
                     lastUpdated: Date()
@@ -913,6 +1358,7 @@ actor LyricsMetadataResolver {
                 debugLog("Lyrics resolved through Lyrics.ovh for \(query.artist) - \(query.title)")
                 return ResolvedTrackLyrics(
                     text: lyricsText,
+                    syncedText: nil,
                     source: "lyricsovh",
                     url: nil,
                     lastUpdated: Date()
