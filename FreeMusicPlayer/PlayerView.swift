@@ -191,46 +191,14 @@ struct PlayerView: View {
                         .foregroundColor(.white.opacity(0.6))
                 }
             }
-            
-            HStack(spacing: 24) {
-                Button {
-                    debugLog("Player previous button pressed")
-                    audioPlayer.playPrevious()
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.plain)
-                
-                Button {
-                    debugLog("Player play/pause button pressed")
-                    audioPlayer.togglePlayPause()
-                } label: {
-                    Image(systemName: audioPlayer.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 64))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.plain)
-                
-                Button {
-                    debugLog("Player next button pressed")
-                    audioPlayer.playNext()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.top, 8)
         }
     }
     
     var playerControls: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
             progressSection
-            extraControls
+            primaryControls
+            secondaryControls
             Spacer(minLength: 20)
         }
         .padding(.horizontal, 24)
@@ -279,75 +247,174 @@ struct PlayerView: View {
         let percent = audioPlayer.currentTime / audioPlayer.duration
         return CGFloat(percent) * totalWidth
     }
-    
-    var extraControls: some View {
-        HStack(spacing: 0) {
-            Button {
-                debugLog("Player shuffle button pressed")
-                audioPlayer.toggleShuffle()
-            } label: {
-                Image(systemName: "shuffle")
-                    .font(.system(size: 22))
-                    .foregroundColor(audioPlayer.isShuffle ? .red : .white.opacity(0.5))
-            }
-            .buttonStyle(.plain)
-            .frame(width: 60)
-            
-            Button {
-                debugLog("Player speed button pressed")
-                audioPlayer.cyclePlaybackSpeed()
-            } label: {
-                Text(String(format: "%.2gx", audioPlayer.playbackSpeed))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.7))
-            }
-            .buttonStyle(.plain)
-            .frame(width: 50)
-            
-            Spacer()
 
+    var primaryControls: some View {
+        HStack(spacing: 28) {
             Button {
-                toggleFavoriteForCurrentTrack()
+                debugLog("Player previous button pressed")
+                audioPlayer.playPrevious()
             } label: {
-                if isTogglingFavorite {
-                    ProgressView()
-                        .tint(.white)
-                } else {
-                    Image(systemName: favoriteButtonSystemImage)
-                        .font(.system(size: 20))
-                        .foregroundColor(favoriteButtonTintColor)
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 58, height: 58)
+
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
                 }
             }
             .buttonStyle(.plain)
-            .frame(width: 50)
-            .disabled(!canToggleFavoriteForCurrentTrack || isTogglingFavorite)
-
-            Spacer()
 
             Button {
-                debugLog("Player lyrics button pressed")
-                showLyrics = true
+                debugLog("Player play/pause button pressed")
+                audioPlayer.togglePlayPause()
             } label: {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 20))
-                    .foregroundColor(showLyrics ? .red : .white.opacity(0.5))
+                ZStack {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 86, height: 86)
+
+                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(.black)
+                        .offset(x: audioPlayer.isPlaying ? 0 : 2)
+                }
+                .shadow(color: .black.opacity(0.24), radius: 14, y: 6)
             }
             .buttonStyle(.plain)
-            .frame(width: 50)
-            
-            Spacer()
-            
+
             Button {
+                debugLog("Player next button pressed")
+                audioPlayer.playNext()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 58, height: 58)
+
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    var secondaryControls: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12),
+                GridItem(.flexible(), spacing: 12)
+            ],
+            alignment: .center,
+            spacing: 12
+        ) {
+            secondaryControlTile(title: "Shuffle", isActive: audioPlayer.isShuffle) {
+                debugLog("Player shuffle button pressed")
+                audioPlayer.toggleShuffle()
+            } content: {
+                Image(systemName: "shuffle")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundColor(audioPlayer.isShuffle ? .red : .white.opacity(0.72))
+            }
+
+            secondaryControlTile(title: "Repeat", isActive: audioPlayer.repeatMode != .off) {
                 debugLog("Player repeat button pressed")
                 audioPlayer.toggleRepeat()
-            } label: {
+            } content: {
                 Image(systemName: repeatIcon)
-                    .font(.system(size: 22))
-                    .foregroundColor(audioPlayer.repeatMode != .off ? .red : .white.opacity(0.5))
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundColor(audioPlayer.repeatMode != .off ? .red : .white.opacity(0.72))
             }
-            .buttonStyle(.plain)
-            .frame(width: 60)
+
+            secondaryControlTile(title: "Speed", isActive: audioPlayer.playbackSpeed != 1.0) {
+                debugLog("Player speed button pressed")
+                audioPlayer.cyclePlaybackSpeed()
+            } content: {
+                Text(String(format: "%.2gx", audioPlayer.playbackSpeed))
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(.white.opacity(0.84))
+            }
+
+            secondaryControlTile(title: "Lyrics", isActive: showLyrics) {
+                debugLog("Player lyrics button pressed")
+                showLyrics = true
+            } content: {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundColor(showLyrics ? .red : .white.opacity(0.72))
+            }
+
+            secondaryControlTile(
+                title: "Favorite",
+                isActive: currentTrackIsSaved,
+                isDisabled: !canToggleFavoriteForCurrentTrack || isTogglingFavorite
+            ) {
+                toggleFavoriteForCurrentTrack()
+            } content: {
+                Group {
+                    if isTogglingFavorite {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: favoriteButtonSystemImage)
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundColor(favoriteButtonTintColor)
+                    }
+                }
+            }
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    private func secondaryControlTile<Content: View>(
+        title: String,
+        isActive: Bool,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                content()
+                    .frame(height: 22)
+
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(isDisabled ? 0.34 : 0.58))
+            }
+            .frame(maxWidth: .infinity, minHeight: 74)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(
+                        isActive
+                            ? Color.red.opacity(0.14)
+                            : Color.white.opacity(0.04)
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(
+                        isActive
+                            ? Color.red.opacity(0.24)
+                            : Color.white.opacity(0.08),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
     
     var repeatIcon: String {
