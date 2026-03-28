@@ -321,6 +321,7 @@ struct SearchView: View {
                 OnlineTrackResultsList(
                     results: onlineTrackResults,
                     statusMessage: $onlineStatusMessage,
+                    playbackContextName: "search:online:\(selectedProvider.rawValue):\(trimmedSearchText.lowercased())",
                     onSaveCompletion: {
                         localResults = localMatches(for: searchText)
                         debugLog("Local result count after save: \(localResults.count)")
