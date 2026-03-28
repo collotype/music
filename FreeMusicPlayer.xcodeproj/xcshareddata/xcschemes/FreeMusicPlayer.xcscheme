@@ -20,6 +20,20 @@
                ReferencedContainer = "container:FreeMusicPlayer.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A5000010"
+               BuildableName = "FreeMusicPlayerTests.xctest"
+               BlueprintName = "FreeMusicPlayerTests"
+               ReferencedContainer = "container:FreeMusicPlayer.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -28,6 +42,27 @@
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutoschedule = "YES">
+      <Testables>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "A5000010"
+               BuildableName = "FreeMusicPlayerTests.xctest"
+               BlueprintName = "FreeMusicPlayerTests"
+               ReferencedContainer = "container:FreeMusicPlayer.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+      </Testables>
+      <MacroExpansion>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "A5000001"
+            BuildableName = "FreeMusicPlayer.app"
+            BlueprintName = "FreeMusicPlayer"
+            ReferencedContainer = "container:FreeMusicPlayer.xcodeproj">
+         </BuildableReference>
+      </MacroExpansion>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"

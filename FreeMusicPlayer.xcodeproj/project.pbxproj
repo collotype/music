@@ -23,7 +23,25 @@
 		A100000E /* AppFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
 		A100000F /* OnlineMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
 		A1000010 /* OnlineArtistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012; };
+		A1000011 /* MyWaveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000013; };
+		A1000012 /* ListeningHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000014; };
+		A1000013 /* OnlineTrackActionHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000015; };
+		A1000014 /* MyWaveRecommendationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000016; };
+		A1000015 /* MyWaveViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000017; };
+		A1000016 /* MyWaveSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000018; };
+		A1001010 /* MyWaveRecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001010; };
+		A1001011 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2001012; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A7000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A5000002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A5000001;
+			remoteInfo = FreeMusicPlayer;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A2000001 /* FreeMusicPlayerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FreeMusicPlayerApp.swift; sourceTree = "<group>"; };
@@ -44,6 +62,15 @@
 		A2000010 /* AppFileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFileManager.swift; sourceTree = "<group>"; };
 		A2000011 /* OnlineMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineMusicService.swift; sourceTree = "<group>"; };
 		A2000012 /* OnlineArtistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineArtistDetailView.swift; sourceTree = "<group>"; };
+		A2000013 /* MyWaveModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveModels.swift; sourceTree = "<group>"; };
+		A2000014 /* ListeningHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningHistoryStore.swift; sourceTree = "<group>"; };
+		A2000015 /* OnlineTrackActionHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineTrackActionHelper.swift; sourceTree = "<group>"; };
+		A2000016 /* MyWaveRecommendationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveRecommendationService.swift; sourceTree = "<group>"; };
+		A2000017 /* MyWaveViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveViewModel.swift; sourceTree = "<group>"; };
+		A2000018 /* MyWaveSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveSettingsView.swift; sourceTree = "<group>"; };
+		A2001010 /* MyWaveRecommendationEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveRecommendationEngineTests.swift; sourceTree = "<group>"; };
+		A2001011 /* FreeMusicPlayerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FreeMusicPlayerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2001012 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +81,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A3000010 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1001011 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -61,6 +96,7 @@
 			isa = PBXGroup;
 			children = (
 				A4000002 /* FreeMusicPlayer */,
+				A4000004 /* FreeMusicPlayerTests */,
 				A200000D /* Assets.xcassets */,
 				A200000F /* Info.plist */,
 				A4000003 /* Products */,
@@ -85,14 +121,29 @@
 				A2000010 /* AppFileManager.swift */,
 				A2000011 /* OnlineMusicService.swift */,
 				A2000012 /* OnlineArtistDetailView.swift */,
+				A2000013 /* MyWaveModels.swift */,
+				A2000014 /* ListeningHistoryStore.swift */,
+				A2000015 /* OnlineTrackActionHelper.swift */,
+				A2000016 /* MyWaveRecommendationService.swift */,
+				A2000017 /* MyWaveViewModel.swift */,
+				A2000018 /* MyWaveSettingsView.swift */,
 			);
 			path = FreeMusicPlayer;
+			sourceTree = "<group>";
+		};
+		A4000004 /* FreeMusicPlayerTests */ = {
+			isa = PBXGroup;
+			children = (
+				A2001010 /* MyWaveRecommendationEngineTests.swift */,
+			);
+			path = FreeMusicPlayerTests;
 			sourceTree = "<group>";
 		};
 		A4000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				A200000E /* FreeMusicPlayer.app */,
+				A2001011 /* FreeMusicPlayerTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -117,6 +168,24 @@
 			productReference = A200000E /* FreeMusicPlayer.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A5000010 /* FreeMusicPlayerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A6000010 /* Build configuration list for PBXNativeTarget "FreeMusicPlayerTests" */;
+			buildPhases = (
+				A3000011 /* Sources */,
+				A3000010 /* Frameworks */,
+				A3000012 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A7000002 /* PBXTargetDependency */,
+			);
+			name = FreeMusicPlayerTests;
+			productName = FreeMusicPlayerTests;
+			productReference = A2001011 /* FreeMusicPlayerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -129,6 +198,10 @@
 				TargetAttributes = {
 					A5000001 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					A5000010 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = A5000001;
 					};
 				};
 			};
@@ -147,9 +220,18 @@
 			projectRoot = "";
 			targets = (
 				A5000001 /* FreeMusicPlayer */,
+				A5000010 /* FreeMusicPlayerTests */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXTargetDependency section */
+		A7000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A5000001 /* FreeMusicPlayer */;
+			targetProxy = A7000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A3000003 /* Resources */ = {
@@ -157,6 +239,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				A100000D /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3000012 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -182,6 +271,20 @@
 				A100000E /* AppFileManager.swift in Sources */,
 				A100000F /* OnlineMusicService.swift in Sources */,
 				A1000010 /* OnlineArtistDetailView.swift in Sources */,
+				A1000011 /* MyWaveModels.swift in Sources */,
+				A1000012 /* ListeningHistoryStore.swift in Sources */,
+				A1000013 /* OnlineTrackActionHelper.swift in Sources */,
+				A1000014 /* MyWaveRecommendationService.swift in Sources */,
+				A1000015 /* MyWaveViewModel.swift in Sources */,
+				A1000016 /* MyWaveSettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A3000011 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1001010 /* MyWaveRecommendationEngineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,6 +472,51 @@
 			};
 			name = Release;
 		};
+		A6000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.collotype.freemusicTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FreeMusicPlayer.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FreeMusicPlayer";
+			};
+			name = Debug;
+		};
+		A6000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.collotype.freemusicTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FreeMusicPlayer.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FreeMusicPlayer";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -386,6 +534,15 @@
 			buildConfigurations = (
 				A6000006 /* Debug */,
 				A6000007 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A6000010 /* Build configuration list for PBXNativeTarget "FreeMusicPlayerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A6000011 /* Debug */,
+				A6000012 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

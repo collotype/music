@@ -85,8 +85,9 @@ struct HomeView: View {
 }
 
 struct WaveCard: View {
-    @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
+    @StateObject private var viewModel = MyWaveViewModel()
+    @State private var showingSettings = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -96,35 +97,113 @@ struct WaveCard: View {
                         .font(.system(size: 22, weight: .bold))
                         .foregroundColor(.white)
 
-                    Text("Start a quick mix from the tracks already in your library.")
+                    Text(viewModel.summaryLine)
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.7))
+
+                    if dataManager.myWaveSettings.isCustomized {
+                        Text(dataManager.myWaveSettings.selectedLabels.joined(separator: " / "))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.5))
+                            .lineLimit(1)
+                    }
                 }
 
                 Spacer()
 
-                Button {
-                    debugLog("Wave play button pressed")
-                    if let firstTrack = dataManager.tracks.randomElement() {
-                        audioPlayer.playTrack(firstTrack, in: dataManager.tracks, contextName: "home:wave")
-                    } else {
-                        debugLog("Wave play ignored because library is empty")
+                VStack(alignment: .trailing, spacing: 10) {
+                    Button {
+                        debugLog("Wave play button pressed")
+                        Task {
+                            await viewModel.playPrimaryRecommendation()
+                        }
+                    } label: {
+                        Circle()
+                            .fill(viewModel.hasRecommendations ? Color.white : Color.white.opacity(0.18))
+                            .frame(width: 56, height: 56)
+                            .overlay(
+                                Group {
+                                    if viewModel.isLoading && !viewModel.hasRecommendations {
+                                        ProgressView()
+                                            .tint(.black)
+                                    } else {
+                                        Image(systemName: "play.fill")
+                                            .foregroundColor(.black)
+                                            .font(.system(size: 20))
+                                    }
+                                }
+                            )
                     }
-                } label: {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 56, height: 56)
-                        .overlay(
-                            Image(systemName: "play.fill")
-                                .foregroundColor(.black)
-                                .font(.system(size: 20))
-                        )
+                    .buttonStyle(.plain)
+                    .disabled(!viewModel.hasRecommendations && !viewModel.isLoading)
+
+                    Button {
+                        debugLog("My Wave settings button pressed")
+                        showingSettings = true
+                    } label: {
+                        Text("Настроить")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
 
-            WaveformView()
-                .frame(height: 40)
+            if viewModel.isShowingCachedData || viewModel.isRefreshing {
+                HStack(spacing: 8) {
+                    if viewModel.isRefreshing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .tint(.white.opacity(0.82))
+                    }
+
+                    Text(viewModel.isShowingCachedData ? "Showing cached recommendations while My Wave refreshes." : "Refreshing recommendations from your latest activity.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+
+            if let errorMessage = viewModel.errorMessage, viewModel.items.isEmpty {
+                Text(errorMessage)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.58))
+                    .padding(.top, 2)
+            } else if viewModel.items.isEmpty {
+                Text("Listen to a few tracks, save favorites, or finish songs to train My Wave.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.58))
+                    .padding(.top, 2)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(viewModel.items.prefix(4))) { item in
+                        Button {
+                            Task {
+                                await viewModel.play(item: item)
+                            }
+                        } label: {
+                            MyWaveRecommendationRow(item: item)
+                        }
+                        .buttonStyle(.plain)
+
+                        if item.id != viewModel.items.prefix(4).last?.id {
+                            Divider()
+                                .background(Color.white.opacity(0.08))
+                                .padding(.leading, 58)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(20)
         .background(
@@ -135,19 +214,122 @@ struct WaveCard: View {
             RoundedRectangle(cornerRadius: 20)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
+        .task {
+            await viewModel.loadIfNeeded()
+        }
+        .sheet(isPresented: $showingSettings) {
+            MyWaveSettingsView()
+                .environmentObject(dataManager)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 }
 
-struct WaveformView: View {
+struct MyWaveRecommendationRow: View {
+    let item: MyWaveRecommendationItem
+
     var body: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<40, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: 3, height: CGFloat.random(in: 8...25))
+        HStack(spacing: 12) {
+            MyWaveArtworkView(item: item)
+                .frame(width: 46, height: 46)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayTitle)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(item.displayArtist)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+
+                Text(item.reasonSummary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.44))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(item.formattedDuration)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.4))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color.white.opacity(0.05))
+                )
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+struct MyWaveArtworkView: View {
+    let item: MyWaveRecommendationItem
+
+    var body: some View {
+        Group {
+            if let track = item.track {
+                TrackArtworkView(track: track, size: 46, cornerRadius: 10, showsSourceBadge: true)
+            } else if let onlineResult = item.onlineResult {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    onlineResult.provider.accentColor,
+                                    onlineResult.provider.secondaryAccentColor
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+
+                    if let artworkReference = onlineResult.coverArtURL,
+                       let artworkURL = URL(string: artworkReference) {
+                        AsyncImage(url: artworkURL) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                            default:
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.82))
+                            }
+                        }
+                    } else {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.82))
+                    }
+
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            ProviderIconView(provider: onlineResult.provider, size: 11)
+                                .padding(4)
+                                .background(Circle().fill(Color.black.opacity(0.82)))
+                        }
+                    }
+                    .padding(4)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            } else {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.white.opacity(0.08))
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .foregroundColor(.white.opacity(0.5))
+                    )
             }
         }
-        .frame(maxWidth: .infinity)
     }
 }
 

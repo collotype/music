@@ -37,8 +37,8 @@ enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Id
     }
 }
 
-struct SoundCloudStreamCandidate: Equatable, Sendable {
-    enum StreamKind: String, Equatable, Sendable {
+struct SoundCloudStreamCandidate: Codable, Equatable, Sendable {
+    enum StreamKind: String, Codable, Equatable, Sendable {
         case hlsAAC160 = "hls_aac_160_url"
         case hlsAAC96 = "hls_aac_96_url"
         case hlsAAC = "hls_aac_url"
@@ -87,13 +87,16 @@ struct OnlineSearchResults: Equatable {
     }
 }
 
-struct OnlineTrackResult: Identifiable, Equatable, Sendable {
+struct OnlineTrackResult: Identifiable, Codable, Equatable, Sendable {
     let provider: OnlineTrackProvider
     let providerTrackURN: String
     let providerArtistID: String?
     let title: String
     let artist: String
     let album: String?
+    let genres: [String]
+    let tags: [String]
+    let moods: [String]
     let duration: TimeInterval
     let coverArtURL: String?
     let artistImageURL: String?
@@ -193,7 +196,7 @@ struct OnlineTrackResult: Identifiable, Equatable, Sendable {
     }
 }
 
-struct OnlineArtistResult: Identifiable, Equatable, Hashable {
+struct OnlineArtistResult: Identifiable, Equatable, Hashable, Sendable {
     let provider: OnlineTrackProvider
     let providerArtistID: String
     let name: String
@@ -219,7 +222,7 @@ struct OnlineArtistResult: Identifiable, Equatable, Hashable {
     }
 }
 
-struct OnlineArtistProfile: Equatable {
+struct OnlineArtistProfile: Equatable, Sendable {
     let name: String
     let imageURL: String?
     let heroImageURL: String?
@@ -229,7 +232,7 @@ struct OnlineArtistProfile: Equatable {
     let webpageURL: String?
 }
 
-struct OnlineAlbumResult: Identifiable, Equatable {
+struct OnlineAlbumResult: Identifiable, Equatable, Sendable {
     let provider: OnlineTrackProvider
     let providerAlbumID: String
     let title: String
@@ -259,12 +262,12 @@ struct OnlineAlbumResult: Identifiable, Equatable {
     }
 }
 
-struct OnlineReleasePageData: Equatable {
+struct OnlineReleasePageData: Equatable, Sendable {
     let release: OnlineAlbumResult
     let tracks: [OnlineTrackResult]
 }
 
-struct OnlinePlaylistResult: Identifiable, Equatable {
+struct OnlinePlaylistResult: Identifiable, Equatable, Sendable {
     let provider: OnlineTrackProvider
     let providerPlaylistID: String
     let title: String
@@ -1848,6 +1851,75 @@ final class OnlineMusicService {
             .joined(separator: " ")
     }
 
+    private func normalizedMetadataTerms(from values: [String?]) -> [String] {
+        var seenTerms: Set<String> = []
+        var resolvedTerms: [String] = []
+
+        for rawValue in values {
+            guard let cleanedValue = cleanedText(rawValue) else { continue }
+
+            let normalizedValue = cleanedValue
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "/", with: " ")
+                .replacingOccurrences(of: ",", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !normalizedValue.isEmpty else { continue }
+
+            let dedupeKey = normalizedSearchText(normalizedValue)
+            guard !dedupeKey.isEmpty,
+                  seenTerms.insert(dedupeKey).inserted else {
+                continue
+            }
+
+            resolvedTerms.append(normalizedValue)
+        }
+
+        return resolvedTerms
+    }
+
+    private func normalizedTagTerms(from rawTagList: String?) -> [String] {
+        normalizedMetadataTerms(from: splitSoundCloudTagList(rawTagList).map(Optional.some))
+    }
+
+    private func splitSoundCloudTagList(_ rawValue: String?) -> [String] {
+        guard let rawValue = cleanedText(rawValue) else { return [] }
+
+        var tags: [String] = []
+        var currentTag = ""
+        var isInsideQuotes = false
+
+        for character in rawValue {
+            switch character {
+            case "\"":
+                if isInsideQuotes {
+                    let cleanedTag = currentTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanedTag.isEmpty {
+                        tags.append(cleanedTag)
+                    }
+                    currentTag = ""
+                }
+
+                isInsideQuotes.toggle()
+            case " " where !isInsideQuotes:
+                let cleanedTag = currentTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleanedTag.isEmpty {
+                    tags.append(cleanedTag)
+                }
+                currentTag = ""
+            default:
+                currentTag.append(character)
+            }
+        }
+
+        let cleanedTag = currentTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanedTag.isEmpty {
+            tags.append(cleanedTag)
+        }
+
+        return tags
+    }
+
     private func makeOnlineTrackResult(from track: SoundCloudSearchTrack) -> OnlineTrackResult? {
         guard let urn = cleanedText(track.urn),
               let webpageURL = cleanedText(track.permalinkURL),
@@ -1876,6 +1948,9 @@ final class OnlineMusicService {
             title: title,
             artist: artist,
             album: album,
+            genres: normalizedMetadataTerms(from: [track.genre]),
+            tags: normalizedTagTerms(from: track.tagList),
+            moods: [],
             duration: TimeInterval(resolvedDurationMilliseconds) / 1000,
             coverArtURL: coverArtURL,
             artistImageURL: normalizedArtworkURL(track.user?.avatarURL) ?? coverArtURL,
@@ -1910,6 +1985,9 @@ final class OnlineMusicService {
             title: title,
             artist: artistNames.isEmpty ? "Unknown Artist" : artistNames.joined(separator: ", "),
             album: albumName,
+            genres: [],
+            tags: [],
+            moods: [],
             duration: TimeInterval(track.durationMS ?? 0) / 1000,
             coverArtURL: artworkURL,
             artistImageURL: nil,
@@ -2780,6 +2858,7 @@ private struct SoundCloudSearchTrack: Decodable {
     let artworkURL: String?
     let duration: Int?
     let fullDuration: Int?
+    let genre: String?
     let id: Int?
     let likesCount: Int?
     let media: SoundCloudMedia?
@@ -2787,6 +2866,7 @@ private struct SoundCloudSearchTrack: Decodable {
     let playbackCount: Int?
     let publisherMetadata: SoundCloudPublisherMetadata?
     let releaseDate: String?
+    let tagList: String?
     let title: String?
     let trackAuthorization: String?
     let urn: String?
@@ -2796,6 +2876,7 @@ private struct SoundCloudSearchTrack: Decodable {
         case artworkURL = "artwork_url"
         case duration
         case fullDuration = "full_duration"
+        case genre
         case id
         case likesCount = "likes_count"
         case media
@@ -2803,6 +2884,7 @@ private struct SoundCloudSearchTrack: Decodable {
         case playbackCount = "playback_count"
         case publisherMetadata = "publisher_metadata"
         case releaseDate = "release_date"
+        case tagList = "tag_list"
         case title
         case trackAuthorization = "track_authorization"
         case urn

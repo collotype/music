@@ -49,8 +49,42 @@ final class DataManager: ObservableObject {
         !settings.importFolders.isEmpty
     }
 
+    var myWaveSettings: MyWaveSettings {
+        settings.myWaveSettings
+    }
+
     init() {
         loadData()
+    }
+
+    func setMyWaveActivity(_ activity: MyWaveSettings.Activity?) {
+        updateAppSettings { settings in
+            settings.myWaveSettings.activity = settings.myWaveSettings.activity == activity ? nil : activity
+        }
+    }
+
+    func setMyWaveVibe(_ vibe: MyWaveSettings.Vibe?) {
+        updateAppSettings { settings in
+            settings.myWaveSettings.vibe = settings.myWaveSettings.vibe == vibe ? nil : vibe
+        }
+    }
+
+    func setMyWaveMood(_ mood: MyWaveSettings.Mood?) {
+        updateAppSettings { settings in
+            settings.myWaveSettings.mood = settings.myWaveSettings.mood == mood ? nil : mood
+        }
+    }
+
+    func setMyWaveLanguage(_ language: MyWaveSettings.Language?) {
+        updateAppSettings { settings in
+            settings.myWaveSettings.language = settings.myWaveSettings.language == language ? nil : language
+        }
+    }
+
+    func resetMyWaveSettings() {
+        updateAppSettings { settings in
+            settings.myWaveSettings = .default
+        }
     }
 
     func loadData() {
@@ -87,6 +121,7 @@ final class DataManager: ObservableObject {
         writeJSON(favorites, to: favoritesFileURL)
         writeJSON(favoriteArtists, to: favoriteArtistsFileURL)
         writeJSON(settings, to: settingsFileURL)
+        NotificationCenter.default.post(name: .myWaveSignalsDidChange, object: nil)
     }
 
     @discardableResult
@@ -132,6 +167,15 @@ final class DataManager: ObservableObject {
                 newValue: track.lyricsURL,
                 existingValue: tracks[existingIndex].lyricsURL
             )
+            if updatedTrack.genres.isEmpty {
+                updatedTrack.genres = tracks[existingIndex].genres
+            }
+            if updatedTrack.tags.isEmpty {
+                updatedTrack.tags = tracks[existingIndex].tags
+            }
+            if updatedTrack.moods.isEmpty {
+                updatedTrack.moods = tracks[existingIndex].moods
+            }
             updatedTrack.lyricsLastUpdated = track.lyricsLastUpdated ?? tracks[existingIndex].lyricsLastUpdated
             updatedTrack.isFavorite = updatedTrack.storageLocation == .library
             tracks[existingIndex] = updatedTrack
@@ -487,6 +531,9 @@ final class DataManager: ObservableObject {
             title: metadata.title,
             artist: metadata.artist,
             album: metadata.album,
+            genres: result.genres,
+            tags: result.tags,
+            moods: result.moods,
             duration: metadata.duration,
             fileURL: storedPath,
             coverArtURL: result.coverArtURL,
@@ -513,6 +560,9 @@ final class DataManager: ObservableObject {
             title: result.title,
             artist: result.artist,
             album: result.album,
+            genres: result.genres,
+            tags: result.tags,
+            moods: result.moods,
             duration: result.duration,
             fileURL: streamURL.absoluteString,
             coverArtURL: result.coverArtURL,
@@ -561,6 +611,21 @@ final class DataManager: ObservableObject {
                     didUpdateMetadata = true
                 }
 
+                if !result.genres.isEmpty && updatedTrack.genres != result.genres {
+                    updatedTrack.genres = result.genres
+                    didUpdateMetadata = true
+                }
+
+                if !result.tags.isEmpty && updatedTrack.tags != result.tags {
+                    updatedTrack.tags = result.tags
+                    didUpdateMetadata = true
+                }
+
+                if !result.moods.isEmpty && updatedTrack.moods != result.moods {
+                    updatedTrack.moods = result.moods
+                    didUpdateMetadata = true
+                }
+
                 if didUpdateMetadata {
                     tracks[existingIndex] = updatedTrack
                     saveData()
@@ -605,6 +670,9 @@ final class DataManager: ObservableObject {
             title: metadata.title,
             artist: metadata.artist,
             album: metadata.album,
+            genres: result.genres,
+            tags: result.tags,
+            moods: result.moods,
             duration: metadata.duration,
             fileURL: storedPath,
             coverArtURL: resolvedArtworkPath ?? result.coverArtURL,
@@ -624,6 +692,14 @@ final class DataManager: ObservableObject {
         )
 
         let savedTrack = addTrack(track)
+        Task(priority: .utility) {
+            await ListeningHistoryStore.shared.record(
+                kind: .libraryAdd,
+                track: TrackTasteSnapshot(track: savedTrack),
+                sourceContext: "library:add",
+                notify: false
+            )
+        }
         scheduleLyricsPersistenceIfNeeded(for: savedTrack)
         return savedTrack
     }
@@ -1276,6 +1352,7 @@ final class DataManager: ObservableObject {
                 title: probe.title,
                 artist: probe.artist,
                 album: probe.album,
+                genres: probe.genre.map { [$0] } ?? [],
                 duration: probe.duration,
                 fileURL: AppFileManager.shared.relativePath(for: destinationURL),
                 coverArtURL: artworkPath,
@@ -1325,6 +1402,7 @@ final class DataManager: ObservableObject {
         let title = metadataSummary.title ?? filenameFallback.title
         let artist = metadataSummary.preferredArtist ?? filenameFallback.artist ?? "Unknown Artist"
         let album = metadataSummary.album
+        let genre = metadataSummary.genre
         let artworkData = artworkData(for: asset)
 
         debugLog("Imported file path: \(url.path)")
@@ -1342,6 +1420,7 @@ final class DataManager: ObservableObject {
             title: title,
             artist: artist,
             album: album,
+            genre: genre,
             duration: resolvedDuration,
             artworkData: artworkData
         )
@@ -1418,6 +1497,15 @@ final class DataManager: ObservableObject {
             descriptor.key == "album"
         }
 
+        let genre = firstMetadataString(in: items) { descriptor in
+            descriptor.commonKey == "genre" ||
+            descriptor.identifier.contains("genre") ||
+            descriptor.identifier.contains("/tcon") ||
+            descriptor.key == "tcon" ||
+            descriptor.key == "\u{00A9}gen" ||
+            descriptor.key == "genre"
+        }
+
         let preferredArtist = artistTag ?? albumArtistTag ?? commonArtist
         let preferredArtistSource: String?
 
@@ -1437,6 +1525,7 @@ final class DataManager: ObservableObject {
             albumArtistTag: albumArtistTag,
             commonArtist: commonArtist,
             album: album,
+            genre: genre,
             preferredArtist: preferredArtist,
             preferredArtistSource: preferredArtistSource
         )
@@ -1592,6 +1681,9 @@ final class DataManager: ObservableObject {
                 tracks[index].title = probe.title
                 tracks[index].artist = probe.artist
                 tracks[index].album = probe.album
+                if let genre = probe.genre {
+                    tracks[index].genres = [genre]
+                }
                 tracks[index].duration = probe.duration
 
                 if let artworkPath {
@@ -1627,9 +1719,20 @@ final class DataManager: ObservableObject {
             return true
         }
 
+        if track.genres.isEmpty {
+            return true
+        }
+
         return track.duration <= 0 ||
             track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
             track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func updateAppSettings(_ mutation: (inout AppSettings) -> Void) {
+        var updatedSettings = settings
+        mutation(&updatedSettings)
+        settings = updatedSettings
+        saveData()
     }
 }
 
@@ -1643,6 +1746,7 @@ struct AppSettings: Codable {
     var showLyrics: Bool = true
     var cacheEnabled: Bool = true
     var importFolders: [ImportedMusicFolder] = []
+    var myWaveSettings: MyWaveSettings = .default
 
     enum AppTheme: String, Codable {
         case light
@@ -1661,6 +1765,49 @@ struct AppSettings: Codable {
         case medium
         case high
         case lossless
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case theme
+        case accentColor
+        case autoplay
+        case shuffle
+        case repeatMode
+        case quality
+        case showLyrics
+        case cacheEnabled
+        case importFolders
+        case myWaveSettings
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        theme = try container.decodeIfPresent(AppTheme.self, forKey: .theme) ?? .dark
+        accentColor = try container.decodeIfPresent(String.self, forKey: .accentColor) ?? "FF0000"
+        autoplay = try container.decodeIfPresent(Bool.self, forKey: .autoplay) ?? true
+        shuffle = try container.decodeIfPresent(Bool.self, forKey: .shuffle) ?? false
+        repeatMode = try container.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) ?? .off
+        quality = try container.decodeIfPresent(AudioQuality.self, forKey: .quality) ?? .high
+        showLyrics = try container.decodeIfPresent(Bool.self, forKey: .showLyrics) ?? true
+        cacheEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheEnabled) ?? true
+        importFolders = try container.decodeIfPresent([ImportedMusicFolder].self, forKey: .importFolders) ?? []
+        myWaveSettings = try container.decodeIfPresent(MyWaveSettings.self, forKey: .myWaveSettings) ?? .default
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(theme, forKey: .theme)
+        try container.encode(accentColor, forKey: .accentColor)
+        try container.encode(autoplay, forKey: .autoplay)
+        try container.encode(shuffle, forKey: .shuffle)
+        try container.encode(repeatMode, forKey: .repeatMode)
+        try container.encode(quality, forKey: .quality)
+        try container.encode(showLyrics, forKey: .showLyrics)
+        try container.encode(cacheEnabled, forKey: .cacheEnabled)
+        try container.encode(importFolders, forKey: .importFolders)
+        try container.encode(myWaveSettings, forKey: .myWaveSettings)
     }
 }
 
@@ -1701,6 +1848,7 @@ private struct ImportedTrackProbe {
     let title: String
     let artist: String
     let album: String?
+    let genre: String?
     let duration: TimeInterval
     let artworkData: Data?
 }
@@ -1711,6 +1859,7 @@ private struct ImportedMetadataSummary {
     let albumArtistTag: String?
     let commonArtist: String?
     let album: String?
+    let genre: String?
     let preferredArtist: String?
     let preferredArtistSource: String?
 }

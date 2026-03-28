@@ -8,8 +8,8 @@
 import Foundation
 import SwiftUI
 
-struct Track: Identifiable, Codable, Equatable {
-    enum TrackSource: String, Codable {
+struct Track: Identifiable, Codable, Equatable, Sendable {
+    enum TrackSource: String, Codable, Sendable {
         case local
         case youtube
         case appleMusicPreview
@@ -17,7 +17,7 @@ struct Track: Identifiable, Codable, Equatable {
         case spotify
     }
 
-    enum StorageLocation: String, Codable {
+    enum StorageLocation: String, Codable, Sendable {
         case library
         case temp
         case remote
@@ -27,6 +27,9 @@ struct Track: Identifiable, Codable, Equatable {
     var title: String
     var artist: String
     var album: String?
+    var genres: [String]
+    var tags: [String]
+    var moods: [String]
     var duration: TimeInterval
     var fileURL: String?
     var coverArtURL: String?
@@ -54,6 +57,9 @@ struct Track: Identifiable, Codable, Equatable {
         title: String,
         artist: String,
         album: String? = nil,
+        genres: [String] = [],
+        tags: [String] = [],
+        moods: [String] = [],
         duration: TimeInterval,
         fileURL: String? = nil,
         coverArtURL: String? = nil,
@@ -80,6 +86,9 @@ struct Track: Identifiable, Codable, Equatable {
         self.title = title
         self.artist = artist
         self.album = album
+        self.genres = genres
+        self.tags = tags
+        self.moods = moods
         self.duration = duration
         self.fileURL = fileURL
         self.coverArtURL = coverArtURL
@@ -108,6 +117,9 @@ struct Track: Identifiable, Codable, Equatable {
         case title
         case artist
         case album
+        case genres
+        case tags
+        case moods
         case duration
         case fileURL
         case coverArtURL
@@ -138,6 +150,9 @@ struct Track: Identifiable, Codable, Equatable {
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
         artist = try container.decodeIfPresent(String.self, forKey: .artist) ?? ""
         album = try container.decodeIfPresent(String.self, forKey: .album)
+        genres = try container.decodeIfPresent([String].self, forKey: .genres) ?? []
+        tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        moods = try container.decodeIfPresent([String].self, forKey: .moods) ?? []
         duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
         fileURL = try container.decodeIfPresent(String.self, forKey: .fileURL)
         coverArtURL = try container.decodeIfPresent(String.self, forKey: .coverArtURL)
@@ -167,6 +182,9 @@ struct Track: Identifiable, Codable, Equatable {
         try container.encode(title, forKey: .title)
         try container.encode(artist, forKey: .artist)
         try container.encodeIfPresent(album, forKey: .album)
+        try container.encode(genres, forKey: .genres)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(moods, forKey: .moods)
         try container.encode(duration, forKey: .duration)
         try container.encodeIfPresent(fileURL, forKey: .fileURL)
         try container.encodeIfPresent(coverArtURL, forKey: .coverArtURL)
@@ -261,7 +279,7 @@ struct ProviderIconView: View {
     }
 }
 
-struct Playlist: Identifiable, Codable, Equatable {
+struct Playlist: Identifiable, Codable, Equatable, Sendable {
     var id: String = UUID().uuidString
     var name: String
     var description: String?
@@ -286,7 +304,7 @@ struct Playlist: Identifiable, Codable, Equatable {
     }
 }
 
-struct ImportedMusicFolder: Identifiable, Codable, Equatable {
+struct ImportedMusicFolder: Identifiable, Codable, Equatable, Sendable {
     var id: String = UUID().uuidString
     var name: String
     var bookmarkData: Data
@@ -298,7 +316,7 @@ struct ImportedMusicFolder: Identifiable, Codable, Equatable {
     }
 }
 
-struct OnlineArtistRoute: Hashable {
+struct OnlineArtistRoute: Hashable, Sendable {
     let provider: OnlineTrackProvider
     let providerArtistID: String
     let artistName: String
@@ -310,7 +328,7 @@ struct OnlineArtistRoute: Hashable {
     }
 }
 
-struct OnlineReleaseRoute: Hashable {
+struct OnlineReleaseRoute: Hashable, Sendable {
     let provider: OnlineTrackProvider
     let providerReleaseID: String
     let title: String
@@ -319,7 +337,7 @@ struct OnlineReleaseRoute: Hashable {
     let webpageURL: String?
 }
 
-struct FavoriteArtist: Identifiable, Codable, Hashable {
+struct FavoriteArtist: Identifiable, Codable, Hashable, Sendable {
     let provider: OnlineTrackProvider
     let providerArtistID: String
     let artistName: String
