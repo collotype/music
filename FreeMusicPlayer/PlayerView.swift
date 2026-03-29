@@ -13,7 +13,7 @@ struct PlayerView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var router: AppRouter
     @Binding var isPresented: Bool
-    @State private var showInlineLyrics: Bool = false
+    @State private var showLyricsSheet: Bool = false
     @State private var showEQ: Bool = false
     @State private var isTogglingFavorite = false
     @State private var favoriteActionErrorMessage: String?
@@ -26,7 +26,7 @@ struct PlayerView: View {
                 playerHeader
                 albumArt
                     .padding(.top, 12)
-                Spacer(minLength: showInlineLyrics ? 72 : 56)
+                Spacer(minLength: 56)
                 playerControls
             }
         }
@@ -35,9 +35,6 @@ struct PlayerView: View {
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Player background updated for track: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
-            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                showInlineLyrics = false
-            }
         }
         .sheet(isPresented: $showEQ) {
             PlayerPlaceholderSheet(
@@ -45,12 +42,29 @@ struct PlayerView: View {
                 description: "The button is wired up and ready for a real EQ screen."
             )
         }
+        .sheet(isPresented: $showLyricsSheet) {
+            lyricsSheet
+        }
         .alert("Favorites Unavailable", isPresented: favoriteActionErrorIsPresented) {
             Button("OK", role: .cancel) {
                 favoriteActionErrorMessage = nil
             }
         } message: {
             Text(favoriteActionErrorMessage ?? "This track could not be updated in your library.")
+        }
+    }
+
+    @ViewBuilder
+    private var lyricsSheet: some View {
+        if #available(iOS 16.4, *) {
+            PlayerLyricsSheet()
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        } else {
+            PlayerLyricsSheet()
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -139,36 +153,15 @@ struct PlayerView: View {
                     ZStack {
                         TrackArtworkView(track: currentTrack, size: 320, cornerRadius: 24, showsSourceBadge: false)
                             .aspectRatio(1, contentMode: .fit)
-                            .opacity(showInlineLyrics ? 0 : 1)
 
-                        if showInlineLyrics {
-                            PlayerLyricsOverlay(
-                                track: currentTrack,
-                                playbackTime: audioPlayer.currentTime
-                            ) {
-                                withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                                    showInlineLyrics = false
-                                }
-                            }
-                            .transition(
-                                .asymmetric(
-                                    insertion: .opacity.combined(with: .scale(scale: 0.98)),
-                                    removal: .opacity
-                                )
-                            )
-                        } else {
-                            artworkHint
-                                .transition(.opacity)
-                        }
+                        artworkHint
                     }
                     .frame(width: 320, height: 320)
                     .clipShape(RoundedRectangle(cornerRadius: 24))
                     .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
                     .contentShape(RoundedRectangle(cornerRadius: 24))
                     .onTapGesture {
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-                            showInlineLyrics = true
-                        }
+                        showLyricsSheet = true
                     }
                 } else {
                     ZStack {
@@ -476,7 +469,7 @@ struct PlayerView: View {
                 Image(systemName: "text.quote")
                     .font(.system(size: 12, weight: .semibold))
 
-                Text("Tap artwork for lyrics")
+                Text("Tap artwork to open lyrics")
                     .font(.system(size: 12, weight: .semibold))
             }
             .foregroundColor(.white.opacity(0.82))
@@ -563,11 +556,14 @@ struct PlayerPlaceholderSheet: View {
 }
 
 struct PlayerLyricsSheet: View {
-    let track: Track?
+    @EnvironmentObject private var audioPlayer: AudioPlayer
 
     var body: some View {
         NavigationStack {
-            TrackLyricsView(track: track)
+            TrackLyricsView(
+                track: audioPlayer.currentTrack,
+                playbackTime: audioPlayer.currentTime
+            )
                 .navigationTitle("Lyrics")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
