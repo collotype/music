@@ -1249,37 +1249,51 @@ actor LyricsMetadataResolver {
     }
 
     private func geniusLyrics(using lookupMetadata: LyricsLookupMetadata) async -> ResolvedTrackLyrics? {
+        var candidateResultsByID: [Int: GeniusSongHitResult] = [:]
+
         for searchQuery in lookupMetadata.geniusSearchQueries {
             guard let encodedQuery = searchQuery.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                  let searchURL = URL(string: "https://genius.com/api/search/multi?per_page=8&q=\(encodedQuery)") else {
+                  let searchURL = URL(string: "https://genius.com/api/search/multi?per_page=5&q=\(encodedQuery)") else {
                 continue
             }
 
             do {
                 let searchData = try await fetchData(from: searchURL)
-                guard let response = try? JSONDecoder().decode(GeniusSearchEnvelope.self, from: searchData),
-                      let bestMatch = bestGeniusMatch(
-                        forTitleCandidates: lookupMetadata.normalizedTitleCandidates,
-                        artistCandidates: lookupMetadata.normalizedArtistCandidates,
-                        in: response.response.sections.flatMap { $0.hits ?? [] }
-                      ) else {
+                guard let response = try? JSONDecoder().decode(GeniusSearchEnvelope.self, from: searchData) else {
                     continue
                 }
 
-                let lyricsPageURLString = cleanedLyricsText(bestMatch.url) ??
-                    cleanedLyricsText(bestMatch.path).map { "https://genius.com\($0)" }
-
-                guard let lyricsPageURLString,
-                      let lyricsPageURL = URL(string: lyricsPageURLString) else {
-                    continue
+                for result in response.response.sections.flatMap({ $0.hits ?? [] }).map(\.result) {
+                    candidateResultsByID[result.id] = result
                 }
+            } catch {
+                debugLog("Genius lyrics lookup failed for query \(searchQuery): \(error.localizedDescription)")
+                continue
+            }
+        }
 
+        let rankedCandidates = rankedGeniusResults(
+            using: lookupMetadata,
+            in: Array(candidateResultsByID.values)
+        )
+
+        for candidate in rankedCandidates.prefix(5) {
+            let lyricsPageURLString = cleanedLyricsText(candidate.url) ??
+                cleanedLyricsText(candidate.path).map { "https://genius.com\($0)" }
+
+            guard let lyricsPageURLString,
+                  let lyricsPageURL = URL(string: lyricsPageURLString) else {
+                continue
+            }
+
+            do {
                 let pageHTML = try await fetchHTML(from: lyricsPageURL)
                 guard let lyricsHTML = extractLyricsHTML(from: pageHTML),
                       let lyricsText = plainTextLyrics(fromHTML: lyricsHTML) else {
                     continue
                 }
 
+                debugLog("Lyrics resolved through Genius for \(lookupMetadata.artistVariants.first ?? "unknown artist") - \(lookupMetadata.titleVariants.first ?? "unknown title")")
                 return ResolvedTrackLyrics(
                     text: lyricsText,
                     syncedText: nil,
@@ -1288,8 +1302,7 @@ actor LyricsMetadataResolver {
                     lastUpdated: Date()
                 )
             } catch {
-                debugLog("Genius lyrics lookup failed for query \(searchQuery): \(error.localizedDescription)")
-                return nil
+                debugLog("Genius lyrics page fetch failed for \(lyricsPageURLString): \(error.localizedDescription)")
             }
         }
 
@@ -1401,56 +1414,59 @@ actor LyricsMetadataResolver {
         return html
     }
 
-    private func bestGeniusMatch(
-        forTitleCandidates titleCandidates: Set<String>,
-        artistCandidates: Set<String>,
-        in hits: [GeniusSearchHit]
-    ) -> GeniusSongHitResult? {
-        hits.compactMap { hit -> (result: GeniusSongHitResult, score: Int, titleScore: Int, artistScore: Int)? in
-            let result = hit.result
+    private func rankedGeniusResults(
+        using lookupMetadata: LyricsLookupMetadata,
+        in results: [GeniusSongHitResult]
+    ) -> [GeniusSongHitResult] {
+        results.compactMap { result -> (result: GeniusSongHitResult, score: Int, titleScore: Int, artistScore: Int)? in
             guard let title = cleanedLyricsText(result.title),
-                  cleanedLyricsText(result.path) != nil || cleanedLyricsText(result.url) != nil else {
+                  looksLikeGeniusSongResult(result) else {
                 return nil
             }
 
             let candidateTitleScore = comparisonScore(
-                expectedCandidates: titleCandidates,
+                expectedCandidates: lookupMetadata.normalizedTitleCandidates,
                 actualCandidates: normalizedTitleCandidates(
-                    for: [
-                        title,
-                        result.fullTitle,
-                        result.titleWithFeatured
-                    ]
-                    .compactMap { $0 }
-                    .joined(separator: " ")
+                    for: [title, result.titleWithFeatured, result.fullTitle].compactMap { $0 }
                 )
             )
             let candidateArtistScore = comparisonScore(
-                expectedCandidates: artistCandidates,
+                expectedCandidates: lookupMetadata.normalizedArtistCandidates,
                 actualCandidates: normalizedArtistCandidates(
-                    for: [
-                        result.artistNames,
-                        result.primaryArtist?.name
-                    ]
-                    .compactMap { $0 }
-                    .joined(separator: ", ")
+                    for: [result.artistNames, result.primaryArtist?.name].compactMap { $0 }
                 )
             )
-            var score = candidateTitleScore + candidateArtistScore
+            var score = (candidateTitleScore * 2) + candidateArtistScore
 
             if result.lyricsState?.lowercased() == "complete" {
                 score += 10
             }
 
-            if hasVersionMismatch(expectedCandidates: titleCandidates, candidateTitle: title) {
-                score -= 25
+            if candidateArtistScore >= 96 {
+                score += 8
             }
 
-            guard candidateTitleScore >= 58 else {
+            if candidateTitleScore >= 96 {
+                score += 6
+            }
+
+            if hasVersionMismatch(expectedCandidates: lookupMetadata.normalizedTitleCandidates, candidateTitle: title) {
+                score -= 22
+            }
+
+            if looksLikeDerivedLyricsResult(result), candidateArtistScore < 50 {
+                score -= 80
+            }
+
+            guard candidateTitleScore >= 52 else {
                 return nil
             }
 
-            guard candidateArtistScore >= 34 || candidateTitleScore >= 94 else {
+            guard candidateArtistScore >= 28 || candidateTitleScore >= 100 else {
+                return nil
+            }
+
+            guard score >= 128 else {
                 return nil
             }
 
@@ -1467,47 +1483,64 @@ actor LyricsMetadataResolver {
 
             return left.artistScore > right.artistScore
         }
-        .first?.result
+        .map(\.result)
     }
 
     private func comparisonScore(expectedCandidates: Set<String>, actualCandidates: Set<String>) -> Int {
         guard !expectedCandidates.isEmpty, !actualCandidates.isEmpty else { return 0 }
 
-        if !expectedCandidates.intersection(actualCandidates).isEmpty {
+        var bestScore = 0
+
+        for expected in expectedCandidates {
+            for actual in actualCandidates {
+                bestScore = max(bestScore, comparisonScore(expected: expected, actual: actual))
+                if bestScore == 100 {
+                    return bestScore
+                }
+            }
+        }
+
+        return bestScore
+    }
+
+    private func comparisonScore(expected: String, actual: String) -> Int {
+        guard !expected.isEmpty, !actual.isEmpty else { return 0 }
+
+        if expected == actual {
             return 100
         }
 
-        if expectedCandidates.contains(where: { expected in
-            actualCandidates.contains(where: { actual in
-                expected.count > 4 && actual.count > 4 && (expected.contains(actual) || actual.contains(expected))
-            })
-        }) {
-            return 82
+        let condensedExpected = expected.replacingOccurrences(of: " ", with: "")
+        let condensedActual = actual.replacingOccurrences(of: " ", with: "")
+        if condensedExpected == condensedActual {
+            return 98
         }
 
-        let expectedTokens = Set(expectedCandidates.flatMap { $0.split(separator: " ").map(String.init) })
-        let actualTokens = Set(actualCandidates.flatMap { $0.split(separator: " ").map(String.init) })
-        let sharedTokens = expectedTokens.intersection(actualTokens)
-        let tokenOverlapRatio = Int(
-            (
-                Double(sharedTokens.count) /
-                Double(max(1, min(expectedTokens.count, actualTokens.count)))
-            ) * 100
-        )
-
-        if tokenOverlapRatio >= 90 {
+        if expected.count > 4,
+           actual.count > 4,
+           (expected.contains(actual) || actual.contains(expected)) {
             return 92
         }
 
-        if tokenOverlapRatio >= 72 {
+        let expectedTokens = tokenSet(for: expected)
+        let actualTokens = tokenSet(for: actual)
+        let sharedTokens = expectedTokens.intersection(actualTokens)
+        let expectedCoverage = percentageScore(sharedTokens.count, over: expectedTokens.count)
+        let actualCoverage = percentageScore(sharedTokens.count, over: actualTokens.count)
+
+        if expectedCoverage == 100 && actualCoverage >= 70 {
+            return 94
+        }
+
+        if expectedCoverage >= 85 && actualCoverage >= 50 {
+            return 92
+        }
+
+        if expectedCoverage >= 72 && actualCoverage >= 40 {
             return 78
         }
 
-        if tokenOverlapRatio >= 55 {
-            return 64
-        }
-
-        if sharedTokens.count >= min(3, max(1, expectedTokens.count)) {
+        if expectedCoverage >= 55 && actualCoverage >= 30 {
             return 64
         }
 
@@ -1518,35 +1551,119 @@ actor LyricsMetadataResolver {
         return 0
     }
 
+    private func tokenSet(for value: String) -> Set<String> {
+        Set(value.split(separator: " ").map(String.init))
+    }
+
+    private func percentageScore(_ numerator: Int, over denominator: Int) -> Int {
+        guard denominator > 0 else { return 0 }
+        return Int((Double(numerator) / Double(denominator)) * 100)
+    }
+
+    private func normalizedTitleCandidates(for values: [String]) -> Set<String> {
+        Set(values.flatMap(titleSearchVariants).map(normalizedComparisonText).filter { !$0.isEmpty })
+    }
+
     private func normalizedTitleCandidates(for title: String) -> Set<String> {
-        Set(titleSearchVariants(for: title).map(normalizedComparisonText).filter { !$0.isEmpty })
+        normalizedTitleCandidates(for: [title])
+    }
+
+    private func normalizedArtistCandidates(for values: [String]) -> Set<String> {
+        Set(values.flatMap(artistSearchVariants).map(normalizedComparisonText).filter { !$0.isEmpty })
     }
 
     private func normalizedArtistCandidates(for artist: String) -> Set<String> {
-        Set(artistSearchVariants(for: artist).map(normalizedComparisonText).filter { !$0.isEmpty })
+        normalizedArtistCandidates(for: [artist])
     }
 
     private func normalizedComparisonText(_ value: String) -> String {
-        let strippedValue = value
+        let strippedValue = normalizedSearchSource(value)
             .replacingOccurrences(of: "\u{0451}", with: "\u{0435}")
-            .replacingOccurrences(of: #"(feat\.?|ft\.?|featuring)\s+.+$"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)(prod\.?|produced by)\s+.+$"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)(official audio|official video|lyrics video|lyric video|visualizer|nightcore|sped up|slowed(?:\s*\+\s*reverb)?|remix|mix|edit|live|version|remaster(ed)?)"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"[()\[\]{}]"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"[|/:]"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*-\s*"#, with: " ", options: .regularExpression)
+            .applyingSearchNoiseCleanup()
             .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
 
         return strippedValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    private func normalizedSearchSource(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\u{2013}", with: "-")
+            .replacingOccurrences(of: "\u{2014}", with: "-")
+            .replacingOccurrences(of: "\u{2212}", with: "-")
+            .replacingOccurrences(of: "\u{00D7}", with: " x ")
+            .replacingOccurrences(of: "\u{FF0F}", with: "/")
+            .replacingOccurrences(of: "\u{FF06}", with: "&")
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .replacingOccurrences(of: "\u{2018}", with: "'")
+            .replacingOccurrences(of: "\u{201C}", with: "\"")
+            .replacingOccurrences(of: "\u{201D}", with: "\"")
+            .replacingOccurrences(of: "â€“", with: "-")
+            .replacingOccurrences(of: "â€”", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "−", with: "-")
+            .replacingOccurrences(of: "×", with: " x ")
+            .replacingOccurrences(of: "／", with: "/")
+            .replacingOccurrences(of: "＆", with: "&")
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "“", with: "\"")
+            .replacingOccurrences(of: "”", with: "\"")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func hasVersionMismatch(expectedCandidates: Set<String>, candidateTitle: String) -> Bool {
-        let normalizedCandidateTitle = candidateTitle.lowercased()
-        let versionMarkers = ["live", "remix", "edit", "sped up", "slowed", "remaster"]
+        let normalizedCandidateTitle = normalizedComparisonText(candidateTitle)
+        let versionMarkers = [
+            "live", "remix", "edit", "sped up", "slowed", "remaster",
+            "radio edit", "extended mix", "instrumental", "acoustic"
+        ]
 
         return versionMarkers.contains { marker in
             normalizedCandidateTitle.contains(marker) &&
                 !expectedCandidates.contains(where: { $0.contains(marker) })
         }
+    }
+
+    private func looksLikeGeniusSongResult(_ result: GeniusSongHitResult) -> Bool {
+        if result.resultType?.lowercased() == "song" {
+            return true
+        }
+
+        let candidatePath = cleanedLyricsText(result.path) ??
+            cleanedLyricsText(result.url).flatMap { URL(string: $0)?.path }
+        let normalizedPath = normalizedSearchSource(candidatePath ?? "").lowercased()
+        return normalizedPath.contains("-lyrics")
+    }
+
+    private func looksLikeDerivedLyricsResult(_ result: GeniusSongHitResult) -> Bool {
+        let combinedValue = normalizedSearchSource(
+            [
+                result.title,
+                result.artistNames,
+                result.fullTitle,
+                result.path,
+                result.url
+            ]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        )
+        .lowercased()
+
+        let markers = [
+            "translation", "traduccion", "traducción", "traducao", "traduction", "traduzione",
+            "ceviri", "çeviri", "ubersetzung", "übersetzung", "перевод", "deutsche",
+            "espanol", "español", "francaise", "française", "russian translations",
+            "annotated", "playlist", "tracklist", "ranking page", "essentials", "top hits",
+            "spanish version", "turkce", "türkçe"
+        ]
+
+        return markers.contains { combinedValue.contains($0) }
     }
 
     private func extractLyricsHTML(from pageHTML: String) -> String? {
@@ -1660,8 +1777,15 @@ actor LyricsMetadataResolver {
     }
 
     private func lookupMetadata(for track: Track) -> LyricsLookupMetadata? {
-        let titleVariants = titleSearchVariants(for: track.displayTitle)
-        let artistVariants = artistSearchVariants(for: track.displayArtist)
+        let cleanedTitle = normalizedSearchSource(track.displayTitle)
+        let cleanedArtist = normalizedSearchSource(track.displayArtist)
+        let inferredMetadata = inferredMetadata(fromTitle: cleanedTitle, artist: cleanedArtist)
+        let titleVariants = deduplicatedNonEmptyValues(
+            (inferredMetadata.titleValues + [cleanedTitle]).flatMap(titleSearchVariants)
+        )
+        let artistVariants = deduplicatedNonEmptyValues(
+            (inferredMetadata.artistValues + [cleanedArtist]).flatMap(artistSearchVariants)
+        )
         let normalizedTitleCandidates = Set(titleVariants.map(normalizedComparisonText).filter { !$0.isEmpty })
         let normalizedArtistCandidates = Set(artistVariants.map(normalizedComparisonText).filter { !$0.isEmpty })
 
@@ -1680,35 +1804,102 @@ actor LyricsMetadataResolver {
         )
     }
 
+    private func inferredMetadata(fromTitle title: String, artist: String) -> (titleValues: [String], artistValues: [String]) {
+        guard let (left, right) = splitCombinedTitle(title) else {
+            return ([], [])
+        }
+
+        let knownArtistCandidates = normalizedArtistCandidates(for: artist)
+        let normalizedLeft = normalizedComparisonText(left)
+        let normalizedRight = normalizedComparisonText(right)
+
+        if knownArtistCandidates.isEmpty {
+            return ([right], [left])
+        }
+
+        let leftArtistScore = comparisonScore(
+            expectedCandidates: knownArtistCandidates,
+            actualCandidates: Set([normalizedLeft])
+        )
+        let rightArtistScore = comparisonScore(
+            expectedCandidates: knownArtistCandidates,
+            actualCandidates: Set([normalizedRight])
+        )
+
+        if leftArtistScore >= 82 && leftArtistScore > rightArtistScore {
+            return ([right], [left])
+        }
+
+        if rightArtistScore >= 82 && rightArtistScore > leftArtistScore {
+            return ([left], [right])
+        }
+
+        return ([], [])
+    }
+
+    private func splitCombinedTitle(_ value: String) -> (String, String)? {
+        let cleanedValue = normalizedSearchSource(value)
+        let separators = [" - ", " | ", " / "]
+
+        for separator in separators {
+            guard let range = cleanedValue.range(of: separator) else { continue }
+            let left = String(cleanedValue[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let right = String(cleanedValue[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !left.isEmpty, !right.isEmpty else { continue }
+            return (left, right)
+        }
+
+        return nil
+    }
+
     private func titleSearchVariants(for title: String) -> [String] {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTitle = normalizedSearchSource(title)
         guard !trimmedTitle.isEmpty else { return [] }
 
+        let flattenedBracketTitle = trimmedTitle
+            .replacingOccurrences(of: #"[()\[\]{}]"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let strippedBracketedTitle = trimmedTitle.replacingOccurrences(
             of: #"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}"#,
             with: " ",
             options: .regularExpression
         )
-        let strippedNoiseTitle = strippedBracketedTitle
-            .replacingOccurrences(of: #"(?:^|\s)(feat\.?|ft\.?|featuring|prod\.?|produced by)\s+.+$"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)(official audio|official video|lyrics video|lyric video|visualizer|nightcore|sped up(?:\s*\+\s*reverb)?|slowed(?:\s*\+\s*reverb)?|remix|mix|edit|live|version|remaster(?:ed)?)"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        let strippedFeatureTitle = removingFeatureClauses(from: flattenedBracketTitle)
+        let strippedNoiseTitle = removingVersionNoise(from: strippedFeatureTitle)
 
         var variants: [String] = [
             trimmedTitle,
+            flattenedBracketTitle,
             strippedBracketedTitle,
+            strippedFeatureTitle,
             strippedNoiseTitle
         ]
 
-        let titleSeparators = [" - ", " – ", " — ", " | ", ":"]
+        let titleSeparators = [" - ", " | ", " / ", ": "]
         for separator in titleSeparators {
             guard let range = trimmedTitle.range(of: separator) else { continue }
             let prefix = String(trimmedTitle[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             let suffix = String(trimmedTitle[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanedPrefix = removingVersionNoise(from: removingFeatureClauses(from: prefix))
+            let cleanedSuffix = removingVersionNoise(from: removingFeatureClauses(from: suffix))
 
             if containsLyricsNoise(in: suffix) {
-                variants.append(prefix)
+                if !cleanedPrefix.isEmpty {
+                    variants.append(cleanedPrefix)
+                }
+                if !cleanedSuffix.isEmpty {
+                    variants.append(cleanedSuffix)
+                }
+            }
+
+            if containsLyricsNoise(in: prefix) {
+                if !cleanedSuffix.isEmpty {
+                    variants.append(cleanedSuffix)
+                }
             }
         }
 
@@ -1716,24 +1907,56 @@ actor LyricsMetadataResolver {
     }
 
     private func artistSearchVariants(for artist: String) -> [String] {
-        let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedArtist.isEmpty, trimmedArtist != "Unknown Artist" else { return [] }
+        let trimmedArtist = normalizedSearchSource(artist)
+        guard !trimmedArtist.isEmpty,
+              normalizedComparisonText(trimmedArtist) != "unknown artist" else { return [] }
 
-        let strippedArtist = trimmedArtist
-            .replacingOccurrences(of: #"\[[^\]]*\]|\([^)]*\)|\{[^}]*\}"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"(feat\.?|ft\.?|featuring|prod\.?|produced by)\s+.+$"#, with: " ", options: .regularExpression)
+        let flattenedArtist = trimmedArtist
+            .replacingOccurrences(of: #"[()\[\]{}]"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let strippedArtist = removingFeatureClauses(from: flattenedArtist)
 
-        var variants: [String] = [trimmedArtist, strippedArtist]
-        let lowercasedArtist = strippedArtist.lowercased()
-        let separators = [" feat", " ft", ",", "&", " x ", " and ", " with "]
-        let separatorIndex = separators.compactMap { lowercasedArtist.range(of: $0)?.lowerBound }.min()
-        if let separatorIndex {
-            variants.append(String(strippedArtist[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines))
+        var variants: [String] = [trimmedArtist, flattenedArtist, strippedArtist]
+        let artistComponents = separatedArtistComponents(from: strippedArtist)
+        if let primaryArtist = artistComponents.first {
+            variants.append(primaryArtist)
         }
+        variants.append(contentsOf: artistComponents)
 
         return deduplicatedNonEmptyValues(variants)
+    }
+
+    private func separatedArtistComponents(from artist: String) -> [String] {
+        let separatedArtist = normalizedSearchSource(artist)
+            .replacingOccurrences(of: #"(?i)\b(feat\.?|ft\.?|featuring|with|and|vs\.?|x)\b"#, with: ",", options: .regularExpression)
+            .replacingOccurrences(of: "&", with: ",")
+            .replacingOccurrences(of: "/", with: ",")
+            .replacingOccurrences(of: ";", with: ",")
+
+        return deduplicatedNonEmptyValues(
+            separatedArtist
+                .split(separator: ",")
+                .map(String.init)
+        )
+    }
+
+    private func removingFeatureClauses(from value: String) -> String {
+        normalizedSearchSource(value)
+            .replacingOccurrences(
+                of: #"(?i)(?:^|\s)(feat\.?|ft\.?|featuring|prod\.?|produced by)\s+.+$"#,
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func removingVersionNoise(from value: String) -> String {
+        normalizedSearchSource(value)
+            .applyingSearchNoiseCleanup()
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func deduplicatedNonEmptyValues(_ values: [String]) -> [String] {
@@ -1755,11 +1978,12 @@ actor LyricsMetadataResolver {
     }
 
     private func containsLyricsNoise(in value: String) -> Bool {
-        let normalizedValue = value.lowercased()
+        let normalizedValue = normalizedSearchSource(value).lowercased()
         let markers = [
             "feat", "ft", "featuring", "prod", "produced by", "official audio", "official video",
             "lyrics video", "lyric video", "visualizer", "nightcore", "slowed", "sped up",
-            "remix", "edit", "mix", "live", "version", "remaster"
+            "remix", "edit", "mix", "live", "version", "remaster", "radio edit",
+            "extended mix", "instrumental", "karaoke", "acoustic"
         ]
 
         return markers.contains { normalizedValue.contains($0) }
@@ -1771,6 +1995,27 @@ actor LyricsMetadataResolver {
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
 
         return cleanedLyricsText(plainText)
+    }
+}
+
+private extension String {
+    func applyingSearchNoiseCleanup() -> String {
+        self
+            .replacingOccurrences(
+                of: #"(?i)(?:^|\s)(feat\.?|ft\.?|featuring)\s+.+$"#,
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)(?:^|\s)(prod\.?|produced by)\s+.+$"#,
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)(official audio|official video|lyrics video|lyric video|visualizer|nightcore|sped up(?:\s*\+\s*reverb)?|slowed(?:\s*\+\s*reverb)?|radio edit|extended mix|remix|mix|edit|live|version|remaster(?:ed)?|instrumental|karaoke|acoustic)"#,
+                with: " ",
+                options: .regularExpression
+            )
     }
 }
 
@@ -1792,6 +2037,7 @@ private struct GeniusSearchHit: Decodable {
 
 private struct GeniusSongHitResult: Decodable {
     let id: Int
+    let resultType: String?
     let title: String?
     let fullTitle: String?
     let titleWithFeatured: String?
@@ -1803,6 +2049,7 @@ private struct GeniusSongHitResult: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case resultType = "_type"
         case title
         case fullTitle = "full_title"
         case titleWithFeatured = "title_with_featured"
@@ -1843,10 +2090,12 @@ private struct LyricsLookupMetadata {
     var geniusSearchQueries: [String] {
         var queries: [String] = []
 
-        for artist in artistVariants.prefix(2) {
-            for title in titleVariants.prefix(3) {
-                queries.append("\(artist) \(title)")
-            }
+        for query in providerQueries.prefix(10) {
+            queries.append("\(query.artist) \(query.title)")
+        }
+
+        for title in titleVariants.prefix(2) {
+            queries.append(title)
         }
 
         return deduplicatedQueries(queries)
@@ -1855,8 +2104,8 @@ private struct LyricsLookupMetadata {
     var providerQueries: [(artist: String, title: String)] {
         var queries: [(artist: String, title: String)] = []
 
-        for artist in artistVariants.prefix(2) {
-            for title in titleVariants.prefix(4) {
+        for artist in artistVariants.prefix(3) {
+            for title in titleVariants.prefix(6) {
                 queries.append((artist: artist, title: title))
             }
         }
