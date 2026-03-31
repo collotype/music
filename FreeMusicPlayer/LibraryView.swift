@@ -37,7 +37,7 @@ struct LibraryView: View {
             tracks = dataManager.favoriteTracks
         case .offline:
             tracks = tracks.filter { $0.fileURL != nil }
-        case .playlists, .favoritePlaylists, .favoriteArtists:
+        case .playlists, .favoritePlaylists, .artists, .albums, .favoriteArtists:
             return []
         }
 
