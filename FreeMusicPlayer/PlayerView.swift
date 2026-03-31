@@ -14,6 +14,7 @@ struct PlayerView: View {
     @EnvironmentObject var router: AppRouter
     @Binding var isPresented: Bool
     @State private var showLyricsSheet: Bool = false
+    @State private var showQueueSheet: Bool = false
     @State private var showEQ: Bool = false
     @State private var isTogglingFavorite = false
     @State private var favoriteActionErrorMessage: String?
@@ -45,7 +46,10 @@ struct PlayerView: View {
         .sheet(isPresented: $showLyricsSheet) {
             lyricsSheet
         }
-        .alert("Favorites Unavailable", isPresented: favoriteActionErrorIsPresented) {
+        .sheet(isPresented: $showQueueSheet) {
+            UpNextQueueSheet()
+        }
+        .alert("Library Unavailable", isPresented: favoriteActionErrorIsPresented) {
             Button("OK", role: .cancel) {
                 favoriteActionErrorMessage = nil
             }
@@ -122,16 +126,40 @@ struct PlayerView: View {
                 .foregroundColor(.white.opacity(0.6))
             
             Spacer()
-            
-            Button {
-                debugLog("Player EQ button pressed")
-                showEQ = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 20))
-                    .foregroundColor(.white.opacity(0.8))
+
+            HStack(spacing: 14) {
+                Button {
+                    debugLog("Player queue button pressed")
+                    showQueueSheet = true
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 20))
+                            .foregroundColor(.white.opacity(0.84))
+
+                        if !audioPlayer.queuedTracks.isEmpty {
+                            Text("\(audioPlayer.queuedTracks.count)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.white))
+                                .offset(x: 10, y: -8)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    debugLog("Player EQ button pressed")
+                    showEQ = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -161,6 +189,7 @@ struct PlayerView: View {
                     .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
                     .contentShape(RoundedRectangle(cornerRadius: 24))
                     .onTapGesture {
+                        guard dataManager.settings.showLyrics else { return }
                         showLyricsSheet = true
                     }
                 } else {
@@ -223,6 +252,7 @@ struct PlayerView: View {
         VStack(spacing: 24) {
             progressSection
             primaryControls
+            secondaryControls
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 46)
@@ -271,6 +301,28 @@ struct PlayerView: View {
             nextButton
             Spacer(minLength: 6)
             favoriteButton
+        }
+    }
+
+    var secondaryControls: some View {
+        HStack(spacing: 14) {
+            secondaryControlChip(
+                title: "Up Next",
+                value: audioPlayer.queuedTracks.isEmpty ? "Empty" : "\(audioPlayer.queuedTracks.count)",
+                systemImage: "list.bullet"
+            ) {
+                debugLog("Player secondary queue button pressed")
+                showQueueSheet = true
+            }
+
+            secondaryControlChip(
+                title: "Speed",
+                value: playbackSpeedLabel,
+                systemImage: "speedometer"
+            ) {
+                debugLog("Player speed cycle button pressed")
+                audioPlayer.cyclePlaybackSpeed()
+            }
         }
     }
     
@@ -323,6 +375,10 @@ struct PlayerView: View {
     }
 
     private var playbackModeIcon: String {
+        if audioPlayer.repeatMode == .all {
+            return "repeat"
+        }
+
         switch audioPlayer.playbackMode {
         case .ordered:
             return "list.number"
@@ -334,6 +390,10 @@ struct PlayerView: View {
     }
 
     private var playbackModeTintColor: Color {
+        if audioPlayer.repeatMode == .all {
+            return .red
+        }
+
         switch audioPlayer.playbackMode {
         case .ordered:
             return .white.opacity(0.78)
@@ -343,12 +403,20 @@ struct PlayerView: View {
     }
 
     private var playbackModeBackgroundColor: Color {
+        if audioPlayer.repeatMode == .all {
+            return Color.red.opacity(0.14)
+        }
+
         switch audioPlayer.playbackMode {
         case .ordered:
             return Color.white.opacity(0.08)
         case .shuffled, .repeatOne:
             return Color.red.opacity(0.14)
         }
+    }
+
+    private var playbackSpeedLabel: String {
+        String(format: "%.2gx", Double(audioPlayer.playbackSpeed))
     }
 
     private var favoriteActionErrorIsPresented: Binding<Bool> {
@@ -363,9 +431,70 @@ struct PlayerView: View {
     }
 
     private var playbackModeButton: some View {
-        Button {
-            debugLog("Player playback mode button pressed")
-            audioPlayer.cyclePlaybackMode()
+        Menu {
+            Button {
+                audioPlayer.setPlaybackMode(.ordered)
+                dataManager.setShufflePreference(false)
+                dataManager.setRepeatModePreference(.off)
+            } label: {
+                Label("Play in order", systemImage: "list.number")
+            }
+
+            Button {
+                audioPlayer.setPlaybackMode(.shuffled)
+                dataManager.setShufflePreference(true)
+                dataManager.setRepeatModePreference(.off)
+            } label: {
+                Label("Shuffle", systemImage: "shuffle")
+            }
+
+            Button {
+                audioPlayer.setRepeatMode(.all)
+                dataManager.setShufflePreference(audioPlayer.isShuffle)
+                dataManager.setRepeatModePreference(.all)
+            } label: {
+                Label("Repeat all", systemImage: "repeat")
+            }
+
+            Button {
+                audioPlayer.setPlaybackMode(.repeatOne)
+                dataManager.setShufflePreference(false)
+                dataManager.setRepeatModePreference(.one)
+            } label: {
+                Label("Repeat one", systemImage: "repeat.1")
+            }
+
+            Divider()
+
+            Button {
+                audioPlayer.setPlaybackSpeed(0.75)
+            } label: {
+                Label("0.75x", systemImage: "speedometer")
+            }
+
+            Button {
+                audioPlayer.setPlaybackSpeed(1.0)
+            } label: {
+                Label("1.0x", systemImage: "speedometer")
+            }
+
+            Button {
+                audioPlayer.setPlaybackSpeed(1.25)
+            } label: {
+                Label("1.25x", systemImage: "speedometer")
+            }
+
+            Button {
+                audioPlayer.setPlaybackSpeed(1.5)
+            } label: {
+                Label("1.5x", systemImage: "speedometer")
+            }
+
+            Button {
+                audioPlayer.setPlaybackSpeed(2.0)
+            } label: {
+                Label("2.0x", systemImage: "speedometer")
+            }
         } label: {
             ZStack {
                 Circle()
@@ -465,22 +594,55 @@ struct PlayerView: View {
         VStack {
             Spacer()
 
-            HStack(spacing: 8) {
-                Image(systemName: "text.quote")
-                    .font(.system(size: 12, weight: .semibold))
+            if dataManager.settings.showLyrics {
+                HStack(spacing: 8) {
+                    Image(systemName: "text.quote")
+                        .font(.system(size: 12, weight: .semibold))
 
-                Text("Tap artwork to open lyrics")
-                    .font(.system(size: 12, weight: .semibold))
+                    Text("Tap artwork to open lyrics")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundColor(.white.opacity(0.82))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.42))
+                )
+                .padding(.bottom, 14)
             }
-            .foregroundColor(.white.opacity(0.82))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                Capsule()
-                    .fill(Color.black.opacity(0.42))
-            )
-            .padding(.bottom, 14)
         }
+    }
+
+    private func secondaryControlChip(
+        title: String,
+        value: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(value)
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.64))
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func openArtistPage(_ route: OnlineArtistRoute) {
@@ -552,6 +714,179 @@ struct PlayerPlaceholderSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+struct UpNextQueueSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var audioPlayer: AudioPlayer
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if audioPlayer.currentTrack == nil && audioPlayer.queuedTracks.isEmpty {
+                    emptyQueueState
+                } else {
+                    List {
+                        if let currentTrack = audioPlayer.currentTrack {
+                            Section("Now Playing") {
+                                QueueNowPlayingRow(track: currentTrack)
+                                    .listRowBackground(Color.clear)
+                            }
+                        }
+
+                        Section {
+                            if audioPlayer.queuedTracks.isEmpty {
+                                Text("Use Play Next or Add to Queue from track actions to build Up Next.")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.secondary)
+                                    .padding(.vertical, 10)
+                            } else {
+                                ForEach(audioPlayer.queuedTracks) { track in
+                                    UpNextQueueRow(track: track) {
+                                        _ = audioPlayer.playQueuedTrackNow(track)
+                                        dismiss()
+                                    }
+                                    .listRowBackground(Color.clear)
+                                }
+                                .onDelete(perform: deleteQueuedTracks)
+                                .onMove(perform: moveQueuedTracks)
+                            }
+                        } header: {
+                            Text("Up Next")
+                        } footer: {
+                            if !audioPlayer.queuedTracks.isEmpty {
+                                Text("Tap a queued track to play it immediately.")
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                    .scrollContentBackground(.hidden)
+                    .background(Color.black)
+                }
+            }
+            .navigationTitle("Up Next")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                }
+
+                if !audioPlayer.queuedTracks.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        EditButton()
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Clear") {
+                            audioPlayer.clearQueue()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyQueueState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "list.bullet.rectangle.portrait")
+                .font(.system(size: 52))
+                .foregroundColor(.white.opacity(0.2))
+
+            Text("Queue is empty")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white)
+
+            Text("Use Play Next or Add to Queue from any track menu.")
+                .font(.system(size: 14))
+                .multilineTextAlignment(.center)
+                .foregroundColor(.white.opacity(0.55))
+                .padding(.horizontal, 28)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    private func deleteQueuedTracks(at offsets: IndexSet) {
+        let tracks = offsets.compactMap { index in
+            audioPlayer.queuedTracks.indices.contains(index) ? audioPlayer.queuedTracks[index] : nil
+        }
+
+        for track in tracks {
+            audioPlayer.removeQueuedTrack(track)
+        }
+    }
+
+    private func moveQueuedTracks(from source: IndexSet, to destination: Int) {
+        audioPlayer.moveQueuedTracks(fromOffsets: source, toOffset: destination)
+    }
+}
+
+private struct QueueNowPlayingRow: View {
+    let track: Track
+
+    var body: some View {
+        HStack(spacing: 12) {
+            TrackArtworkView(track: track, size: 52, cornerRadius: 12, showsSourceBadge: true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(track.displayTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(track.displayArtist)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+
+                Text("Playing now")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.green.opacity(0.9))
+            }
+
+            Spacer()
+
+            Text(track.formattedDuration)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.42))
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct UpNextQueueRow: View {
+    let track: Track
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                TrackArtworkView(track: track, size: 52, cornerRadius: 12, showsSourceBadge: true)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.displayTitle)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    Text(track.displayArtist)
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.58))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(track.formattedDuration)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.42))
+            }
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -52,6 +52,9 @@ struct ContentView: View {
             }
         }
         .accentColor(.red)
+        .task {
+            audioPlayer.applySavedPlaybackPreferences(dataManager.settings)
+        }
     }
     
     @ViewBuilder

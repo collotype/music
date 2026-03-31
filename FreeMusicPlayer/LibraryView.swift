@@ -37,7 +37,7 @@ struct LibraryView: View {
             tracks = dataManager.favoriteTracks
         case .offline:
             tracks = tracks.filter { $0.fileURL != nil }
-        case .playlists:
+        case .playlists, .favoritePlaylists, .favoriteArtists:
             return []
         }
 
@@ -64,10 +64,28 @@ struct LibraryView: View {
         return artists
     }
 
+    var filteredPlaylists: [Playlist] {
+        let playlists: [Playlist]
+        switch selectedFilter {
+        case .favoritePlaylists:
+            playlists = dataManager.favoritePlaylists
+        default:
+            playlists = dataManager.sortedPlaylists
+        }
+
+        guard !searchText.isEmpty else { return playlists }
+
+        return playlists.filter { playlist in
+            playlist.displayName.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
     private var selectionSubtitle: String {
         switch selectedFilter {
         case .playlists:
             return "\(dataManager.playlists.count) playlists"
+        case .favoritePlaylists:
+            return "\(filteredPlaylists.count) starred playlists"
         case .favoriteArtists:
             return "\(filteredFavoriteArtists.count) artists"
         default:
@@ -350,7 +368,7 @@ struct LibraryView: View {
 
     @ViewBuilder
     var contentSection: some View {
-        if selectedFilter == .playlists {
+        if selectedFilter == .playlists || selectedFilter == .favoritePlaylists {
             playlistSection
         } else if selectedFilter == .favoriteArtists {
             favoriteArtistsSection
@@ -383,36 +401,40 @@ struct LibraryView: View {
 
     var playlistSection: some View {
         Group {
-            if dataManager.playlists.isEmpty {
-                VStack(spacing: 16) {
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 60))
-                        .foregroundColor(.white.opacity(0.2))
+            if filteredPlaylists.isEmpty {
+                if selectedFilter == .favoritePlaylists {
+                    emptyStateView
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 60))
+                            .foregroundColor(.white.opacity(0.2))
 
-                    Text("No playlists yet")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        Text("No playlists yet")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.5))
 
-                    Button {
-                        debugLog("Library create playlist button pressed")
-                        presentCreatePlaylistPrompt()
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus")
-                            Text("Create playlist")
+                        Button {
+                            debugLog("Library create playlist button pressed")
+                            presentCreatePlaylistPrompt()
+                        } label: {
+                            HStack {
+                                Image(systemName: "plus")
+                                Text("Create playlist")
+                            }
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.15))
+                            )
                         }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.white.opacity(0.15))
-                        )
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.top, 100)
                 }
-                .padding(.top, 100)
             } else {
                 VStack(spacing: 0) {
                     HStack {
@@ -438,7 +460,7 @@ struct LibraryView: View {
                         Spacer()
 
                         if !dataManager.favoritePlaylists.isEmpty {
-                            Text("\(dataManager.favoritePlaylists.count) favorites")
+                            Text("\(dataManager.favoritePlaylists.count) starred")
                                 .font(.system(size: 13))
                                 .foregroundColor(.white.opacity(0.45))
                         }
@@ -447,7 +469,7 @@ struct LibraryView: View {
                     .padding(.vertical, 12)
 
                     List {
-                        ForEach(dataManager.sortedPlaylists) { playlist in
+                        ForEach(filteredPlaylists) { playlist in
                             HStack(spacing: 12) {
                                 Button {
                                     debugLog("Library playlist row pressed: \(playlist.displayName)")
@@ -570,6 +592,8 @@ struct LibraryView: View {
         switch selectedFilter {
         case .playlists:
             return "music.note.list"
+        case .favoritePlaylists:
+            return "star.circle"
         case .favoriteArtists:
             return "person.crop.circle.badge.questionmark"
         default:
@@ -585,6 +609,8 @@ struct LibraryView: View {
             return "No offline tracks yet"
         case .playlists:
             return "No playlists yet"
+        case .favoritePlaylists:
+            return "No starred playlists yet"
         case .favoriteArtists:
             return "No favorite artists yet"
         case .all:
@@ -600,6 +626,8 @@ struct LibraryView: View {
             return "Downloaded and imported tracks will appear here."
         case .playlists:
             return "Create a playlist to start organizing your library."
+        case .favoritePlaylists:
+            return "Star playlists to keep your best collections together."
         case .favoriteArtists:
             return "Favorite an artist from an online artist page to keep them here."
         case .all:
@@ -611,6 +639,8 @@ struct LibraryView: View {
         switch selectedFilter {
         case .playlists:
             return "Create playlist"
+        case .favoritePlaylists:
+            return "Open playlists"
         case .favoriteArtists:
             return "Find artists"
         default:
@@ -622,6 +652,8 @@ struct LibraryView: View {
         switch selectedFilter {
         case .playlists:
             return "plus"
+        case .favoritePlaylists:
+            return "music.note.list"
         case .favoriteArtists:
             return "magnifyingglass"
         default:
@@ -634,6 +666,9 @@ struct LibraryView: View {
         case .playlists:
             debugLog("Empty state create playlist button pressed")
             presentCreatePlaylistPrompt()
+        case .favoritePlaylists:
+            debugLog("Empty state favorite playlists button pressed")
+            selectedFilter = .playlists
         case .favoriteArtists:
             debugLog("Empty state find artists button pressed")
             router.navigate(to: .search)
@@ -653,6 +688,8 @@ struct LibraryView: View {
             return dataManager.tracks.filter { $0.fileURL != nil }.count
         case .playlists:
             return dataManager.playlists.count
+        case .favoritePlaylists:
+            return dataManager.favoritePlaylists.count
         case .favoriteArtists:
             return dataManager.favoriteArtists.count
         }
@@ -660,8 +697,8 @@ struct LibraryView: View {
 
     private func playPrimarySelection() {
         switch selectedFilter {
-        case .playlists:
-            guard let playlist = dataManager.sortedPlaylists.first,
+        case .playlists, .favoritePlaylists:
+            guard let playlist = filteredPlaylists.first,
                   let track = dataManager.tracks(for: playlist.id).first else {
                 return
             }
@@ -801,14 +838,16 @@ enum LibraryFilter: CaseIterable {
     case favorites
     case offline
     case playlists
+    case favoritePlaylists
     case favoriteArtists
 
     var title: String {
         switch self {
         case .all: return "All"
-        case .favorites: return "Favorites"
+        case .favorites: return "Saved"
         case .offline: return "Offline"
         case .playlists: return "Playlists"
+        case .favoritePlaylists: return "Starred"
         case .favoriteArtists: return "Artists"
         }
     }
@@ -816,9 +855,10 @@ enum LibraryFilter: CaseIterable {
     var screenTitle: String {
         switch self {
         case .all: return "Library"
-        case .favorites: return "Favorites"
+        case .favorites: return "Saved Tracks"
         case .offline: return "Offline"
         case .playlists: return "Playlists"
+        case .favoritePlaylists: return "Starred Playlists"
         case .favoriteArtists: return "Favorite Artists"
         }
     }
@@ -833,6 +873,8 @@ enum LibraryFilter: CaseIterable {
         switch self {
         case .playlists:
             return "\(dataManager.playlists.count) playlists"
+        case .favoritePlaylists:
+            return "\(dataManager.favoritePlaylists.count) starred playlists"
         case .favoriteArtists:
             return "\(dataManager.favoriteArtists.count) artists"
         default:

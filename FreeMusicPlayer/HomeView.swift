@@ -179,7 +179,7 @@ struct WaveCard: View {
                     .foregroundColor(.white.opacity(0.58))
                     .padding(.top, 2)
             } else if viewModel.items.isEmpty {
-                Text("Listen to a few tracks, save favorites, or finish songs to train My Wave.")
+                Text("Listen to a few tracks, save tracks to your library, or finish songs to train My Wave.")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.58))
                     .padding(.top, 2)
@@ -393,7 +393,7 @@ struct PlaylistsSection: View {
                 Spacer()
 
                 if !dataManager.favoritePlaylists.isEmpty {
-                    Text("\(dataManager.favoritePlaylists.count) favorites")
+                    Text("\(dataManager.favoritePlaylists.count) starred")
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.45))
                 }

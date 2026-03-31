@@ -87,6 +87,36 @@ final class DataManager: ObservableObject {
         }
     }
 
+    func setShufflePreference(_ isEnabled: Bool) {
+        updateAppSettings { settings in
+            settings.shuffle = isEnabled
+        }
+    }
+
+    func setRepeatModePreference(_ repeatMode: AppSettings.RepeatMode) {
+        updateAppSettings { settings in
+            settings.repeatMode = repeatMode
+        }
+    }
+
+    func setShowLyricsPreference(_ isEnabled: Bool) {
+        updateAppSettings { settings in
+            settings.showLyrics = isEnabled
+        }
+    }
+
+    func setCacheEnabledPreference(_ isEnabled: Bool) {
+        updateAppSettings { settings in
+            settings.cacheEnabled = isEnabled
+        }
+    }
+
+    func setAudioQualityPreference(_ quality: AppSettings.AudioQuality) {
+        updateAppSettings { settings in
+            settings.quality = quality
+        }
+    }
+
     func loadData() {
         AppFileManager.shared.prepareDirectories(resetTemporaryStorage: true)
 
@@ -1757,19 +1787,19 @@ struct AppSettings: Codable {
     var importFolders: [ImportedMusicFolder] = []
     var myWaveSettings: MyWaveSettings = .default
 
-    enum AppTheme: String, Codable {
+    enum AppTheme: String, Codable, CaseIterable {
         case light
         case dark
         case system
     }
 
-    enum RepeatMode: String, Codable {
+    enum RepeatMode: String, Codable, CaseIterable {
         case off
         case all
         case one
     }
 
-    enum AudioQuality: String, Codable {
+    enum AudioQuality: String, Codable, CaseIterable {
         case low
         case medium
         case high

@@ -10,7 +10,6 @@ import UIKit
 
 struct SearchView: View {
     private let onlineSearchTimeoutNanoseconds: UInt64 = 15_000_000_000
-    private let supportedOnlineProviders: [OnlineTrackProvider] = [.soundcloud]
 
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
@@ -24,6 +23,14 @@ struct SearchView: View {
     @State private var onlineStatusMessage: String?
     @State private var searchTask: Task<Void, Never>?
     @State private var selectedCategory: SearchCategory = .tracks
+
+    private var supportedOnlineProviders: [OnlineTrackProvider] {
+        var providers: [OnlineTrackProvider] = [.soundcloud]
+        if OnlineMusicService.shared.isSpotifyConfigured {
+            providers.append(.spotify)
+        }
+        return providers
+    }
 
     private var selectedProvider: OnlineTrackProvider {
         guard let provider = OnlineTrackProvider(rawValue: selectedProviderRawValue),

@@ -23,6 +23,7 @@ final class AudioPlayer: ObservableObject {
     @Published var repeatMode: RepeatMode = .off
     @Published var playbackSpeed: Float = 1.0
     @Published var playbackErrorMessage: String?
+    @Published private(set) var queuedTracks: [Track] = []
 
     private let fileManager = FileManager.default
     private var player: AVPlayer?
@@ -478,6 +479,7 @@ final class AudioPlayer: ObservableObject {
         }
 
         manualQueue.removeAll { $0.id == track.id }
+        synchronizeQueuedTracks()
 
         guard load(track: track) else { return false }
 
@@ -727,6 +729,7 @@ final class AudioPlayer: ObservableObject {
         manualQueue.removeAll { $0.id == track.id }
         manualQueue.insert(track, at: 0)
         shouldPrioritizeQueueOnNextAdvance = true
+        synchronizeQueuedTracks()
     }
 
     func addTrackToQueue(_ track: Track) {
@@ -734,6 +737,35 @@ final class AudioPlayer: ObservableObject {
         manualQueue.removeAll { $0.id == track.id }
         manualQueue.append(track)
         shouldPrioritizeQueueOnNextAdvance = true
+        synchronizeQueuedTracks()
+    }
+
+    func removeQueuedTrack(_ track: Track) {
+        debugLog("Remove queued track: \(track.displayTitle)")
+        manualQueue.removeAll { matchesPlaybackIdentity($0, track) }
+        synchronizeQueuedTracks()
+    }
+
+    func moveQueuedTracks(fromOffsets: IndexSet, toOffset: Int) {
+        manualQueue.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        debugLog("Move queued tracks: \(fromOffsets) -> \(toOffset)")
+        synchronizeQueuedTracks()
+    }
+
+    func clearQueue() {
+        guard !manualQueue.isEmpty else { return }
+        debugLog("Clear queued tracks")
+        manualQueue.removeAll()
+        shouldPrioritizeQueueOnNextAdvance = false
+        synchronizeQueuedTracks()
+    }
+
+    @discardableResult
+    func playQueuedTrackNow(_ track: Track) -> Bool {
+        debugLog("Play queued track now: \(track.displayTitle)")
+        manualQueue.removeAll { matchesPlaybackIdentity($0, track) }
+        synchronizeQueuedTracks()
+        return startQueuedPlayback(for: resolvedTrackForPlayback(track))
     }
 
     func setPlaybackSpeed(_ speed: Float) {
@@ -768,6 +800,31 @@ final class AudioPlayer: ObservableObject {
         }
 
         debugLog("Playback mode set to: \(mode.rawValue)")
+    }
+
+    func setRepeatMode(_ mode: RepeatMode) {
+        repeatMode = mode
+        if mode == .one {
+            isShuffle = false
+        }
+        debugLog("Repeat mode set to: \(String(describing: mode))")
+        updateNowPlayingInfo()
+    }
+
+    func applySavedPlaybackPreferences(_ settings: AppSettings) {
+        isShuffle = settings.shuffle
+
+        switch settings.repeatMode {
+        case .off:
+            repeatMode = .off
+        case .all:
+            repeatMode = .all
+        case .one:
+            repeatMode = .one
+            isShuffle = false
+        }
+
+        updateNowPlayingInfo()
     }
 
     func cyclePlaybackMode() {
@@ -809,6 +866,7 @@ final class AudioPlayer: ObservableObject {
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         manualQueue.removeAll()
+        synchronizeQueuedTracks()
         clearPlaybackContext()
         queueResumeContext = nil
         playbackSequence = .standalone
@@ -950,7 +1008,9 @@ final class AudioPlayer: ObservableObject {
 
     private func nextQueuedTrack() -> Track? {
         guard !manualQueue.isEmpty else { return nil }
-        return resolvedTrackForPlayback(manualQueue.removeFirst())
+        let queuedTrack = resolvedTrackForPlayback(manualQueue.removeFirst())
+        synchronizeQueuedTracks()
+        return queuedTrack
     }
 
     private func updatePlaybackContext(with tracks: [Track], name: String) {
@@ -1106,6 +1166,10 @@ final class AudioPlayer: ObservableObject {
         }
 
         return track
+    }
+
+    private func synchronizeQueuedTracks() {
+        queuedTracks = manualQueue.map(resolvedTrackForPlayback)
     }
 
     private func deduplicatedTracks(from tracks: [Track]) -> [Track] {

@@ -11,109 +11,253 @@ struct SettingsView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @Environment(\.openURL) private var openURL
-    @State private var showClearConfirm: Bool = false
+
+    @State private var showClearConfirm = false
+    @State private var showingMyWaveSettings = false
     @State private var actionInfo: SettingsActionInfo?
-    
+
+    private var spotifyConfigured: Bool {
+        OnlineMusicService.shared.isSpotifyConfigured
+    }
+
+    private var appVersionLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        if let build, build != version {
+            return "\(version) (\(build))"
+        }
+
+        return version
+    }
+
+    private var myWaveSummary: String {
+        let labels = dataManager.myWaveSettings.selectedLabels
+        return labels.isEmpty ? "Default profile from your listening activity." : labels.joined(separator: " / ")
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            
+
             List {
-                settingsSection(title: "General", icon: "gear") {
-                    settingRow(title: "Basics", icon: "gearshape") {
-                        showPlaceholder(for: "Basics")
+                settingsSection(title: "Playback", icon: "play.circle.fill") {
+                    Toggle(isOn: lyricsBinding) {
+                        settingsLabel(
+                            title: "Show lyrics in player",
+                            subtitle: "Controls the lyrics entry point from the full player."
+                        )
                     }
-                    settingRow(title: "Storage", icon: "externaldrive") {
-                        showPlaceholder(for: "Storage")
+                    .tint(.red)
+
+                    Toggle(isOn: shuffleBinding) {
+                        settingsLabel(
+                            title: "Shuffle playback",
+                            subtitle: "Applies to queue and collection playback."
+                        )
                     }
-                    settingRow(title: "Gestures", icon: "hand.tap") {
-                        showPlaceholder(for: "Gestures")
+                    .tint(.red)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingsLabel(
+                            title: "Repeat mode",
+                            subtitle: "Choose how playback continues after the current track."
+                        )
+
+                        Picker("Repeat mode", selection: repeatModeBinding) {
+                            ForEach(AppSettings.RepeatMode.allCases, id: \.self) { mode in
+                                Text(repeatModeTitle(mode)).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
+                    .padding(.vertical, 8)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingsLabel(
+                            title: "Audio quality",
+                            subtitle: "Saved preference for online playback and downloads."
+                        )
+
+                        Picker("Audio quality", selection: audioQualityBinding) {
+                            ForEach(AppSettings.AudioQuality.allCases, id: \.self) { quality in
+                                Text(audioQualityTitle(quality)).tag(quality)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white)
+                    }
+                    .padding(.vertical, 8)
+
+                    settingsValueRow(
+                        title: "Playback speed",
+                        subtitle: "Current player speed",
+                        value: String(format: "%.2gx", Double(audioPlayer.playbackSpeed))
+                    )
                 }
-                
-                settingsSection(title: "Appearance", icon: "paintbrush") {
-                    settingRow(title: "Interface", icon: "display") {
-                        showPlaceholder(for: "Interface")
-                    }
-                    settingRow(title: "Customization", icon: "slider.horizontal.3") {
-                        showPlaceholder(for: "Customization")
-                    }
-                    settingRow(title: "Player", icon: "play.circle") {
-                        showPlaceholder(for: "Player")
-                    }
-                    settingRow(title: "Artwork", icon: "photo") {
-                        showPlaceholder(for: "Artwork")
-                    }
-                }
-                
-                settingsSection(title: "Integrations", icon: "link") {
-                    settingRow(title: "Proxy", icon: "shield") {
-                        showPlaceholder(for: "Proxy")
-                    }
-                    settingRow(title: "Last.fm", icon: "waveform") {
-                        showPlaceholder(for: "Last.fm")
-                    }
-                }
-                
-                settingsSection(title: "Services", icon: "cloud") {
-                    settingRow(title: "YouTube Music", icon: "play.circle", configured: true) {
-                        showPlaceholder(for: "YouTube Music")
-                    }
-                    settingRow(title: "SoundCloud", icon: "cloud") {
-                        showPlaceholder(for: "SoundCloud")
-                    }
-                    settingRow(title: "Spotify", icon: "sparkles") {
-                        showPlaceholder(for: "Spotify")
-                    }
-                }
-                
-                settingsSection(title: "Storage", icon: "externaldrive") {
-                    storageInfoRow
-                    
+
+                settingsSection(title: "Discovery", icon: "waveform.path.ecg") {
                     Button {
-                        debugLog("Clear cache button pressed")
-                        showClearConfirm = true
+                        debugLog("Open My Wave settings from Settings")
+                        showingMyWaveSettings = true
                     } label: {
-                        HStack {
+                        HStack(spacing: 12) {
+                            Image(systemName: "sparkles.rectangle.stack")
+                                .foregroundColor(.white)
+                                .frame(width: 30)
+
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Clear library data")
+                                Text("My Wave")
                                     .foregroundColor(.white)
-                                Text("Remove tracks, playlists, and saved settings.")
+                                Text(myWaveSummary)
                                     .font(.system(size: 12))
                                     .foregroundColor(.gray)
+                                    .lineLimit(2)
                             }
+
                             Spacer()
-                            Image(systemName: "trash")
-                                .foregroundColor(.red)
+
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
                         }
+                        .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
                 }
-                
-                settingsSection(title: "About", icon: "info.circle") {
-                    HStack {
-                        Text("Version")
-                            .foregroundColor(.white)
-                        Spacer()
-                        Text("1.0.0")
-                            .foregroundColor(.gray)
+
+                settingsSection(title: "Services", icon: "cloud.fill") {
+                    settingsValueRow(
+                        title: "SoundCloud",
+                        subtitle: "Online search and playback are available.",
+                        value: "Enabled",
+                        valueColor: .green
+                    )
+
+                    Button {
+                        debugLog("Spotify status row pressed")
+                        actionInfo = SettingsActionInfo(
+                            title: "Spotify",
+                            message: spotifyConfigured
+                                ? "Spotify credentials are configured. Search support exists in the service layer."
+                                : "Spotify service code exists, but credentials are not configured for this build yet."
+                        )
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "sparkles")
+                                .foregroundColor(.white)
+                                .frame(width: 30)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Spotify")
+                                    .foregroundColor(.white)
+                                Text(spotifyConfigured ? "Configured for this build." : "Not configured for this build.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.gray)
+                            }
+
+                            Spacer()
+
+                            Text(spotifyConfigured ? "Ready" : "Unavailable")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(spotifyConfigured ? .green : .orange)
+
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.vertical, 10)
                     }
-                    .padding(.vertical, 12)
-                    
+                    .buttonStyle(.plain)
+                }
+
+                settingsSection(title: "Library", icon: "books.vertical.fill") {
+                    settingsValueRow(
+                        title: "Tracks",
+                        subtitle: "Saved in your local library",
+                        value: "\(dataManager.tracks.count)"
+                    )
+                    settingsValueRow(
+                        title: "Playlists",
+                        subtitle: "Total collections in your library",
+                        value: "\(dataManager.playlists.count)"
+                    )
+                    settingsValueRow(
+                        title: "Starred playlists",
+                        subtitle: "Pinned for faster access",
+                        value: "\(dataManager.favoritePlaylists.count)"
+                    )
+                    settingsValueRow(
+                        title: "Favorite artists",
+                        subtitle: "Saved from online artist pages",
+                        value: "\(dataManager.favoriteArtists.count)"
+                    )
+                    settingsValueRow(
+                        title: "Linked folders",
+                        subtitle: "Imported by bookmark refresh",
+                        value: "\(dataManager.importFolders.count)"
+                    )
+
+                    Toggle(isOn: cacheBinding) {
+                        settingsLabel(
+                            title: "Artwork and metadata cache",
+                            subtitle: "Saved preference for keeping local cache enabled."
+                        )
+                    }
+                    .tint(.red)
+
+                    Button(role: .destructive) {
+                        debugLog("Clear library data button pressed")
+                        showClearConfirm = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "trash")
+                                .foregroundColor(.red)
+                                .frame(width: 30)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Clear library data")
+                                    .foregroundColor(.white)
+                                Text("Remove tracks, playlists, favorite artists, and saved settings.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                settingsSection(title: "About", icon: "info.circle.fill") {
+                    settingsValueRow(
+                        title: "Version",
+                        subtitle: "Current build",
+                        value: appVersionLabel
+                    )
+
                     Button {
                         debugLog("Open source code button pressed")
-                        guard let url = URL(string: "https://github.com/collotype/FreeMusicPlayer-iOS") else {
+                        guard let url = URL(string: "https://github.com/collotype/music") else {
                             return
                         }
                         openURL(url)
                     } label: {
-                        HStack {
-                            Text("Open source code")
-                                .foregroundColor(.white)
-                            Spacer()
+                        HStack(spacing: 12) {
                             Image(systemName: "arrow.up.right.square")
+                                .foregroundColor(.white)
+                                .frame(width: 30)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Open source code")
+                                    .foregroundColor(.white)
+                                Text("Open the active GitHub repository for this app.")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.gray)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
                                 .foregroundColor(.gray)
                         }
+                        .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
                 }
@@ -125,6 +269,12 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .accentColor(.white)
+        .sheet(isPresented: $showingMyWaveSettings) {
+            MyWaveSettingsView()
+                .environmentObject(dataManager)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .confirmationDialog("Clear all local data?", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("Clear", role: .destructive) {
                 debugLog("Clear cache confirmed")
@@ -133,7 +283,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes imported tracks, playlists, favorites, and app settings.")
+            Text("This removes imported tracks, playlists, favorite artists, and saved settings.")
         }
         .alert(item: $actionInfo) { info in
             Alert(
@@ -143,8 +293,55 @@ struct SettingsView: View {
             )
         }
     }
-    
-    func settingsSection<Content: View>(
+
+    private var lyricsBinding: Binding<Bool> {
+        Binding(
+            get: { dataManager.settings.showLyrics },
+            set: { newValue in
+                dataManager.setShowLyricsPreference(newValue)
+            }
+        )
+    }
+
+    private var shuffleBinding: Binding<Bool> {
+        Binding(
+            get: { dataManager.settings.shuffle },
+            set: { newValue in
+                dataManager.setShufflePreference(newValue)
+                audioPlayer.applySavedPlaybackPreferences(dataManager.settings)
+            }
+        )
+    }
+
+    private var repeatModeBinding: Binding<AppSettings.RepeatMode> {
+        Binding(
+            get: { dataManager.settings.repeatMode },
+            set: { newValue in
+                dataManager.setRepeatModePreference(newValue)
+                audioPlayer.applySavedPlaybackPreferences(dataManager.settings)
+            }
+        )
+    }
+
+    private var cacheBinding: Binding<Bool> {
+        Binding(
+            get: { dataManager.settings.cacheEnabled },
+            set: { newValue in
+                dataManager.setCacheEnabledPreference(newValue)
+            }
+        )
+    }
+
+    private var audioQualityBinding: Binding<AppSettings.AudioQuality> {
+        Binding(
+            get: { dataManager.settings.quality },
+            set: { newValue in
+                dataManager.setAudioQualityPreference(newValue)
+            }
+        )
+    }
+
+    private func settingsSection<Content: View>(
         title: String,
         icon: String,
         @ViewBuilder content: () -> Content
@@ -157,90 +354,64 @@ struct SettingsView: View {
                 .font(.system(size: 13, weight: .semibold))
         }
     }
-    
-    func settingRow(
+
+    private func settingsLabel(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .foregroundColor(.white)
+            Text(subtitle)
+                .font(.system(size: 12))
+                .foregroundColor(.gray)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func settingsValueRow(
         title: String,
-        icon: String,
-        configured: Bool = false,
-        action: @escaping () -> Void
+        subtitle: String,
+        value: String,
+        valueColor: Color = .white.opacity(0.76)
     ) -> some View {
-        Button {
-            debugLog("Settings row pressed: \(title)")
-            action()
-        } label: {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.white)
-                    .frame(width: 30)
-                
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .foregroundColor(.white)
-                
-                Spacer()
-                
-                if configured {
-                    Text("Connected")
-                        .font(.system(size: 12))
-                        .foregroundColor(.green)
-                }
-                
-                Image(systemName: "chevron.right")
+                Text(subtitle)
+                    .font(.system(size: 12))
                     .foregroundColor(.gray)
             }
-            .padding(.vertical, 12)
+
+            Spacer()
+
+            Text(value)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(valueColor)
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 8)
     }
-    
-    var storageInfoRow: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Used")
-                        .foregroundColor(.white)
-                    Text("0 MB")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("Available")
-                        .foregroundColor(.gray)
-                    Text("Unlimited")
-                        .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.gray)
-                }
-            }
-            
-            GeometryReader { _ in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: 8)
-                    
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(
-                            LinearGradient(
-                                colors: [.red, .orange],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: 0, height: 8)
-                }
-            }
-            .frame(height: 8)
+
+    private func repeatModeTitle(_ mode: AppSettings.RepeatMode) -> String {
+        switch mode {
+        case .off:
+            return "Off"
+        case .all:
+            return "All"
+        case .one:
+            return "One"
         }
-        .padding(.vertical, 12)
     }
-    
-    private func showPlaceholder(for title: String) {
-        actionInfo = SettingsActionInfo(
-            title: title,
-            message: "\(title) is wired up and receiving taps. The detailed screen is not implemented yet."
-        )
+
+    private func audioQualityTitle(_ quality: AppSettings.AudioQuality) -> String {
+        switch quality {
+        case .low:
+            return "Low"
+        case .medium:
+            return "Medium"
+        case .high:
+            return "High"
+        case .lossless:
+            return "Lossless"
+        }
     }
 }
 

@@ -600,7 +600,8 @@ enum Tab: String, CaseIterable, Hashable {
         [
             .home,
             .library,
-            .search
+            .search,
+            .settings
         ]
     }
 

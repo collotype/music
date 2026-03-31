@@ -11,6 +11,7 @@ struct MiniPlayer: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
     @Binding var showPlayer: Bool
+    @State private var showQueueSheet = false
 
     private let backgroundCornerRadius: CGFloat = 22
     private let rowHeight: CGFloat = 64
@@ -40,6 +41,9 @@ struct MiniPlayer: View {
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
         }
+        .sheet(isPresented: $showQueueSheet) {
+            UpNextQueueSheet()
+        }
     }
 
     private var miniPlayerRow: some View {
@@ -47,6 +51,16 @@ struct MiniPlayer: View {
             Group {
                 if let currentTrack = audioPlayer.currentTrack {
                     TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 8, showsSourceBadge: true)
+                        .overlay(alignment: .topTrailing) {
+                            if dataManager.isTrackSaved(currentTrack) {
+                                Image(systemName: "heart.fill")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(4)
+                                    .background(Circle().fill(Color.red))
+                                    .offset(x: 5, y: -5)
+                            }
+                        }
                 } else {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
@@ -79,10 +93,29 @@ struct MiniPlayer: View {
 
             Spacer(minLength: 12)
 
-            Image(systemName: getHeartIcon())
-                .foregroundColor(getHeartColor())
-                .font(.system(size: 20))
-            .padding(.trailing, 8)
+            Button {
+                debugLog("Mini player queue button pressed")
+                showQueueSheet = true
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "list.bullet")
+                        .foregroundColor(audioPlayer.queuedTracks.isEmpty ? .white.opacity(0.72) : .white)
+                        .font(.system(size: 19, weight: .semibold))
+
+                    if !audioPlayer.queuedTracks.isEmpty {
+                        Text("\(audioPlayer.queuedTracks.count)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.white))
+                            .offset(x: 9, y: -8)
+                    }
+                }
+                .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 4)
 
             Button {
                 debugLog("Mini player play/pause button pressed")
@@ -156,18 +189,6 @@ struct MiniPlayer: View {
             currentTime: audioPlayer.currentTime,
             duration: audioPlayer.duration
         )
-    }
-    
-    func getHeartIcon() -> String {
-        guard let track = audioPlayer.currentTrack else { return "heart" }
-
-        return dataManager.isTrackSaved(track) ? "heart.fill" : "heart"
-    }
-    
-    func getHeartColor() -> Color {
-        guard let track = audioPlayer.currentTrack else { return .white.opacity(0.5) }
-
-        return dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5)
     }
 }
 
