@@ -80,6 +80,25 @@ struct LibraryView: View {
         }
     }
 
+    var filteredArtists: [LocalArtistSearchResult] {
+        let artists = allArtistResults()
+        guard !searchText.isEmpty else { return artists }
+
+        return artists.filter { artist in
+            artist.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var filteredAlbums: [LocalAlbumSearchResult] {
+        let albums = allAlbumResults()
+        guard !searchText.isEmpty else { return albums }
+
+        return albums.filter { album in
+            album.title.localizedCaseInsensitiveContains(searchText) ||
+            album.artist.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
     private var selectionSubtitle: String {
         switch selectedFilter {
         case .playlists:
@@ -88,13 +107,22 @@ struct LibraryView: View {
             return "\(filteredPlaylists.count) starred playlists"
         case .favoriteArtists:
             return "\(filteredFavoriteArtists.count) artists"
+        case .artists:
+            return "\(filteredArtists.count) artists"
+        case .albums:
+            return "\(filteredAlbums.count) albums"
         default:
             return "\(filteredTracks.count) tracks"
         }
     }
 
     private var showsPlaybackActions: Bool {
-        selectedFilter != .favoriteArtists
+        switch selectedFilter {
+        case .artists, .albums, .favoriteArtists:
+            return false
+        default:
+            return true
+        }
     }
 
     var body: some View {
@@ -370,6 +398,10 @@ struct LibraryView: View {
     var contentSection: some View {
         if selectedFilter == .playlists || selectedFilter == .favoritePlaylists {
             playlistSection
+        } else if selectedFilter == .artists {
+            artistsSection
+        } else if selectedFilter == .albums {
+            albumsSection
         } else if selectedFilter == .favoriteArtists {
             favoriteArtistsSection
         } else if filteredTracks.isEmpty {
@@ -522,6 +554,60 @@ struct LibraryView: View {
         }
     }
 
+    var artistsSection: some View {
+        Group {
+            if filteredArtists.isEmpty {
+                emptyStateView
+            } else {
+                List {
+                    ForEach(filteredArtists) { artist in
+                        NavigationLink {
+                            TrackCollectionView(
+                                title: artist.name,
+                                subtitle: "Artist",
+                                tracks: artist.tracks,
+                                contextName: "artist:\(artist.name)"
+                            )
+                        } label: {
+                            LibraryArtistRow(artist: artist)
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.black)
+            }
+        }
+    }
+
+    var albumsSection: some View {
+        Group {
+            if filteredAlbums.isEmpty {
+                emptyStateView
+            } else {
+                List {
+                    ForEach(filteredAlbums) { album in
+                        NavigationLink {
+                            TrackCollectionView(
+                                title: album.title,
+                                subtitle: album.artist,
+                                tracks: album.tracks,
+                                contextName: "album:\(album.id)"
+                            )
+                        } label: {
+                            LibraryAlbumRow(album: album)
+                        }
+                        .listRowBackground(Color.clear)
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.black)
+            }
+        }
+    }
+
     var favoriteArtistsSection: some View {
         Group {
             if filteredFavoriteArtists.isEmpty {
@@ -594,6 +680,10 @@ struct LibraryView: View {
             return "music.note.list"
         case .favoritePlaylists:
             return "star.circle"
+        case .artists:
+            return "person.2"
+        case .albums:
+            return "square.stack"
         case .favoriteArtists:
             return "person.crop.circle.badge.questionmark"
         default:
@@ -611,6 +701,10 @@ struct LibraryView: View {
             return "No playlists yet"
         case .favoritePlaylists:
             return "No starred playlists yet"
+        case .artists:
+            return "No artists yet"
+        case .albums:
+            return "No albums yet"
         case .favoriteArtists:
             return "No favorite artists yet"
         case .all:
@@ -628,6 +722,10 @@ struct LibraryView: View {
             return "Create a playlist to start organizing your library."
         case .favoritePlaylists:
             return "Star playlists to keep your best collections together."
+        case .artists:
+            return "Imported artists from your library will appear here."
+        case .albums:
+            return "Imported albums from your library will appear here."
         case .favoriteArtists:
             return "Favorite an artist from an online artist page to keep them here."
         case .all:
@@ -641,6 +739,8 @@ struct LibraryView: View {
             return "Create playlist"
         case .favoritePlaylists:
             return "Open playlists"
+        case .artists, .albums:
+            return "Import tracks"
         case .favoriteArtists:
             return "Find artists"
         default:
@@ -654,6 +754,8 @@ struct LibraryView: View {
             return "plus"
         case .favoritePlaylists:
             return "music.note.list"
+        case .artists, .albums:
+            return "square.and.arrow.down"
         case .favoriteArtists:
             return "magnifyingglass"
         default:
@@ -669,6 +771,9 @@ struct LibraryView: View {
         case .favoritePlaylists:
             debugLog("Empty state favorite playlists button pressed")
             selectedFilter = .playlists
+        case .artists, .albums:
+            debugLog("Empty state import tracks button pressed")
+            showingImportOptions = true
         case .favoriteArtists:
             debugLog("Empty state find artists button pressed")
             router.navigate(to: .search)
@@ -690,6 +795,10 @@ struct LibraryView: View {
             return dataManager.playlists.count
         case .favoritePlaylists:
             return dataManager.favoritePlaylists.count
+        case .artists:
+            return allArtistResults().count
+        case .albums:
+            return allAlbumResults().count
         case .favoriteArtists:
             return dataManager.favoriteArtists.count
         }
@@ -711,6 +820,8 @@ struct LibraryView: View {
         case .favoriteArtists:
             guard let artist = filteredFavoriteArtists.first else { return }
             router.openOnlineArtist(artist.route)
+        case .artists, .albums:
+            return
         default:
             guard let first = filteredTracks.first else { return }
             audioPlayer.playTrack(
@@ -831,6 +942,87 @@ struct LibraryView: View {
 
         dataManager.removeTracks(tracks)
     }
+
+    private func allArtistResults() -> [LocalArtistSearchResult] {
+        let groupedTracks = Dictionary(grouping: dataManager.tracks) { track in
+            normalizedArtistName(for: track)
+        }
+
+        return groupedTracks.compactMap { _, tracks in
+            let sortedTracks = tracks.sorted(by: libraryTrackSortOrder)
+            guard let firstTrack = sortedTracks.first else { return nil }
+
+            return LocalArtistSearchResult(
+                name: displayArtistName(for: firstTrack),
+                representativeTrack: representativeTrack(from: sortedTracks),
+                tracks: sortedTracks
+            )
+        }
+        .sorted { left, right in
+            if left.name == "Unknown Artist" {
+                return false
+            }
+            if right.name == "Unknown Artist" {
+                return true
+            }
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+        }
+    }
+
+    private func allAlbumResults() -> [LocalAlbumSearchResult] {
+        let albumTracks = dataManager.tracks.filter { track in
+            let albumTitle = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return !albumTitle.isEmpty
+        }
+
+        let groupedTracks = Dictionary(grouping: albumTracks) { track in
+            let albumTitle = track.album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return "\(albumTitle.lowercased())::\(normalizedArtistName(for: track))"
+        }
+
+        return groupedTracks.compactMap { _, tracks in
+            let sortedTracks = tracks.sorted(by: libraryTrackSortOrder)
+            guard let firstTrack = sortedTracks.first,
+                  let albumTitle = firstTrack.album?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !albumTitle.isEmpty else {
+                return nil
+            }
+
+            return LocalAlbumSearchResult(
+                title: albumTitle,
+                artist: displayArtistName(for: firstTrack),
+                representativeTrack: representativeTrack(from: sortedTracks),
+                tracks: sortedTracks
+            )
+        }
+        .sorted { left, right in
+            if left.title.caseInsensitiveCompare(right.title) == .orderedSame {
+                return left.artist.localizedCaseInsensitiveCompare(right.artist) == .orderedAscending
+            }
+            return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
+        }
+    }
+
+    private func normalizedArtistName(for track: Track) -> String {
+        let artistName = track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return artistName.isEmpty ? "unknown artist" : artistName.lowercased()
+    }
+
+    private func displayArtistName(for track: Track) -> String {
+        let artistName = track.displayArtist.trimmingCharacters(in: .whitespacesAndNewlines)
+        return artistName.isEmpty ? "Unknown Artist" : artistName
+    }
+
+    private func representativeTrack(from tracks: [Track]) -> Track {
+        tracks.first(where: { $0.preferredArtworkReference != nil }) ?? tracks.first!
+    }
+
+    private func libraryTrackSortOrder(_ left: Track, _ right: Track) -> Bool {
+        if left.displayTitle.caseInsensitiveCompare(right.displayTitle) == .orderedSame {
+            return left.addedAt > right.addedAt
+        }
+        return left.displayTitle.localizedCaseInsensitiveCompare(right.displayTitle) == .orderedAscending
+    }
 }
 
 enum LibraryFilter: CaseIterable {
@@ -839,6 +1031,8 @@ enum LibraryFilter: CaseIterable {
     case offline
     case playlists
     case favoritePlaylists
+    case artists
+    case albums
     case favoriteArtists
 
     var title: String {
@@ -848,7 +1042,9 @@ enum LibraryFilter: CaseIterable {
         case .offline: return "Offline"
         case .playlists: return "Playlists"
         case .favoritePlaylists: return "Starred"
-        case .favoriteArtists: return "Artists"
+        case .artists: return "Artists"
+        case .albums: return "Albums"
+        case .favoriteArtists: return "Fav Artists"
         }
     }
 
@@ -859,6 +1055,8 @@ enum LibraryFilter: CaseIterable {
         case .offline: return "Offline"
         case .playlists: return "Playlists"
         case .favoritePlaylists: return "Starred Playlists"
+        case .artists: return "Artists"
+        case .albums: return "Albums"
         case .favoriteArtists: return "Favorite Artists"
         }
     }
@@ -875,6 +1073,10 @@ enum LibraryFilter: CaseIterable {
             return "\(dataManager.playlists.count) playlists"
         case .favoritePlaylists:
             return "\(dataManager.favoritePlaylists.count) starred playlists"
+        case .artists:
+            return "Artists from your library"
+        case .albums:
+            return "Albums from your library"
         case .favoriteArtists:
             return "\(dataManager.favoriteArtists.count) artists"
         default:
@@ -995,6 +1197,67 @@ struct FavoriteArtistRow: View {
         Image(systemName: "person.fill")
             .font(.system(size: 20, weight: .semibold))
             .foregroundColor(.white.opacity(0.45))
+    }
+}
+
+struct LibraryArtistRow: View {
+    let artist: LocalArtistSearchResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            TrackArtworkView(track: artist.representativeTrack, size: 56, cornerRadius: 12, showsSourceBadge: true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(artist.name)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text("\(artist.tracks.count) track(s)")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.5))
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.32))
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+struct LibraryAlbumRow: View {
+    let album: LocalAlbumSearchResult
+
+    var body: some View {
+        HStack(spacing: 12) {
+            TrackArtworkView(track: album.representativeTrack, size: 56, cornerRadius: 12, showsSourceBadge: true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(album.title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(album.artist)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+
+                Text("\(album.tracks.count) track(s)")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.42))
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.32))
+        }
+        .padding(.vertical, 8)
     }
 }
 
