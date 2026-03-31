@@ -11,9 +11,11 @@ import PhotosUI
 struct PlaylistView: View {
     let playlistId: String
 
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @State private var showingAddTracksSheet = false
+    @State private var showingDeletePlaylistConfirmation = false
     @State private var selectedCoverPickerItem: PhotosPickerItem?
     @State private var isSavingCustomCover = false
     @State private var coverErrorMessage: String?
@@ -160,54 +162,75 @@ struct PlaylistView: View {
                                 }
                             }
 
-                            HStack(spacing: 12) {
-                                if !playlistTracks.isEmpty {
-                                    Button {
-                                        debugLog("Playlist play button pressed: \(playlist.name)")
-                                        if let firstTrack = playlistTracks.first {
-                                            audioPlayer.playTrack(
-                                                firstTrack,
-                                                in: playlistTracks,
-                                                contextName: "playlist:\(playlist.id)"
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack(spacing: 12) {
+                                    if !playlistTracks.isEmpty {
+                                        Button {
+                                            debugLog("Playlist play button pressed: \(playlist.name)")
+                                            if let firstTrack = playlistTracks.first {
+                                                audioPlayer.playTrack(
+                                                    firstTrack,
+                                                    in: playlistTracks,
+                                                    contextName: "playlist:\(playlist.id)"
+                                                )
+                                            }
+                                        } label: {
+                                            HStack {
+                                                Image(systemName: "play.fill")
+                                                Text("Play playlist")
+                                            }
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(.black)
+                                            .padding(.horizontal, 18)
+                                            .padding(.vertical, 12)
+                                            .background(
+                                                Capsule()
+                                                    .fill(Color.white)
                                             )
                                         }
+                                        .buttonStyle(.plain)
+                                    }
+
+                                    Button {
+                                        debugLog("Playlist add tracks button pressed: \(playlist.name)")
+                                        showingAddTracksSheet = true
                                     } label: {
                                         HStack {
-                                            Image(systemName: "play.fill")
-                                            Text("Play playlist")
+                                            Image(systemName: "plus")
+                                            Text("Add tracks")
                                         }
                                         .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(.black)
+                                        .foregroundColor(.white)
                                         .padding(.horizontal, 18)
                                         .padding(.vertical, 12)
                                         .background(
                                             Capsule()
-                                                .fill(Color.white)
+                                                .fill(Color(red: 0.12, green: 0.55, blue: 0.26))
                                         )
                                     }
                                     .buttonStyle(.plain)
+                                    .disabled(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty)
+                                    .opacity(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty ? 0.45 : 1)
                                 }
 
-                                Button {
-                                    debugLog("Playlist add tracks button pressed: \(playlist.name)")
-                                    showingAddTracksSheet = true
+                                Button(role: .destructive) {
+                                    debugLog("Playlist delete button pressed: \(playlist.name)")
+                                    showingDeletePlaylistConfirmation = true
                                 } label: {
                                     HStack {
-                                        Image(systemName: "plus")
-                                        Text("Add tracks")
+                                        Image(systemName: "trash")
+                                        Text("Delete playlist")
                                     }
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                                     .foregroundColor(.white)
-                                    .padding(.horizontal, 18)
-                                    .padding(.vertical, 12)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
                                     .background(
                                         Capsule()
-                                            .fill(Color(red: 0.12, green: 0.55, blue: 0.26))
+                                            .fill(Color.red.opacity(0.18))
                                     )
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty)
-                                .opacity(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty ? 0.45 : 1)
                             }
 
                             if !dataManager.tracks.isEmpty && availableLibraryTracks.isEmpty {
@@ -320,6 +343,18 @@ struct PlaylistView: View {
                 } message: {
                     Text(coverErrorMessage ?? "Unknown error")
                 }
+                .confirmationDialog(
+                    "Delete Playlist?",
+                    isPresented: $showingDeletePlaylistConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete Playlist", role: .destructive) {
+                        deletePlaylist(playlist)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This removes the playlist, but keeps all tracks in your library.")
+                }
             } else {
                 VStack(spacing: 12) {
                     Image(systemName: "music.note.list")
@@ -332,6 +367,12 @@ struct PlaylistView: View {
                 .navigationTitle("Playlist")
             }
         }
+    }
+
+    private func deletePlaylist(_ playlist: Playlist) {
+        debugLog("Playlist delete confirmed: \(playlist.name)")
+        dataManager.deletePlaylist(playlist)
+        dismiss()
     }
 
     private func updatePlaylistCover(using item: PhotosPickerItem, playlistID: String) {

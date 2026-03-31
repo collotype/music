@@ -496,46 +496,125 @@ struct PlaylistCard: View {
 }
 
 struct PopularSection: View {
+    @EnvironmentObject var dataManager: DataManager
+
+    private var popularTracks: [Track] {
+        Array(
+            dataManager.tracks
+                .filter { $0.playCount > 0 }
+                .sorted(by: popularTrackSort)
+                .prefix(5)
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Popular")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(0..<5, id: \.self) { index in
-                        PopularCard(index: index)
+            if popularTracks.isEmpty {
+                sectionPlaceholder("Play a few tracks to build your most-played picks.")
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(Array(popularTracks.enumerated()), id: \.element.id) { entry in
+                            PopularCard(
+                                track: entry.element,
+                                rank: entry.offset + 1,
+                                contextTracks: popularTracks
+                            )
+                        }
                     }
                 }
             }
         }
     }
+
+    private func popularTrackSort(_ left: Track, _ right: Track) -> Bool {
+        if left.playCount != right.playCount {
+            return left.playCount > right.playCount
+        }
+
+        let leftLastPlayed = left.lastPlayed ?? .distantPast
+        let rightLastPlayed = right.lastPlayed ?? .distantPast
+        if leftLastPlayed != rightLastPlayed {
+            return leftLastPlayed > rightLastPlayed
+        }
+
+        return left.addedAt > right.addedAt
+    }
+
+    private func sectionPlaceholder(_ message: String) -> some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(Color.white.opacity(0.03))
+            .frame(maxWidth: .infinity)
+            .frame(height: 92)
+            .overlay(
+                Text(message)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.42))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+            )
+    }
 }
 
 struct PopularCard: View {
-    let index: Int
+    let track: Track
+    let rank: Int
+    let contextTracks: [Track]
+
+    @EnvironmentObject var audioPlayer: AudioPlayer
 
     var body: some View {
         Button {
-            debugLog("Popular card pressed: \(index)")
+            debugLog("Popular track card pressed: \(track.displayTitle)")
+            audioPlayer.playTrack(track, in: contextTracks, contextName: "home:popular")
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.1))
-                    .frame(width: 140, height: 140)
+                TrackArtworkView(track: track, size: 140, cornerRadius: 12, showsSourceBadge: true)
+                    .overlay(alignment: .topLeading) {
+                        Text("#\(rank)")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.white))
+                            .padding(8)
+                    }
 
-                Text("Mix #\(index + 1)")
+                Text(track.displayTitle)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.white)
+                    .lineLimit(1)
+
+                Text(track.displayArtist)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.6))
+                    .lineLimit(1)
+
+                Text(track.playCount == 1 ? "1 play" : "\(track.playCount) plays")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.42))
             }
         }
         .buttonStyle(.plain)
+        .frame(width: 140, alignment: .leading)
     }
 }
 
 struct RecentSection: View {
     @EnvironmentObject var dataManager: DataManager
+
+    private var recentTracks: [Track] {
+        Array(
+            dataManager.tracks
+                .filter { $0.lastPlayed != nil }
+                .sorted(by: recentTrackSort)
+                .prefix(10)
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -543,16 +622,44 @@ struct RecentSection: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
-            VStack(spacing: 0) {
-                ForEach(Array(dataManager.tracks.prefix(10))) { track in
-                    TrackRow(track: track, contextTracks: Array(dataManager.tracks.prefix(10)))
-                }
-            }
-            .background(
+            if recentTracks.isEmpty {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(Color.white.opacity(0.03))
-            )
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 92)
+                    .overlay(
+                        Text("Your recently played tracks will appear here.")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.42))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    )
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(recentTracks) { track in
+                        TrackRow(track: track, contextTracks: recentTracks)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.white.opacity(0.03))
+                )
+            }
         }
+    }
+
+    private func recentTrackSort(_ left: Track, _ right: Track) -> Bool {
+        let leftLastPlayed = left.lastPlayed ?? .distantPast
+        let rightLastPlayed = right.lastPlayed ?? .distantPast
+        if leftLastPlayed != rightLastPlayed {
+            return leftLastPlayed > rightLastPlayed
+        }
+
+        if left.playCount != right.playCount {
+            return left.playCount > right.playCount
+        }
+
+        return left.addedAt > right.addedAt
     }
 }
 

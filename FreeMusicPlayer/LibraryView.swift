@@ -51,6 +51,34 @@ struct LibraryView: View {
         return tracks
     }
 
+    var filteredFavoriteArtists: [FavoriteArtist] {
+        var artists = dataManager.favoriteArtists
+
+        if !searchText.isEmpty {
+            artists = artists.filter {
+                $0.artistName.localizedCaseInsensitiveContains(searchText) ||
+                $0.provider.displayName.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+
+        return artists
+    }
+
+    private var selectionSubtitle: String {
+        switch selectedFilter {
+        case .playlists:
+            return "\(dataManager.playlists.count) playlists"
+        case .favoriteArtists:
+            return "\(filteredFavoriteArtists.count) artists"
+        default:
+            return "\(filteredTracks.count) tracks"
+        }
+    }
+
+    private var showsPlaybackActions: Bool {
+        selectedFilter != .favoriteArtists
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -241,7 +269,7 @@ struct LibraryView: View {
                     Text(selectedFilter.screenTitle)
                         .font(.system(size: 34, weight: .bold))
                         .foregroundColor(.white)
-                    Text(selectedFilter.subtitle(for: dataManager, filteredTracks: filteredTracks))
+                    Text(selectionSubtitle)
                         .font(.system(size: 15))
                         .foregroundColor(.white.opacity(0.7))
                     if dataManager.hasImportFolders {
@@ -253,47 +281,49 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
 
-                HStack(spacing: 12) {
-                    Button {
-                        debugLog("Library play button pressed")
-                        playPrimarySelection()
-                    } label: {
-                        HStack {
-                            Image(systemName: "play.fill")
-                            Text("Play")
+                if showsPlaybackActions {
+                    HStack(spacing: 12) {
+                        Button {
+                            debugLog("Library play button pressed")
+                            playPrimarySelection()
+                        } label: {
+                            HStack {
+                                Image(systemName: "play.fill")
+                                Text("Play")
+                            }
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white)
+                            )
                         }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(
-                            Capsule()
-                                .fill(Color.white)
-                        )
-                    }
-                    .buttonStyle(.plain)
+                        .buttonStyle(.plain)
 
-                    Button {
-                        debugLog("Library shuffle button pressed")
-                        dataManager.shuffleTracks()
-                    } label: {
-                        HStack {
-                            Image(systemName: "shuffle")
-                            Text("Shuffle")
+                        Button {
+                            debugLog("Library shuffle button pressed")
+                            dataManager.shuffleTracks()
+                        } label: {
+                            HStack {
+                                Image(systemName: "shuffle")
+                                Text("Shuffle")
+                            }
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.15))
+                            )
                         }
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 12)
-                        .background(
-                            Capsule()
-                                .fill(Color.white.opacity(0.15))
-                        )
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
             }
         }
         .frame(height: 280)
@@ -322,6 +352,8 @@ struct LibraryView: View {
     var contentSection: some View {
         if selectedFilter == .playlists {
             playlistSection
+        } else if selectedFilter == .favoriteArtists {
+            favoriteArtistsSection
         } else if filteredTracks.isEmpty {
             emptyStateView
         } else {
@@ -468,6 +500,32 @@ struct LibraryView: View {
         }
     }
 
+    var favoriteArtistsSection: some View {
+        Group {
+            if filteredFavoriteArtists.isEmpty {
+                emptyStateView
+            } else {
+                List {
+                    ForEach(filteredFavoriteArtists) { artist in
+                        FavoriteArtistRow(artist: artist)
+                            .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    debugLog("Favorite artist removed from library list: \(artist.artistName)")
+                                    dataManager.toggleFavoriteArtist(artist)
+                                } label: {
+                                    Label("Unfavorite", systemImage: "heart.slash")
+                                }
+                            }
+                    }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .background(Color.black)
+            }
+        }
+    }
+
     private func representativePlaylistTrack(for playlist: Playlist) -> Track? {
         let playlistTracks = dataManager.tracks(for: playlist.id)
         return playlistTracks.first(where: { $0.preferredArtworkReference != nil }) ?? playlistTracks.first
@@ -475,25 +533,24 @@ struct LibraryView: View {
 
     var emptyStateView: some View {
         VStack(spacing: 16) {
-            Image(systemName: "music.note.list")
+            Image(systemName: emptyStateSystemImage)
                 .font(.system(size: 60))
                 .foregroundColor(.white.opacity(0.2))
 
-            Text("Library is empty")
+            Text(emptyStateTitle)
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(.white.opacity(0.5))
 
-            Text("Import tracks to start listening.")
+            Text(emptyStateSubtitle)
                 .font(.system(size: 15))
                 .foregroundColor(.white.opacity(0.3))
 
             Button {
-                debugLog("Empty state import button pressed")
-                showingImportOptions = true
+                handleEmptyStateAction()
             } label: {
                 HStack {
-                    Image(systemName: "square.and.arrow.down")
-                    Text("Import tracks")
+                    Image(systemName: emptyStateActionSystemImage)
+                    Text(emptyStateActionTitle)
                 }
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.white)
@@ -509,6 +566,83 @@ struct LibraryView: View {
         .padding(.top, 100)
     }
 
+    private var emptyStateSystemImage: String {
+        switch selectedFilter {
+        case .playlists:
+            return "music.note.list"
+        case .favoriteArtists:
+            return "person.crop.circle.badge.questionmark"
+        default:
+            return "music.note.list"
+        }
+    }
+
+    private var emptyStateTitle: String {
+        switch selectedFilter {
+        case .favorites:
+            return "No saved tracks yet"
+        case .offline:
+            return "No offline tracks yet"
+        case .playlists:
+            return "No playlists yet"
+        case .favoriteArtists:
+            return "No favorite artists yet"
+        case .all:
+            return "Library is empty"
+        }
+    }
+
+    private var emptyStateSubtitle: String {
+        switch selectedFilter {
+        case .favorites:
+            return "Save tracks to your library to keep them here."
+        case .offline:
+            return "Downloaded and imported tracks will appear here."
+        case .playlists:
+            return "Create a playlist to start organizing your library."
+        case .favoriteArtists:
+            return "Favorite an artist from an online artist page to keep them here."
+        case .all:
+            return "Import tracks to start listening."
+        }
+    }
+
+    private var emptyStateActionTitle: String {
+        switch selectedFilter {
+        case .playlists:
+            return "Create playlist"
+        case .favoriteArtists:
+            return "Find artists"
+        default:
+            return "Import tracks"
+        }
+    }
+
+    private var emptyStateActionSystemImage: String {
+        switch selectedFilter {
+        case .playlists:
+            return "plus"
+        case .favoriteArtists:
+            return "magnifyingglass"
+        default:
+            return "square.and.arrow.down"
+        }
+    }
+
+    private func handleEmptyStateAction() {
+        switch selectedFilter {
+        case .playlists:
+            debugLog("Empty state create playlist button pressed")
+            presentCreatePlaylistPrompt()
+        case .favoriteArtists:
+            debugLog("Empty state find artists button pressed")
+            router.navigate(to: .search)
+        default:
+            debugLog("Empty state import button pressed")
+            showingImportOptions = true
+        }
+    }
+
     func filterCount(for filter: LibraryFilter) -> Int {
         switch filter {
         case .all:
@@ -519,6 +653,8 @@ struct LibraryView: View {
             return dataManager.tracks.filter { $0.fileURL != nil }.count
         case .playlists:
             return dataManager.playlists.count
+        case .favoriteArtists:
+            return dataManager.favoriteArtists.count
         }
     }
 
@@ -535,6 +671,9 @@ struct LibraryView: View {
                 contextName: "playlist:\(playlist.id)"
             )
             router.openPlaylist(playlist.id)
+        case .favoriteArtists:
+            guard let artist = filteredFavoriteArtists.first else { return }
+            router.openOnlineArtist(artist.route)
         default:
             guard let first = filteredTracks.first else { return }
             audioPlayer.playTrack(
@@ -662,6 +801,7 @@ enum LibraryFilter: CaseIterable {
     case favorites
     case offline
     case playlists
+    case favoriteArtists
 
     var title: String {
         switch self {
@@ -669,6 +809,7 @@ enum LibraryFilter: CaseIterable {
         case .favorites: return "Favorites"
         case .offline: return "Offline"
         case .playlists: return "Playlists"
+        case .favoriteArtists: return "Artists"
         }
     }
 
@@ -678,6 +819,7 @@ enum LibraryFilter: CaseIterable {
         case .favorites: return "Favorites"
         case .offline: return "Offline"
         case .playlists: return "Playlists"
+        case .favoriteArtists: return "Favorite Artists"
         }
     }
 
@@ -691,6 +833,8 @@ enum LibraryFilter: CaseIterable {
         switch self {
         case .playlists:
             return "\(dataManager.playlists.count) playlists"
+        case .favoriteArtists:
+            return "\(dataManager.favoriteArtists.count) artists"
         default:
             return "\(filteredTracks.count) tracks"
         }
@@ -722,6 +866,93 @@ struct FilterChip: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct FavoriteArtistRow: View {
+    let artist: FavoriteArtist
+
+    @EnvironmentObject var router: AppRouter
+
+    private var localArtworkImage: Image? {
+        guard let localURL = artist.localImageFileURL,
+              let uiImage = UIImage(contentsOfFile: localURL.path) else {
+            return nil
+        }
+
+        return Image(uiImage: uiImage)
+    }
+
+    var body: some View {
+        Button {
+            debugLog("Favorite artist row pressed: \(artist.artistName)")
+            router.openOnlineArtist(artist.route)
+        } label: {
+            HStack(spacing: 12) {
+                ZStack(alignment: .bottomTrailing) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 56, height: 56)
+                        .overlay(artworkContent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                    ProviderIconView(provider: artist.provider, size: 11)
+                        .padding(4)
+                        .background(Circle().fill(Color.black.opacity(0.82)))
+                        .padding(4)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(artist.artistName)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    Text("Favorite artist on \(artist.provider.displayName)")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.5))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.32))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var artworkContent: some View {
+        if let localArtworkImage {
+            localArtworkImage
+                .resizable()
+                .scaledToFill()
+        } else if let remoteImageURL = artist.resolvedRemoteImageURL {
+            AsyncImage(url: remoteImageURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    placeholderArtwork
+                }
+            }
+        } else {
+            placeholderArtwork
+        }
+    }
+
+    private var placeholderArtwork: some View {
+        Image(systemName: "person.fill")
+            .font(.system(size: 20, weight: .semibold))
+            .foregroundColor(.white.opacity(0.45))
     }
 }
 

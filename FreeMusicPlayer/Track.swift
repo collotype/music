@@ -381,6 +381,67 @@ extension OnlineArtistRoute {
     }
 }
 
+extension FavoriteArtist {
+    var route: OnlineArtistRoute {
+        OnlineArtistRoute(
+            provider: provider,
+            providerArtistID: providerArtistID,
+            artistName: artistName,
+            imageURL: preferredImageReference,
+            webpageURL: cleanedImageReference(webpageURL)
+        )
+    }
+
+    var preferredImageReference: String? {
+        cleanedImageReference(localImagePath) ?? cleanedImageReference(imageURL)
+    }
+
+    var localImageFileURL: URL? {
+        resolvedLocalImageURL(from: localImagePath)
+    }
+
+    var resolvedRemoteImageURL: URL? {
+        resolvedRemoteImageURL(from: localImagePath) ?? resolvedRemoteImageURL(from: imageURL)
+    }
+
+    private func cleanedImageReference(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+
+    private func resolvedLocalImageURL(from reference: String?) -> URL? {
+        guard let reference = cleanedImageReference(reference) else { return nil }
+
+        if let parsedURL = URL(string: reference), parsedURL.scheme != nil {
+            guard parsedURL.isFileURL,
+                  FileManager.default.fileExists(atPath: parsedURL.path) else {
+                return nil
+            }
+
+            return parsedURL
+        }
+
+        let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: reference)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
+            return nil
+        }
+
+        return resolvedURL
+    }
+
+    private func resolvedRemoteImageURL(from reference: String?) -> URL? {
+        guard let reference = cleanedImageReference(reference),
+              let parsedURL = URL(string: reference),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        return parsedURL
+    }
+}
+
 extension OnlineAlbumResult {
     var route: OnlineReleaseRoute {
         OnlineReleaseRoute(
