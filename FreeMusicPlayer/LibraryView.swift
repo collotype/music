@@ -405,7 +405,6 @@ struct LibraryView: View {
         }
     }
 
-    @ViewBuilder
     var mediaSection: some View {
         let hasAlbums = !filteredAlbums.isEmpty
         let hasPlaylists = !filteredPlaylists.isEmpty
