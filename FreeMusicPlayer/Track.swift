@@ -172,8 +172,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         lyricsLastUpdated = try container.decodeIfPresent(Date.self, forKey: .lyricsLastUpdated)
         lyricsURL = try container.decodeIfPresent(String.self, forKey: .lyricsURL)
         source = try container.decodeIfPresent(TrackSource.self, forKey: .source) ?? .local
-        isLiked = try container.decodeIfPresent(Bool.self, forKey: .isLiked) ??
-            try container.decodeIfPresent(Bool.self, forKey: .legacyIsFavorite) ?? false
+        isLiked = try container.decodeIfPresent(Bool.self, forKey: .isLiked)
+            ?? (try? container.decodeIfPresent(Bool.self, forKey: .legacyIsFavorite))
+            ?? false
         playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
         lastPlayed = try container.decodeIfPresent(Date.self, forKey: .lastPlayed)
         addedAt = try container.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date()
