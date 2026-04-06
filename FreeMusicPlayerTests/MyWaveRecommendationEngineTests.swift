@@ -280,6 +280,33 @@ final class MyWaveRecommendationEngineTests: XCTestCase {
         XCTAssertGreaterThan(instrumentalScore, vocalScore)
     }
 
+    func testDownloadedAudioTruncationHeuristicFlagsClearlyShortFile() {
+        XCTAssertTrue(isDownloadedAudioLikelyTruncated(actualDuration: 29, expectedDuration: 180))
+        XCTAssertTrue(isDownloadedAudioLikelyTruncated(actualDuration: 32, expectedDuration: 240))
+        XCTAssertFalse(isDownloadedAudioLikelyTruncated(actualDuration: 178, expectedDuration: 180))
+        XCTAssertFalse(isDownloadedAudioLikelyTruncated(actualDuration: 58, expectedDuration: 65))
+    }
+
+    func testResolvedPreferredSavedDurationFallsBackWhenLocalDurationLooksTruncated() {
+        let resolvedDuration = resolvedPreferredSavedDuration(
+            actualDuration: 29,
+            fallbackDuration: 186,
+            expectedDuration: 186
+        )
+
+        XCTAssertEqual(resolvedDuration, 186, accuracy: 0.001)
+    }
+
+    func testResolvedPreferredSavedDurationKeepsHealthyLocalDuration() {
+        let resolvedDuration = resolvedPreferredSavedDuration(
+            actualDuration: 184.2,
+            fallbackDuration: 186,
+            expectedDuration: 186
+        )
+
+        XCTAssertEqual(resolvedDuration, 184.2, accuracy: 0.001)
+    }
+
     private func makeTrack(
         id: String,
         sourceID: String,

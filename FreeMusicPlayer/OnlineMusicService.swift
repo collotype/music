@@ -6,6 +6,7 @@
 //  the app process without an external backend.
 //
 
+import AVFoundation
 import AuthenticationServices
 import CryptoKit
 import Foundation
@@ -196,6 +197,131 @@ struct OnlineTrackResult: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+struct DownloadedAudioValidationResult {
+    let assetDuration: TimeInterval
+    let audioPlayerDuration: TimeInterval
+    let actualDuration: TimeInterval
+    let expectedDuration: TimeInterval
+    let fileSize: Int64
+    let mimeType: String?
+    let contentLength: Int64?
+    let statusCode: Int?
+    let isReadable: Bool
+    let isLikelyTruncated: Bool
+
+    var passedValidation: Bool {
+        fileSize > 0 && isReadable && !isLikelyTruncated
+    }
+
+    var rejectionReason: String? {
+        if fileSize <= 0 {
+            return "empty-file"
+        }
+
+        if !isReadable {
+            return "unreadable-audio"
+        }
+
+        if isLikelyTruncated {
+            return "likely-truncated"
+        }
+
+        return nil
+    }
+}
+
+func isDownloadedAudioLikelyTruncated(actualDuration: TimeInterval, expectedDuration: TimeInterval) -> Bool {
+    let normalizedActual = normalizedPositiveAudioDuration(actualDuration)
+    let normalizedExpected = normalizedPositiveAudioDuration(expectedDuration)
+
+    guard normalizedActual > 0 else {
+        return true
+    }
+
+    guard normalizedExpected > 0 else {
+        return false
+    }
+
+    let durationDelta = normalizedExpected - normalizedActual
+    let durationRatio = normalizedActual / normalizedExpected
+
+    if normalizedExpected >= 60,
+       normalizedActual < 35,
+       durationDelta > 20 {
+        return true
+    }
+
+    return durationRatio < 0.8 && durationDelta > max(12, normalizedExpected * 0.1)
+}
+
+func resolvedPreferredSavedDuration(
+    actualDuration: TimeInterval,
+    fallbackDuration: TimeInterval,
+    expectedDuration: TimeInterval
+) -> TimeInterval {
+    let normalizedActual = normalizedPositiveAudioDuration(actualDuration)
+    let normalizedFallback = normalizedPositiveAudioDuration(fallbackDuration)
+    let normalizedExpected = normalizedPositiveAudioDuration(expectedDuration)
+    let preferredFallback = normalizedFallback > 0 ? normalizedFallback : normalizedExpected
+    let referenceExpected = normalizedExpected > 0 ? normalizedExpected : preferredFallback
+
+    if normalizedActual > 0,
+       !isDownloadedAudioLikelyTruncated(
+           actualDuration: normalizedActual,
+           expectedDuration: referenceExpected
+       ) {
+        return normalizedActual
+    }
+
+    if preferredFallback > 0 {
+        return preferredFallback
+    }
+
+    return normalizedActual
+}
+
+func downloadedAudioValidationResult(
+    from localFileURL: URL,
+    expectedDuration: TimeInterval,
+    response: URLResponse? = nil,
+    fileManager: FileManager = .default
+) -> DownloadedAudioValidationResult {
+    let asset = AVURLAsset(url: localFileURL)
+    let fallbackPlayer = try? AVAudioPlayer(contentsOf: localFileURL)
+    let assetDuration = normalizedPositiveAudioDuration(CMTimeGetSeconds(asset.duration))
+    let audioPlayerDuration = normalizedPositiveAudioDuration(fallbackPlayer?.duration ?? 0)
+    let actualDuration = max(assetDuration, audioPlayerDuration)
+    let normalizedExpected = normalizedPositiveAudioDuration(expectedDuration)
+    let fileSize = (try? fileManager.attributesOfItem(atPath: localFileURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+    let expectedContentLength = response?.expectedContentLength ?? NSURLSessionTransferSizeUnknown
+    let contentLength = expectedContentLength > 0 ? expectedContentLength : nil
+    let statusCode = (response as? HTTPURLResponse)?.statusCode
+    let rawMimeType = response?.mimeType?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let mimeType = rawMimeType?.isEmpty == false ? rawMimeType : nil
+    let isReadable = actualDuration > 0
+
+    return DownloadedAudioValidationResult(
+        assetDuration: assetDuration,
+        audioPlayerDuration: audioPlayerDuration,
+        actualDuration: actualDuration,
+        expectedDuration: normalizedExpected,
+        fileSize: fileSize,
+        mimeType: mimeType,
+        contentLength: contentLength,
+        statusCode: statusCode,
+        isReadable: isReadable,
+        isLikelyTruncated: isDownloadedAudioLikelyTruncated(
+            actualDuration: actualDuration,
+            expectedDuration: normalizedExpected
+        )
+    )
+}
+
+private func normalizedPositiveAudioDuration(_ value: TimeInterval) -> TimeInterval {
+    guard value.isFinite else { return 0 }
+    return max(value, 0)
+}
+
 struct OnlineArtistResult: Identifiable, Equatable, Hashable, Sendable {
     let provider: OnlineTrackProvider
     let providerArtistID: String
@@ -371,6 +497,7 @@ final class OnlineMusicService {
     private let soundCloudDirectReleaseSearchLimit = 20
     private let soundCloudReleaseFallbackTrackLimit = 100
     private let soundCloudArtistTrackLimit = 50
+    private let offlineDownloadAttemptCount = 2
     private let bundledFallbackClientIDs = [
         "GXG1PaJ1dcHGVX1lHIIbldZN7ZiUBJP7",
     ]
@@ -654,8 +781,22 @@ final class OnlineMusicService {
         }
 
         if let cachedURL = cachedTemporaryFile(for: result.id) {
-            debugLog("Using cached temp audio for \(result.id): \(cachedURL.path)")
-            return cachedURL
+            let cachedValidation = downloadedAudioValidationResult(
+                from: cachedURL,
+                expectedDuration: result.duration,
+                fileManager: fileManager
+            )
+            logDownloadedAudioValidation(cachedValidation, for: result, context: "Cached temp file")
+
+            if cachedValidation.passedValidation {
+                debugLog("Using cached temp audio for \(result.id): \(cachedURL.path)")
+                return cachedURL
+            }
+
+            debugLog(
+                "Reject cached temp audio for \(result.id): reason=\(cachedValidation.rejectionReason ?? "unknown")"
+            )
+            removeTemporaryAudioFiles(for: result.id, additionalExtensions: [cachedURL.pathExtension])
         }
 
         let clientID = try await soundCloudClientID()
@@ -668,66 +809,93 @@ final class OnlineMusicService {
             )
         }
 
-        debugLog("Resolution start for \(result.providerTrackURN)")
-        debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
+        for attempt in 1...offlineDownloadAttemptCount {
+            debugLog("Resolution start for \(result.providerTrackURN) [attempt \(attempt)/\(offlineDownloadAttemptCount)]")
+            debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
 
-        let finalURL = try await resolveSoundCloudStreamURL(
-            for: chosenCandidate,
-            trackAuthorization: result.trackAuthorization,
-            clientID: clientID
-        )
-
-        debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
-        debugLog("Download start for \(result.providerTrackURN): \(finalURL.absoluteString)")
-
-        var request = URLRequest(url: finalURL)
-        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-        request.setValue(soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
-
-        let temporaryDownloadURL: URL
-        let response: URLResponse
-
-        do {
-            (temporaryDownloadURL, response) = try await session.download(for: request)
-        } catch {
-            debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
-            throw OnlineMusicServiceError.networkFailure(
-                "Audio download failed because the SoundCloud file request could not be completed."
+            let finalURL = try await resolveSoundCloudStreamURL(
+                for: chosenCandidate,
+                trackAuthorization: result.trackAuthorization,
+                clientID: clientID
             )
-        }
+            debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
+            debugLog("Download start for \(result.providerTrackURN) [attempt \(attempt)/\(offlineDownloadAttemptCount)]: \(finalURL.absoluteString)")
 
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200...299).contains(httpResponse.statusCode) {
-            throw OnlineMusicServiceError.networkFailure(
-                "Audio download failed because SoundCloud returned HTTP \(httpResponse.statusCode)."
-            )
-        }
+            var request = URLRequest(url: finalURL)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            request.setValue(soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
 
-        let fileExtension = preferredFileExtension(
-            mimeType: response.mimeType ?? chosenCandidate.mimeType,
-            resolvedURL: finalURL
-        )
-        let destinationURL = AppFileManager.shared.temporaryAudioURL(for: result.id, fileExtension: fileExtension)
-
-        do {
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.removeItem(at: destinationURL)
+            if attempt > 1 {
+                request.setValue("no-cache, no-store, max-age=0", forHTTPHeaderField: "Cache-Control")
+                request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+                URLCache.shared.removeCachedResponse(for: request)
             }
 
-            try fileManager.moveItem(at: temporaryDownloadURL, to: destinationURL)
-        } catch {
-            throw OnlineMusicServiceError.tempFileWriteFailure(
-                "The downloaded SoundCloud audio could not be stored in temporary app storage."
+            let temporaryDownloadURL: URL
+            let response: URLResponse
+
+            do {
+                (temporaryDownloadURL, response) = try await session.download(for: request)
+            } catch {
+                debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
+                throw OnlineMusicServiceError.networkFailure(
+                    "Audio download failed because the SoundCloud file request could not be completed."
+                )
+            }
+
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200...299).contains(httpResponse.statusCode) {
+                throw OnlineMusicServiceError.networkFailure(
+                    "Audio download failed because SoundCloud returned HTTP \(httpResponse.statusCode)."
+                )
+            }
+
+            let fileExtension = preferredFileExtension(
+                mimeType: response.mimeType ?? chosenCandidate.mimeType,
+                resolvedURL: finalURL
             )
+            let destinationURL = AppFileManager.shared.temporaryAudioURL(for: result.id, fileExtension: fileExtension)
+
+            do {
+                removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
+                try fileManager.moveItem(at: temporaryDownloadURL, to: destinationURL)
+            } catch {
+                throw OnlineMusicServiceError.tempFileWriteFailure(
+                    "The downloaded SoundCloud audio could not be stored in temporary app storage."
+                )
+            }
+
+            let validation = downloadedAudioValidationResult(
+                from: destinationURL,
+                expectedDuration: result.duration,
+                response: response,
+                fileManager: fileManager
+            )
+            logDownloadedAudioValidation(validation, for: result, context: "Download attempt \(attempt)")
+            debugLog("Temp file path: \(destinationURL.path)")
+
+            if validation.passedValidation {
+                return destinationURL
+            }
+
+            debugLog(
+                "Retry trigger for \(result.providerTrackURN): attempt \(attempt) produced \(validation.rejectionReason ?? "invalid-audio")"
+            )
+            removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
+
+            if attempt == offlineDownloadAttemptCount {
+                throw OnlineMusicServiceError.extractionFailure(
+                    "SoundCloud returned an incomplete or unreadable audio file, so the track could not be saved reliably."
+                )
+            }
         }
 
-        let fileSize = (try? fileManager.attributesOfItem(atPath: destinationURL.path)[.size] as? NSNumber)?.int64Value ?? 0
-        debugLog("Download end for \(result.providerTrackURN): \(fileSize) bytes")
-        debugLog("Temp file path: \(destinationURL.path)")
-
-        return destinationURL
+        throw OnlineMusicServiceError.extractionFailure(
+            "SoundCloud returned an incomplete or unreadable audio file, so the track could not be saved reliably."
+        )
     }
 
     func resolveTrackResult(for track: Track) async throws -> OnlineTrackResult {
@@ -2409,15 +2577,48 @@ final class OnlineMusicService {
     }
 
     private func cachedTemporaryFile(for sourceID: String) -> URL? {
-        let candidateExtensions = ["mp3", "m4a", "aac"]
-        for pathExtension in candidateExtensions {
-            let candidateURL = AppFileManager.shared.temporaryAudioURL(for: sourceID, fileExtension: pathExtension)
+        for candidateURL in temporaryAudioCandidateURLs(for: sourceID) {
             if fileManager.fileExists(atPath: candidateURL.path) {
                 return candidateURL
             }
         }
 
         return nil
+    }
+
+    private func temporaryAudioCandidateURLs(for sourceID: String, additionalExtensions: [String] = []) -> [URL] {
+        let candidateExtensions = orderedUniqueValues(
+            ["mp3", "m4a", "aac"] +
+            additionalExtensions.map { $0.lowercased() }.filter { !$0.isEmpty }
+        )
+
+        return candidateExtensions.map { pathExtension in
+            let candidateURL = AppFileManager.shared.temporaryAudioURL(for: sourceID, fileExtension: pathExtension)
+            return candidateURL
+        }
+    }
+
+    private func removeTemporaryAudioFiles(for sourceID: String, additionalExtensions: [String] = []) {
+        for candidateURL in temporaryAudioCandidateURLs(for: sourceID, additionalExtensions: additionalExtensions) {
+            if fileManager.fileExists(atPath: candidateURL.path) {
+                try? fileManager.removeItem(at: candidateURL)
+            }
+        }
+    }
+
+    private func logDownloadedAudioValidation(
+        _ validation: DownloadedAudioValidationResult,
+        for result: OnlineTrackResult,
+        context: String
+    ) {
+        let contentType = validation.mimeType ?? "unknown"
+        let contentLength = validation.contentLength.map(String.init) ?? "unknown"
+        let statusCode = validation.statusCode.map(String.init) ?? "n/a"
+        let reason = validation.rejectionReason ?? "none"
+
+        debugLog(
+            "\(context) validation for \(result.providerTrackURN): expected=\(validation.expectedDuration), asset=\(validation.assetDuration), player=\(validation.audioPlayerDuration), actual=\(validation.actualDuration), fileSize=\(validation.fileSize), contentType=\(contentType), contentLength=\(contentLength), status=\(statusCode), passed=\(validation.passedValidation), truncated=\(validation.isLikelyTruncated), reason=\(reason)"
+        )
     }
 
     private func fetchText(from url: URL, accept: String) async throws -> String {

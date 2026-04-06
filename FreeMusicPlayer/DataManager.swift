@@ -786,17 +786,23 @@ final class DataManager: ObservableObject {
 
     private func resolvedDownloadedTrackMetadata(from result: OnlineTrackResult, localFileURL: URL) -> DownloadedTrackMetadata {
         let asset = AVURLAsset(url: localFileURL)
-        let fallbackPlayer = try? AVAudioPlayer(contentsOf: localFileURL)
-        let assetDuration = max(CMTimeGetSeconds(asset.duration), 0)
-        let fallbackDuration = max(fallbackPlayer?.duration ?? 0, 0)
-        let resolvedDuration = [assetDuration, fallbackDuration, max(result.duration, 0)]
-            .first(where: { $0 > 0 }) ?? 0
+        let validation = downloadedAudioValidationResult(
+            from: localFileURL,
+            expectedDuration: result.duration
+        )
+        let resolvedDuration = resolvedPreferredSavedDuration(
+            actualDuration: validation.actualDuration,
+            fallbackDuration: result.duration,
+            expectedDuration: result.duration
+        )
 
         let title = metadataValue(for: asset, identifier: .commonIdentifierTitle) ?? result.title
         let artist = metadataValue(for: asset, identifier: .commonIdentifierArtist) ?? result.artist
         let album = metadataValue(for: asset, identifier: .commonIdentifierAlbumName) ?? result.album
 
-        debugLog("Downloaded metadata resolved for \(result.title): title=\(title), artist=\(artist), duration=\(resolvedDuration)")
+        debugLog(
+            "Downloaded metadata resolved for \(result.title): title=\(title), artist=\(artist), expected=\(validation.expectedDuration), asset=\(validation.assetDuration), player=\(validation.audioPlayerDuration), actual=\(validation.actualDuration), fileSize=\(validation.fileSize), passed=\(validation.passedValidation), truncated=\(validation.isLikelyTruncated), finalDuration=\(resolvedDuration)"
+        )
 
         return DownloadedTrackMetadata(
             title: title,
