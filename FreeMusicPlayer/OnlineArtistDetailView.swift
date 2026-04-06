@@ -481,6 +481,7 @@ struct OnlineReleaseDetailView: View {
     @State private var tracks: [OnlineTrackResult] = []
     @State private var isLoading = false
     @State private var isPlayingPrimaryAction = false
+    @State private var isSavingAlbum = false
     @State private var loadingErrorMessage: String?
     @State private var actionStatusMessage: String?
 
@@ -653,20 +654,37 @@ struct OnlineReleaseDetailView: View {
                     }
                 }
 
-                Button {
-                    playRelease()
-                } label: {
-                    HeroActionButton(
-                        title: "Play",
-                        systemImage: isPlayingPrimaryAction ? nil : "play.fill",
-                        tint: .white,
-                        foregroundColor: .black,
-                        isLoading: isPlayingPrimaryAction
-                    )
+                HStack(spacing: 12) {
+                    Button {
+                        playRelease()
+                    } label: {
+                        HeroActionButton(
+                            title: "Play",
+                            systemImage: isPlayingPrimaryAction ? nil : "play.fill",
+                            tint: .white,
+                            foregroundColor: .black,
+                            isLoading: isPlayingPrimaryAction
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(primaryPlayableTrack == nil || isPlayingPrimaryAction)
+                    .opacity(primaryPlayableTrack == nil ? 0.45 : 1)
+
+                    Button {
+                        toggleAlbumSavedState()
+                    } label: {
+                        HeroActionButton(
+                            title: isReleaseSaved ? "Saved Album" : "Save Album",
+                            systemImage: isSavingAlbum ? nil : (isReleaseSaved ? "arrow.down.circle.fill" : "arrow.down.circle"),
+                            tint: Color.white.opacity(0.14),
+                            foregroundColor: .white,
+                            isLoading: isSavingAlbum
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSaveRelease || isSavingAlbum)
+                    .opacity(canSaveRelease ? 1 : 0.45)
                 }
-                .buttonStyle(.plain)
-                .disabled(primaryPlayableTrack == nil || isPlayingPrimaryAction)
-                .opacity(primaryPlayableTrack == nil ? 0.45 : 1)
             }
             .padding(.horizontal, 16)
         }
@@ -679,6 +697,16 @@ struct OnlineReleaseDetailView: View {
 
     private var releasePlaybackContextName: String {
         "online:release:\(route.providerReleaseID)"
+    }
+
+    private var isReleaseSaved: Bool {
+        dataManager.isAlbumSaved(provider: release.provider, providerAlbumID: release.providerAlbumID)
+    }
+
+    private var canSaveRelease: Bool {
+        !tracks.isEmpty && tracks.allSatisfy { result in
+            dataManager.isTrackDownloaded(sourceID: result.id) || result.supportsOfflineDownload
+        }
     }
 
     private var canAddReleaseToPlaylist: Bool {
@@ -777,6 +805,33 @@ struct OnlineReleaseDetailView: View {
             }
         }
     }
+
+    private func toggleAlbumSavedState() {
+        guard canSaveRelease, !isSavingAlbum else { return }
+
+        debugLog("Release save toggle pressed: \(release.title) [\(route.providerReleaseID)]")
+        isSavingAlbum = true
+        actionStatusMessage = nil
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isSavingAlbum = false
+                }
+            }
+
+            do {
+                _ = try await dataManager.toggleAlbumSavedState(
+                    release: release,
+                    trackResults: tracks
+                )
+            } catch {
+                await MainActor.run {
+                    actionStatusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
 }
 
 struct OnlineTrackResultsList: View {
@@ -790,17 +845,21 @@ struct OnlineTrackResultsList: View {
     @EnvironmentObject private var audioPlayer: AudioPlayer
 
     @State private var performingPrimaryActionIDs: Set<String> = []
-    @State private var savingIDs: Set<String> = []
+    @State private var likingIDs: Set<String> = []
+    @State private var downloadingIDs: Set<String> = []
 
     var body: some View {
         ForEach(results) { result in
             OnlineSearchTrackRow(
                 result: result,
                 isPerformingPrimaryAction: performingPrimaryActionIDs.contains(result.id),
-                isSaving: savingIDs.contains(result.id),
-                isSaved: dataManager.isTrackSaved(sourceID: result.id),
+                isLiking: likingIDs.contains(result.id),
+                isDownloading: downloadingIDs.contains(result.id),
+                isLiked: dataManager.isTrackLiked(sourceID: result.id),
+                isDownloaded: dataManager.isTrackDownloaded(sourceID: result.id),
                 primaryAction: { handlePrimaryAction(for: result) },
-                saveAction: result.supportsOfflineDownload ? { saveOnlineResult(result) } : nil
+                likeAction: likeAction(for: result),
+                downloadAction: downloadAction(for: result)
             )
 
             if result.id != results.last?.id {
@@ -849,43 +908,88 @@ struct OnlineTrackResultsList: View {
         }
     }
 
-    private func saveOnlineResult(_ result: OnlineTrackResult) {
-        guard !savingIDs.contains(result.id) else { return }
+    private func likeAction(for result: OnlineTrackResult) -> (() -> Void)? {
+        if dataManager.isTrackDownloaded(sourceID: result.id) || result.supportsOfflineDownload {
+            return { toggleLikedState(for: result) }
+        }
 
-        guard result.supportsOfflineDownload else {
+        return nil
+    }
+
+    private func downloadAction(for result: OnlineTrackResult) -> (() -> Void)? {
+        if dataManager.isTrackDownloaded(sourceID: result.id) || result.supportsOfflineDownload {
+            return { toggleDownloadedState(for: result) }
+        }
+
+        return nil
+    }
+
+    private func toggleLikedState(for result: OnlineTrackResult) {
+        guard !likingIDs.contains(result.id), !downloadingIDs.contains(result.id) else { return }
+
+        guard dataManager.isTrackDownloaded(sourceID: result.id) || result.supportsOfflineDownload else {
             statusMessage = result.offlineDownloadUnavailableMessage
             return
         }
 
-        if let savedTrack = dataManager.track(withSourceID: result.id) {
-            debugLog("Saved online result already in library: \(result.title) [\(result.providerTrackID)]")
-            audioPlayer.syncCurrentTrackReference(with: savedTrack)
-            return
-        }
-
-        debugLog("Online result add-to-library pressed: \(result.title) [\(result.providerTrackID)]")
-        savingIDs.insert(result.id)
+        debugLog("Online result liked toggle pressed: \(result.title) [\(result.providerTrackID)]")
+        likingIDs.insert(result.id)
         statusMessage = nil
 
         Task {
             defer {
                 Task { @MainActor in
-                    savingIDs.remove(result.id)
+                    likingIDs.remove(result.id)
                 }
             }
 
             do {
-                let savedTrack = try await OnlineTrackActionHelper.save(
-                    result: result,
-                    dataManager: dataManager
-                )
+                let savedTrack = try await dataManager.toggleTrackLikedState(for: result)
 
                 await MainActor.run {
-                    audioPlayer.syncCurrentTrackReference(with: savedTrack)
-                    onSaveCompletion?()
+                    if let savedTrack {
+                        audioPlayer.syncCurrentTrackReference(with: savedTrack)
+                    }
                 }
             } catch {
-                debugLog("Save error for \(result.providerTrackID): \(error.localizedDescription)")
+                debugLog("Like error for \(result.providerTrackID): \(error.localizedDescription)")
+                await MainActor.run {
+                    statusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func toggleDownloadedState(for result: OnlineTrackResult) {
+        guard !downloadingIDs.contains(result.id), !likingIDs.contains(result.id) else { return }
+
+        guard dataManager.isTrackDownloaded(sourceID: result.id) || result.supportsOfflineDownload else {
+            statusMessage = result.offlineDownloadUnavailableMessage
+            return
+        }
+
+        debugLog("Online result download toggle pressed: \(result.title) [\(result.providerTrackID)]")
+        downloadingIDs.insert(result.id)
+        statusMessage = nil
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    downloadingIDs.remove(result.id)
+                }
+            }
+
+            do {
+                let savedTrack = try await dataManager.toggleTrackSavedState(for: result)
+
+                await MainActor.run {
+                    if let savedTrack {
+                        audioPlayer.syncCurrentTrackReference(with: savedTrack)
+                        onSaveCompletion?()
+                    }
+                }
+            } catch {
+                debugLog("Download error for \(result.providerTrackID): \(error.localizedDescription)")
                 await MainActor.run {
                     statusMessage = error.localizedDescription
                 }

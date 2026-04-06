@@ -1468,10 +1468,13 @@ struct PlaylistArtworkView: View {
 struct OnlineSearchTrackRow: View {
     let result: OnlineTrackResult
     let isPerformingPrimaryAction: Bool
-    let isSaving: Bool
-    let isSaved: Bool
+    let isLiking: Bool
+    let isDownloading: Bool
+    let isLiked: Bool
+    let isDownloaded: Bool
     let primaryAction: () -> Void
-    let saveAction: (() -> Void)?
+    let likeAction: (() -> Void)?
+    let downloadAction: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1501,24 +1504,45 @@ struct OnlineSearchTrackRow: View {
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.4))
 
-            if let saveAction {
-                Button(action: saveAction) {
-                    if isSaving {
+            if let downloadAction {
+                Button(action: downloadAction) {
+                    if isDownloading {
                         ProgressView()
                             .tint(.white)
                             .frame(width: 20, height: 20)
                     } else {
-                        Image(systemName: isSaved ? "heart.fill" : "heart")
+                        Image(systemName: isDownloaded ? "arrow.down.circle.fill" : "arrow.down.circle")
                             .font(.system(size: 20))
-                            .foregroundColor(isSaved ? .red : .white.opacity(0.78))
+                            .foregroundColor(isDownloaded ? .white : .white.opacity(0.78))
                     }
                 }
                 .buttonStyle(.plain)
                 .frame(width: 28)
             } else {
-                Image(systemName: isSaved ? "heart.fill" : "heart.slash")
+                Image(systemName: isDownloaded ? "arrow.down.circle.fill" : "arrow.down.circle")
                     .font(.system(size: 20))
-                    .foregroundColor(isSaved ? .red : .white.opacity(0.24))
+                    .foregroundColor(isDownloaded ? .white : .white.opacity(0.24))
+                    .frame(width: 28, height: 28)
+            }
+
+            if let likeAction {
+                Button(action: likeAction) {
+                    if isLiking {
+                        ProgressView()
+                            .tint(.white)
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: isLiked ? "heart.fill" : "heart")
+                            .font(.system(size: 20))
+                            .foregroundColor(isLiked ? .red : .white.opacity(0.78))
+                    }
+                }
+                .buttonStyle(.plain)
+                .frame(width: 28)
+            } else {
+                Image(systemName: isLiked ? "heart.fill" : "heart.slash")
+                    .font(.system(size: 20))
+                    .foregroundColor(isLiked ? .red : .white.opacity(0.24))
                     .frame(width: 28, height: 28)
             }
 

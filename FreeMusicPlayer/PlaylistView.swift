@@ -432,8 +432,8 @@ struct PlaylistTrackRow: View {
 
             Spacer()
 
-            Image(systemName: dataManager.isTrackSaved(track) ? "heart.fill" : "heart")
-                .foregroundColor(dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5))
+            Image(systemName: dataManager.isTrackLiked(track) ? "heart.fill" : "heart")
+                .foregroundColor(dataManager.isTrackLiked(track) ? .red : .white.opacity(0.5))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 10)

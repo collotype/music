@@ -24,25 +24,23 @@ struct LibraryView: View {
     @State private var libraryUpdateMessage: String = ""
     @State private var newPlaylistName: String = ""
     @State private var pendingDeleteTrack: Track?
-    @State private var selectedFilter: LibraryFilter = .all
+    @State private var selectedFilter: LibraryFilter = .liked
     @State private var searchText: String = ""
 
     var filteredTracks: [Track] {
-        var tracks = dataManager.tracks
+        let tracks: [Track]
 
         switch selectedFilter {
-        case .all:
-            break
-        case .favorites:
-            tracks = dataManager.favoriteTracks
-        case .offline:
-            tracks = tracks.filter { $0.fileURL != nil }
-        case .playlists, .favoritePlaylists, .artists, .albums, .favoriteArtists:
+        case .liked:
+            tracks = dataManager.likedTracks
+        case .downloaded:
+            tracks = dataManager.downloadedTracks
+        case .playlists, .artists, .albums:
             return []
         }
 
         if !searchText.isEmpty {
-            tracks = tracks.filter {
+            return tracks.filter {
                 $0.displayTitle.localizedCaseInsensitiveContains(searchText) ||
                 $0.displayArtist.localizedCaseInsensitiveContains(searchText)
             }
@@ -51,7 +49,7 @@ struct LibraryView: View {
         return tracks
     }
 
-    var filteredFavoriteArtists: [FavoriteArtist] {
+    var filteredArtists: [FavoriteArtist] {
         var artists = dataManager.favoriteArtists
 
         if !searchText.isEmpty {
@@ -65,14 +63,7 @@ struct LibraryView: View {
     }
 
     var filteredPlaylists: [Playlist] {
-        let playlists: [Playlist]
-        switch selectedFilter {
-        case .favoritePlaylists:
-            playlists = dataManager.favoritePlaylists
-        default:
-            playlists = dataManager.sortedPlaylists
-        }
-
+        let playlists = dataManager.sortedPlaylists
         guard !searchText.isEmpty else { return playlists }
 
         return playlists.filter { playlist in
@@ -80,47 +71,36 @@ struct LibraryView: View {
         }
     }
 
-    var filteredArtists: [LocalArtistSearchResult] {
-        let artists = allArtistResults()
-        guard !searchText.isEmpty else { return artists }
-
-        return artists.filter { artist in
-            artist.name.localizedCaseInsensitiveContains(searchText)
-        }
-    }
-
-    var filteredAlbums: [LocalAlbumSearchResult] {
-        let albums = allAlbumResults()
+    var filteredAlbums: [SavedAlbum] {
+        let albums = dataManager.savedAlbums
         guard !searchText.isEmpty else { return albums }
 
         return albums.filter { album in
-            album.title.localizedCaseInsensitiveContains(searchText) ||
-            album.artist.localizedCaseInsensitiveContains(searchText)
+            album.displayTitle.localizedCaseInsensitiveContains(searchText) ||
+            album.displayArtist.localizedCaseInsensitiveContains(searchText)
         }
     }
 
     private var selectionSubtitle: String {
         switch selectedFilter {
+        case .liked:
+            return "\(filteredTracks.count) liked tracks"
+        case .downloaded:
+            return "\(filteredTracks.count) downloaded tracks"
         case .playlists:
             return "\(dataManager.playlists.count) playlists"
-        case .favoritePlaylists:
-            return "\(filteredPlaylists.count) starred playlists"
-        case .favoriteArtists:
-            return "\(filteredFavoriteArtists.count) artists"
         case .artists:
             return "\(filteredArtists.count) artists"
         case .albums:
             return "\(filteredAlbums.count) albums"
-        default:
-            return "\(filteredTracks.count) tracks"
         }
     }
 
     private var showsPlaybackActions: Bool {
         switch selectedFilter {
-        case .artists, .albums, .favoriteArtists:
+        case .artists, .albums:
             return false
-        default:
+        case .liked, .downloaded, .playlists:
             return true
         }
     }
@@ -396,14 +376,12 @@ struct LibraryView: View {
 
     @ViewBuilder
     var contentSection: some View {
-        if selectedFilter == .playlists || selectedFilter == .favoritePlaylists {
+        if selectedFilter == .playlists {
             playlistSection
         } else if selectedFilter == .artists {
             artistsSection
         } else if selectedFilter == .albums {
             albumsSection
-        } else if selectedFilter == .favoriteArtists {
-            favoriteArtistsSection
         } else if filteredTracks.isEmpty {
             emptyStateView
         } else {
@@ -434,39 +412,35 @@ struct LibraryView: View {
     var playlistSection: some View {
         Group {
             if filteredPlaylists.isEmpty {
-                if selectedFilter == .favoritePlaylists {
-                    emptyStateView
-                } else {
-                    VStack(spacing: 16) {
-                        Image(systemName: "music.note.list")
-                            .font(.system(size: 60))
-                            .foregroundColor(.white.opacity(0.2))
+                VStack(spacing: 16) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 60))
+                        .foregroundColor(.white.opacity(0.2))
 
-                        Text("No playlists yet")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.5))
+                    Text("No playlists yet")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.5))
 
-                        Button {
-                            debugLog("Library create playlist button pressed")
-                            presentCreatePlaylistPrompt()
-                        } label: {
-                            HStack {
-                                Image(systemName: "plus")
-                                Text("Create playlist")
-                            }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.white.opacity(0.15))
-                            )
+                    Button {
+                        debugLog("Library create playlist button pressed")
+                        presentCreatePlaylistPrompt()
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus")
+                            Text("Create playlist")
                         }
-                        .buttonStyle(.plain)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.15))
+                        )
                     }
-                    .padding(.top, 100)
+                    .buttonStyle(.plain)
                 }
+                .padding(.top, 100)
             } else {
                 VStack(spacing: 0) {
                     HStack {
@@ -490,12 +464,6 @@ struct LibraryView: View {
                         .buttonStyle(.plain)
 
                         Spacer()
-
-                        if !dataManager.favoritePlaylists.isEmpty {
-                            Text("\(dataManager.favoritePlaylists.count) starred")
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.45))
-                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -561,17 +529,16 @@ struct LibraryView: View {
             } else {
                 List {
                     ForEach(filteredArtists) { artist in
-                        NavigationLink {
-                            TrackCollectionView(
-                                title: artist.name,
-                                subtitle: "Artist",
-                                tracks: artist.tracks,
-                                contextName: "artist:\(artist.name)"
-                            )
-                        } label: {
-                            LibraryArtistRow(artist: artist)
-                        }
-                        .listRowBackground(Color.clear)
+                        FavoriteArtistRow(artist: artist)
+                            .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    debugLog("Favorite artist removed from library list: \(artist.artistName)")
+                                    dataManager.toggleFavoriteArtist(artist)
+                                } label: {
+                                    Label("Unfavorite", systemImage: "heart.slash")
+                                }
+                            }
                     }
                 }
                 .listStyle(.plain)
@@ -590,41 +557,15 @@ struct LibraryView: View {
                     ForEach(filteredAlbums) { album in
                         NavigationLink {
                             TrackCollectionView(
-                                title: album.title,
-                                subtitle: album.artist,
-                                tracks: album.tracks,
+                                title: album.displayTitle,
+                                subtitle: album.displayArtist,
+                                tracks: dataManager.tracks(for: album),
                                 contextName: "album:\(album.id)"
                             )
                         } label: {
                             LibraryAlbumRow(album: album)
                         }
                         .listRowBackground(Color.clear)
-                    }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .background(Color.black)
-            }
-        }
-    }
-
-    var favoriteArtistsSection: some View {
-        Group {
-            if filteredFavoriteArtists.isEmpty {
-                emptyStateView
-            } else {
-                List {
-                    ForEach(filteredFavoriteArtists) { artist in
-                        FavoriteArtistRow(artist: artist)
-                            .listRowBackground(Color.clear)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    debugLog("Favorite artist removed from library list: \(artist.artistName)")
-                                    dataManager.toggleFavoriteArtist(artist)
-                                } label: {
-                                    Label("Unfavorite", systemImage: "heart.slash")
-                                }
-                            }
                     }
                 }
                 .listStyle(.plain)
@@ -676,60 +617,46 @@ struct LibraryView: View {
 
     private var emptyStateSystemImage: String {
         switch selectedFilter {
+        case .liked:
+            return "heart"
+        case .downloaded:
+            return "arrow.down.circle"
         case .playlists:
             return "music.note.list"
-        case .favoritePlaylists:
-            return "star.circle"
         case .artists:
-            return "person.2"
+            return "person.crop.circle.badge.plus"
         case .albums:
             return "square.stack"
-        case .favoriteArtists:
-            return "person.crop.circle.badge.questionmark"
-        default:
-            return "music.note.list"
         }
     }
 
     private var emptyStateTitle: String {
         switch selectedFilter {
-        case .favorites:
-            return "No saved tracks yet"
-        case .offline:
-            return "No offline tracks yet"
+        case .liked:
+            return "No liked tracks yet"
+        case .downloaded:
+            return "No downloaded tracks yet"
         case .playlists:
             return "No playlists yet"
-        case .favoritePlaylists:
-            return "No starred playlists yet"
         case .artists:
-            return "No artists yet"
+            return "No favorite artists yet"
         case .albums:
             return "No albums yet"
-        case .favoriteArtists:
-            return "No favorite artists yet"
-        case .all:
-            return "Library is empty"
         }
     }
 
     private var emptyStateSubtitle: String {
         switch selectedFilter {
-        case .favorites:
-            return "Save tracks to your library to keep them here."
-        case .offline:
-            return "Downloaded and imported tracks will appear here."
+        case .liked:
+            return "Tracks you like with the heart button will appear here and stay downloaded."
+        case .downloaded:
+            return "Downloaded and imported tracks will appear here even if they are not liked."
         case .playlists:
             return "Create a playlist to start organizing your library."
-        case .favoritePlaylists:
-            return "Star playlists to keep your best collections together."
         case .artists:
-            return "Imported artists from your library will appear here."
-        case .albums:
-            return "Imported albums from your library will appear here."
-        case .favoriteArtists:
             return "Favorite an artist from an online artist page to keep them here."
-        case .all:
-            return "Import tracks to start listening."
+        case .albums:
+            return "Albums you explicitly save will appear here as album entries."
         }
     }
 
@@ -737,14 +664,12 @@ struct LibraryView: View {
         switch selectedFilter {
         case .playlists:
             return "Create playlist"
-        case .favoritePlaylists:
-            return "Open playlists"
-        case .artists, .albums:
-            return "Import tracks"
-        case .favoriteArtists:
+        case .artists:
             return "Find artists"
-        default:
-            return "Import tracks"
+        case .albums:
+            return "Find albums"
+        case .liked, .downloaded:
+            return "Find tracks"
         }
     }
 
@@ -752,14 +677,8 @@ struct LibraryView: View {
         switch selectedFilter {
         case .playlists:
             return "plus"
-        case .favoritePlaylists:
-            return "music.note.list"
-        case .artists, .albums:
-            return "square.and.arrow.down"
-        case .favoriteArtists:
+        case .artists, .albums, .liked, .downloaded:
             return "magnifyingglass"
-        default:
-            return "square.and.arrow.down"
         }
     }
 
@@ -768,45 +687,30 @@ struct LibraryView: View {
         case .playlists:
             debugLog("Empty state create playlist button pressed")
             presentCreatePlaylistPrompt()
-        case .favoritePlaylists:
-            debugLog("Empty state favorite playlists button pressed")
-            selectedFilter = .playlists
-        case .artists, .albums:
-            debugLog("Empty state import tracks button pressed")
-            showingImportOptions = true
-        case .favoriteArtists:
-            debugLog("Empty state find artists button pressed")
+        case .artists, .albums, .liked, .downloaded:
+            debugLog("Empty state search button pressed")
             router.navigate(to: .search)
-        default:
-            debugLog("Empty state import button pressed")
-            showingImportOptions = true
         }
     }
 
     func filterCount(for filter: LibraryFilter) -> Int {
         switch filter {
-        case .all:
-            return dataManager.tracks.count
-        case .favorites:
-            return dataManager.favoriteTracks.count
-        case .offline:
-            return dataManager.tracks.filter { $0.fileURL != nil }.count
+        case .liked:
+            return dataManager.likedTracks.count
+        case .downloaded:
+            return dataManager.downloadedTracks.count
         case .playlists:
             return dataManager.playlists.count
-        case .favoritePlaylists:
-            return dataManager.favoritePlaylists.count
         case .artists:
-            return allArtistResults().count
-        case .albums:
-            return allAlbumResults().count
-        case .favoriteArtists:
             return dataManager.favoriteArtists.count
+        case .albums:
+            return dataManager.savedAlbums.count
         }
     }
 
     private func playPrimarySelection() {
         switch selectedFilter {
-        case .playlists, .favoritePlaylists:
+        case .playlists:
             guard let playlist = filteredPlaylists.first,
                   let track = dataManager.tracks(for: playlist.id).first else {
                 return
@@ -817,12 +721,9 @@ struct LibraryView: View {
                 contextName: "playlist:\(playlist.id)"
             )
             router.openPlaylist(playlist.id)
-        case .favoriteArtists:
-            guard let artist = filteredFavoriteArtists.first else { return }
-            router.openOnlineArtist(artist.route)
         case .artists, .albums:
             return
-        default:
+        case .liked, .downloaded:
             guard let first = filteredTracks.first else { return }
             audioPlayer.playTrack(
                 first,
@@ -1026,61 +927,50 @@ struct LibraryView: View {
 }
 
 enum LibraryFilter: CaseIterable {
-    case all
-    case favorites
-    case offline
-    case playlists
-    case favoritePlaylists
+    case liked
+    case downloaded
     case artists
     case albums
-    case favoriteArtists
+    case playlists
 
     var title: String {
         switch self {
-        case .all: return "All"
-        case .favorites: return "Saved"
-        case .offline: return "Offline"
+        case .liked: return "Liked"
+        case .downloaded: return "Downloaded"
         case .playlists: return "Playlists"
-        case .favoritePlaylists: return "Starred"
         case .artists: return "Artists"
         case .albums: return "Albums"
-        case .favoriteArtists: return "Fav Artists"
         }
     }
 
     var screenTitle: String {
         switch self {
-        case .all: return "Library"
-        case .favorites: return "Saved Tracks"
-        case .offline: return "Offline"
+        case .liked: return "Liked"
+        case .downloaded: return "Downloaded"
         case .playlists: return "Playlists"
-        case .favoritePlaylists: return "Starred Playlists"
         case .artists: return "Artists"
         case .albums: return "Albums"
-        case .favoriteArtists: return "Favorite Artists"
         }
     }
 
     var next: LibraryFilter {
         let all = Self.allCases
-        guard let index = all.firstIndex(of: self) else { return .all }
+        guard let index = all.firstIndex(of: self) else { return .liked }
         return all[(index + 1) % all.count]
     }
 
     func subtitle(for dataManager: DataManager, filteredTracks: [Track]) -> String {
         switch self {
+        case .liked:
+            return "\(dataManager.likedTracks.count) tracks"
+        case .downloaded:
+            return "\(dataManager.downloadedTracks.count) tracks"
         case .playlists:
             return "\(dataManager.playlists.count) playlists"
-        case .favoritePlaylists:
-            return "\(dataManager.favoritePlaylists.count) starred playlists"
         case .artists:
-            return "Artists from your library"
-        case .albums:
-            return "Albums from your library"
-        case .favoriteArtists:
             return "\(dataManager.favoriteArtists.count) artists"
-        default:
-            return "\(filteredTracks.count) tracks"
+        case .albums:
+            return "\(dataManager.savedAlbums.count) albums"
         }
     }
 }
@@ -1229,24 +1119,35 @@ struct LibraryArtistRow: View {
 }
 
 struct LibraryAlbumRow: View {
-    let album: LocalAlbumSearchResult
+    let album: SavedAlbum
+    @EnvironmentObject var dataManager: DataManager
 
     var body: some View {
         HStack(spacing: 12) {
-            TrackArtworkView(track: album.representativeTrack, size: 56, cornerRadius: 12, showsSourceBadge: true)
+            if let representativeTrack = dataManager.representativeTrack(for: album) {
+                TrackArtworkView(track: representativeTrack, size: 56, cornerRadius: 12, showsSourceBadge: true)
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Image(systemName: "square.stack.fill")
+                            .foregroundColor(.white.opacity(0.5))
+                    )
+            }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(album.title)
+                Text(album.displayTitle)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.white)
                     .lineLimit(1)
 
-                Text(album.artist)
+                Text(album.displayArtist)
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.58))
                     .lineLimit(1)
 
-                Text("\(album.tracks.count) track(s)")
+                Text("\(dataManager.tracks(for: album).count) track(s)")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.42))
             }
@@ -1273,8 +1174,8 @@ struct LibraryTrackRow: View {
         audioPlayer.currentTrack?.id == track.id && audioPlayer.isPlaying
     }
 
-    var isFavorite: Bool {
-        dataManager.isTrackSaved(track)
+    var isLiked: Bool {
+        dataManager.isTrackLiked(track)
     }
 
     var body: some View {
@@ -1303,8 +1204,8 @@ struct LibraryTrackRow: View {
                         .fill(Color.white.opacity(0.05))
                 )
 
-            Image(systemName: isFavorite ? "heart.fill" : "heart")
-                .foregroundColor(isFavorite ? .red : .white.opacity(0.5))
+            Image(systemName: isLiked ? "heart.fill" : "heart")
+                .foregroundColor(isLiked ? .red : .white.opacity(0.5))
 
             AddToPlaylistMenu(track: track)
         }
@@ -1828,8 +1729,16 @@ struct TrackActionSheet: View {
     private let popupMaxHeight: CGFloat = 448
     private let popupCornerRadius: CGFloat = 20
 
-    private var effectiveFavoriteTrack: Track? {
-        dataManager.storedLibraryTrack(for: track)
+    private var effectiveDownloadedTrack: Track? {
+        dataManager.storedDownloadedTrack(for: track)
+    }
+
+    private var isLiked: Bool {
+        effectiveDownloadedTrack?.isLiked == true
+    }
+
+    private var removeDownloadActionTitle: String {
+        track.source == .local ? "Remove from Library" : "Remove Download"
     }
 
     private var trimmedAlbum: String? {
@@ -1889,17 +1798,38 @@ struct TrackActionSheet: View {
                         }
                         .buttonStyle(.plain)
 
-                        if let effectiveFavoriteTrack {
+                        if let effectiveDownloadedTrack {
                             CompactTrackActionDivider()
 
-                            Button(role: .destructive) {
-                                debugLog("Track context action selected: remove from library for \(track.displayTitle)")
-                                dataManager.removeTrack(effectiveFavoriteTrack)
+                            Button {
+                                debugLog("Track context action selected: toggle liked state for \(track.displayTitle)")
+                                if let updatedTrack = dataManager.setTrackLikedState(
+                                    for: effectiveDownloadedTrack,
+                                    isLiked: !isLiked
+                                ) {
+                                    audioPlayer.syncCurrentTrackReference(with: updatedTrack)
+                                }
                                 dismiss()
                             } label: {
                                 CompactTrackActionRow {
                                     TrackActionRowLabel(
-                                        title: "Remove from Library",
+                                        title: isLiked ? "Unlike Track" : "Like Track",
+                                        systemImage: isLiked ? "heart.slash" : "heart"
+                                    )
+                                }
+                            }
+                            .buttonStyle(.plain)
+
+                            CompactTrackActionDivider()
+
+                            Button(role: .destructive) {
+                                debugLog("Track context action selected: remove download for \(track.displayTitle)")
+                                dataManager.removeTrack(effectiveDownloadedTrack)
+                                dismiss()
+                            } label: {
+                                CompactTrackActionRow {
+                                    TrackActionRowLabel(
+                                        title: removeDownloadActionTitle,
                                         systemImage: "trash",
                                         tint: .red
                                     )

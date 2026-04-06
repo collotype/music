@@ -307,6 +307,41 @@ final class MyWaveRecommendationEngineTests: XCTestCase {
         XCTAssertEqual(resolvedDuration, 184.2, accuracy: 0.001)
     }
 
+    func testTrackDecodesLegacyFavoriteFlagAsLiked() throws {
+        let payload = """
+        {
+          "title": "Signal Fire",
+          "artist": "Northbound",
+          "duration": 180,
+          "storageLocation": "library",
+          "isFavorite": true
+        }
+        """.data(using: .utf8)!
+
+        let track = try JSONDecoder().decode(Track.self, from: payload)
+
+        XCTAssertTrue(track.isLiked)
+        XCTAssertTrue(track.isDownloaded)
+    }
+
+    func testTrackDownloadedStateOnlyReflectsLibraryStorage() {
+        let downloadedTrack = Track(
+            title: "Offline One",
+            artist: "Signal Bloom",
+            duration: 120,
+            storageLocation: .library
+        )
+        let remoteTrack = Track(
+            title: "Remote One",
+            artist: "Signal Bloom",
+            duration: 120,
+            storageLocation: .remote
+        )
+
+        XCTAssertTrue(downloadedTrack.isDownloaded)
+        XCTAssertFalse(remoteTrack.isDownloaded)
+    }
+
     private func makeTrack(
         id: String,
         sourceID: String,

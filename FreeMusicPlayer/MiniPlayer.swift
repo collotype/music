@@ -52,7 +52,7 @@ struct MiniPlayer: View {
                 if let currentTrack = audioPlayer.currentTrack {
                     TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 8, showsSourceBadge: true)
                         .overlay(alignment: .topTrailing) {
-                            if dataManager.isTrackSaved(currentTrack) {
+                            if dataManager.isTrackLiked(currentTrack) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.white)

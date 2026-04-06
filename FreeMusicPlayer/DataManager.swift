@@ -26,8 +26,9 @@ final class DataManager: ObservableObject {
 
     @Published var tracks: [Track] = []
     @Published var playlists: [Playlist] = []
-    @Published var favorites: Set<String> = []
+    @Published var likedTrackIDs: Set<String> = []
     @Published var favoriteArtists: [FavoriteArtist] = []
+    @Published var savedAlbums: [SavedAlbum] = []
     @Published var settings: AppSettings = AppSettings()
 
     private let legacyTracksKey = "fmp_tracks"
@@ -37,8 +38,10 @@ final class DataManager: ObservableObject {
 
     private var tracksFileURL: URL { AppFileManager.shared.dataFileURL(named: "tracks.json") }
     private var playlistsFileURL: URL { AppFileManager.shared.dataFileURL(named: "playlists.json") }
-    private var favoritesFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorites.json") }
+    private var likedTracksFileURL: URL { AppFileManager.shared.dataFileURL(named: "liked_tracks.json") }
+    private var legacyFavoritesFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorites.json") }
     private var favoriteArtistsFileURL: URL { AppFileManager.shared.dataFileURL(named: "favorite_artists.json") }
+    private var savedAlbumsFileURL: URL { AppFileManager.shared.dataFileURL(named: "saved_albums.json") }
     private var settingsFileURL: URL { AppFileManager.shared.dataFileURL(named: "settings.json") }
 
     var importFolders: [ImportedMusicFolder] {
@@ -148,8 +151,9 @@ final class DataManager: ObservableObject {
         let persistedTracks = tracks.filter { $0.storageLocation != .temp }
         writeJSON(persistedTracks, to: tracksFileURL)
         writeJSON(playlists, to: playlistsFileURL)
-        writeJSON(favorites, to: favoritesFileURL)
+        writeJSON(likedTrackIDs, to: likedTracksFileURL)
         writeJSON(favoriteArtists, to: favoriteArtistsFileURL)
+        writeJSON(savedAlbums, to: savedAlbumsFileURL)
         writeJSON(settings, to: settingsFileURL)
         NotificationCenter.default.post(name: .myWaveSignalsDidChange, object: nil)
     }
@@ -160,65 +164,67 @@ final class DataManager: ObservableObject {
 
         if let existingIndex = existingTrackIndex(for: track) {
             var updatedTrack = track
-            updatedTrack.id = tracks[existingIndex].id
+            let existingTrack = tracks[existingIndex]
+            updatedTrack.id = existingTrack.id
             updatedTrack.coverArtURL = resolvedPreferredStoredImageReference(
                 newValue: track.coverArtURL,
-                existingValue: tracks[existingIndex].coverArtURL
+                existingValue: existingTrack.coverArtURL
             )
             updatedTrack.remoteCoverArtURL = resolvedPreferredRemoteImageReference(
                 newValue: track.remoteCoverArtURL,
-                existingValue: tracks[existingIndex].remoteCoverArtURL
+                existingValue: existingTrack.remoteCoverArtURL
             )
             updatedTrack.artistImageURL = resolvedPreferredStoredImageReference(
                 newValue: track.artistImageURL,
-                existingValue: tracks[existingIndex].artistImageURL
+                existingValue: existingTrack.artistImageURL
             )
             updatedTrack.remoteArtistImageURL = resolvedPreferredRemoteImageReference(
                 newValue: track.remoteArtistImageURL,
-                existingValue: tracks[existingIndex].remoteArtistImageURL
+                existingValue: existingTrack.remoteArtistImageURL
             )
             updatedTrack.providerArtistID = resolvedPreferredTextValue(
                 newValue: track.providerArtistID,
-                existingValue: tracks[existingIndex].providerArtistID
+                existingValue: existingTrack.providerArtistID
             )
             updatedTrack.artistWebpageURL = resolvedPreferredTextValue(
                 newValue: track.artistWebpageURL,
-                existingValue: tracks[existingIndex].artistWebpageURL
+                existingValue: existingTrack.artistWebpageURL
             )
             updatedTrack.lyricsText = resolvedPreferredTextValue(
                 newValue: track.lyricsText,
-                existingValue: tracks[existingIndex].lyricsText
+                existingValue: existingTrack.lyricsText
             )
             updatedTrack.lyricsSyncedText = resolvedPreferredTextValue(
                 newValue: track.lyricsSyncedText,
-                existingValue: tracks[existingIndex].lyricsSyncedText
+                existingValue: existingTrack.lyricsSyncedText
             )
             updatedTrack.lyricsSource = resolvedPreferredTextValue(
                 newValue: track.lyricsSource,
-                existingValue: tracks[existingIndex].lyricsSource
+                existingValue: existingTrack.lyricsSource
             )
             updatedTrack.lyricsURL = resolvedPreferredTextValue(
                 newValue: track.lyricsURL,
-                existingValue: tracks[existingIndex].lyricsURL
+                existingValue: existingTrack.lyricsURL
             )
             if updatedTrack.genres.isEmpty {
-                updatedTrack.genres = tracks[existingIndex].genres
+                updatedTrack.genres = existingTrack.genres
             }
             if updatedTrack.tags.isEmpty {
-                updatedTrack.tags = tracks[existingIndex].tags
+                updatedTrack.tags = existingTrack.tags
             }
             if updatedTrack.moods.isEmpty {
-                updatedTrack.moods = tracks[existingIndex].moods
+                updatedTrack.moods = existingTrack.moods
             }
-            updatedTrack.lyricsLastUpdated = track.lyricsLastUpdated ?? tracks[existingIndex].lyricsLastUpdated
-            updatedTrack.isFavorite = updatedTrack.storageLocation == .library
+            updatedTrack.lyricsLastUpdated = track.lyricsLastUpdated ?? existingTrack.lyricsLastUpdated
+            updatedTrack.isLiked = updatedTrack.isDownloaded &&
+                (track.isLiked || existingTrack.isLiked || likedTrackIDs.contains(existingTrack.id))
             tracks[existingIndex] = updatedTrack
             saveData()
             return updatedTrack
         }
 
         var insertedTrack = track
-        insertedTrack.isFavorite = insertedTrack.storageLocation == .library
+        insertedTrack.isLiked = insertedTrack.isDownloaded && insertedTrack.isLiked
         tracks.insert(insertedTrack, at: 0)
         saveData()
         return insertedTrack
@@ -302,32 +308,72 @@ final class DataManager: ObservableObject {
         removeTracks([track])
     }
 
+    @MainActor
     func toggleFavorite(_ track: Track) {
-        debugLog("Toggle library membership: \(track.displayTitle)")
+        debugLog("Toggle liked state for stored track: \(track.displayTitle)")
 
-        guard let storedTrack = storedLibraryTrack(for: track) else {
-            debugLog("Library membership toggle ignored because the track is not stored locally")
+        guard let storedTrack = storedDownloadedTrack(for: track) else {
+            debugLog("Like toggle ignored because the track is not downloaded locally")
             return
         }
 
-        removeTrack(storedTrack)
+        _ = setTrackLikedState(forStoredTrackID: storedTrack.id, isLiked: !storedTrack.isLiked)
     }
 
     @MainActor
     @discardableResult
     func toggleTrackSavedState(for track: Track) async throws -> Track? {
-        debugLog("Toggle track saved state from current track context: \(track.displayTitle)")
+        debugLog("Toggle downloaded state from current track context: \(track.displayTitle)")
 
-        if let storedTrack = storedLibraryTrack(for: track) {
+        if let storedTrack = storedDownloadedTrack(for: track) {
             removeTrack(storedTrack)
             return nil
         }
 
         let resolvedResult = try await OnlineMusicService.shared.resolveTrackResult(for: track)
-        let tempURL = try await OnlineMusicService.shared.downloadAudio(for: resolvedResult)
-        let savedTrack = try await saveDownloadedOnlineTrack(resolvedResult, from: tempURL)
+        let savedTrack = try await downloadOnlineTrack(result: resolvedResult, isLiked: false)
         AudioPlayer.shared.syncCurrentTrackReference(with: savedTrack)
         return savedTrack
+    }
+
+    @MainActor
+    @discardableResult
+    func toggleTrackSavedState(for result: OnlineTrackResult) async throws -> Track? {
+        debugLog("Toggle downloaded state for online result: \(result.title)")
+
+        if let storedTrack = track(withSourceID: result.id) {
+            removeTrack(storedTrack)
+            return nil
+        }
+
+        return try await downloadOnlineTrack(result: result, isLiked: false)
+    }
+
+    @MainActor
+    @discardableResult
+    func toggleTrackLikedState(for track: Track) async throws -> Track? {
+        debugLog("Toggle liked state from current track context: \(track.displayTitle)")
+
+        if let storedTrack = storedDownloadedTrack(for: track) {
+            return setTrackLikedState(forStoredTrackID: storedTrack.id, isLiked: !storedTrack.isLiked)
+        }
+
+        let resolvedResult = try await OnlineMusicService.shared.resolveTrackResult(for: track)
+        let savedTrack = try await downloadOnlineTrack(result: resolvedResult, isLiked: true)
+        AudioPlayer.shared.syncCurrentTrackReference(with: savedTrack)
+        return savedTrack
+    }
+
+    @MainActor
+    @discardableResult
+    func toggleTrackLikedState(for result: OnlineTrackResult) async throws -> Track? {
+        debugLog("Toggle liked state for online result: \(result.title)")
+
+        if let storedTrack = track(withSourceID: result.id) {
+            return setTrackLikedState(forStoredTrackID: storedTrack.id, isLiked: !storedTrack.isLiked)
+        }
+
+        return try await downloadOnlineTrack(result: result, isLiked: true)
     }
 
     @discardableResult
@@ -509,7 +555,7 @@ final class DataManager: ObservableObject {
         }
 
         tracks.removeAll { trackIDs.contains($0.id) }
-        favorites.subtract(trackIDs)
+        likedTrackIDs.subtract(trackIDs)
 
         let updateDate = Date()
         for index in playlists.indices {
@@ -525,11 +571,11 @@ final class DataManager: ObservableObject {
     }
 
     func track(withSourceID sourceID: String) -> Track? {
-        tracks.first { $0.sourceID == sourceID && $0.storageLocation == .library }
+        tracks.first { $0.sourceID == sourceID && $0.isDownloaded }
     }
 
-    func storedLibraryTrack(for track: Track) -> Track? {
-        if let storedTrack = tracks.first(where: { $0.id == track.id && $0.storageLocation == .library }) {
+    func storedDownloadedTrack(for track: Track) -> Track? {
+        if let storedTrack = tracks.first(where: { $0.id == track.id && $0.isDownloaded }) {
             return storedTrack
         }
 
@@ -540,20 +586,50 @@ final class DataManager: ObservableObject {
 
         if let importOriginID = track.importOriginID,
            let storedTrack = tracks.first(where: {
-               $0.importOriginID == importOriginID && $0.storageLocation == .library
-           }) {
+               $0.importOriginID == importOriginID && $0.isDownloaded
+            }) {
             return storedTrack
         }
 
         return nil
     }
 
+    func storedLibraryTrack(for track: Track) -> Track? {
+        storedDownloadedTrack(for: track)
+    }
+
+    func isTrackDownloaded(_ track: Track) -> Bool {
+        storedDownloadedTrack(for: track) != nil
+    }
+
+    func isTrackDownloaded(sourceID: String) -> Bool {
+        track(withSourceID: sourceID) != nil
+    }
+
     func isTrackSaved(_ track: Track) -> Bool {
-        storedLibraryTrack(for: track) != nil
+        isTrackDownloaded(track)
     }
 
     func isTrackSaved(sourceID: String) -> Bool {
-        track(withSourceID: sourceID) != nil
+        isTrackDownloaded(sourceID: sourceID)
+    }
+
+    func isTrackLiked(_ track: Track) -> Bool {
+        storedDownloadedTrack(for: track)?.isLiked == true
+    }
+
+    func isTrackLiked(sourceID: String) -> Bool {
+        track(withSourceID: sourceID)?.isLiked == true
+    }
+
+    @MainActor
+    @discardableResult
+    func setTrackLikedState(for track: Track, isLiked: Bool) -> Track? {
+        guard let storedTrack = storedDownloadedTrack(for: track) else {
+            return nil
+        }
+
+        return setTrackLikedState(forStoredTrackID: storedTrack.id, isLiked: isLiked)
     }
 
     func makeTemporaryTrack(from result: OnlineTrackResult, tempFileURL: URL) -> Track {
@@ -572,7 +648,7 @@ final class DataManager: ObservableObject {
             fileURL: storedPath,
             coverArtURL: result.coverArtURL,
             source: result.trackSource,
-            isFavorite: false,
+            isLiked: false,
             playCount: 0,
             lastPlayed: nil,
             addedAt: Date(),
@@ -601,7 +677,7 @@ final class DataManager: ObservableObject {
             fileURL: streamURL.absoluteString,
             coverArtURL: result.coverArtURL,
             source: result.trackSource,
-            isFavorite: false,
+            isLiked: false,
             playCount: 0,
             lastPlayed: nil,
             addedAt: Date(),
@@ -618,7 +694,11 @@ final class DataManager: ObservableObject {
 
     @MainActor
     @discardableResult
-    func saveDownloadedOnlineTrack(_ result: OnlineTrackResult, from tempFileURL: URL) async throws -> Track {
+    func saveDownloadedOnlineTrack(
+        _ result: OnlineTrackResult,
+        from tempFileURL: URL,
+        isLiked: Bool = false
+    ) async throws -> Track {
         if let existingTrack = track(withSourceID: result.id) {
             debugLog("Reuse existing saved online track: \(existingTrack.displayTitle)")
             let existingIndex = tracks.firstIndex(where: { $0.id == existingTrack.id })
@@ -626,6 +706,11 @@ final class DataManager: ObservableObject {
             if let existingIndex {
                 var updatedTrack = tracks[existingIndex]
                 var didUpdateMetadata = false
+
+                if isLiked && !updatedTrack.isLiked {
+                    updatedTrack.isLiked = true
+                    didUpdateMetadata = true
+                }
 
                 let resolvedProviderArtistID = resolvedPreferredTextValue(
                     newValue: result.providerArtistID,
@@ -711,7 +796,7 @@ final class DataManager: ObservableObject {
             fileURL: storedPath,
             coverArtURL: resolvedArtworkPath ?? result.coverArtURL,
             source: result.trackSource,
-            isFavorite: false,
+            isLiked: isLiked,
             playCount: 0,
             lastPlayed: nil,
             addedAt: Date(),
@@ -736,6 +821,81 @@ final class DataManager: ObservableObject {
         }
         scheduleLyricsPersistenceIfNeeded(for: savedTrack)
         return savedTrack
+    }
+
+    @MainActor
+    @discardableResult
+    func toggleAlbumSavedState(
+        release: OnlineAlbumResult,
+        trackResults: [OnlineTrackResult]
+    ) async throws -> SavedAlbum? {
+        debugLog("Toggle saved album state: \(release.title) [\(release.providerAlbumID)]")
+
+        if savedAlbum(provider: release.provider, providerAlbumID: release.providerAlbumID) != nil {
+            removeSavedAlbum(provider: release.provider, providerAlbumID: release.providerAlbumID)
+            return nil
+        }
+
+        return try await saveAlbum(release: release, trackResults: trackResults)
+    }
+
+    @MainActor
+    @discardableResult
+    func saveAlbum(
+        release: OnlineAlbumResult,
+        trackResults: [OnlineTrackResult]
+    ) async throws -> SavedAlbum {
+        var savedTracks: [Track] = []
+        savedTracks.reserveCapacity(trackResults.count)
+
+        for result in trackResults {
+            if let existingTrack = track(withSourceID: result.id) {
+                savedTracks.append(existingTrack)
+            } else {
+                let savedTrack = try await downloadOnlineTrack(result: result, isLiked: false)
+                savedTracks.append(savedTrack)
+            }
+        }
+
+        let trackSourceIDs = savedTracks.compactMap(\.sourceID)
+        let savedAlbum = upsertSavedAlbum(
+            release.savedAlbum,
+            trackSourceIDs: trackSourceIDs
+        )
+        return savedAlbum
+    }
+
+    func isAlbumSaved(provider: OnlineTrackProvider, providerAlbumID: String) -> Bool {
+        savedAlbum(provider: provider, providerAlbumID: providerAlbumID) != nil
+    }
+
+    func savedAlbum(provider: OnlineTrackProvider, providerAlbumID: String) -> SavedAlbum? {
+        savedAlbums.first {
+            $0.provider == provider && $0.providerAlbumID == providerAlbumID
+        }
+    }
+
+    func tracks(for savedAlbum: SavedAlbum) -> [Track] {
+        savedAlbum.trackSourceIDs.compactMap { sourceID in
+            track(withSourceID: sourceID)
+        }
+    }
+
+    func representativeTrack(for savedAlbum: SavedAlbum) -> Track? {
+        tracks(for: savedAlbum).first(where: { $0.preferredArtworkReference != nil }) ?? tracks(for: savedAlbum).first
+    }
+
+    @discardableResult
+    func removeSavedAlbum(provider: OnlineTrackProvider, providerAlbumID: String) -> SavedAlbum? {
+        guard let index = savedAlbums.firstIndex(where: {
+            $0.provider == provider && $0.providerAlbumID == providerAlbumID
+        }) else {
+            return nil
+        }
+
+        let removedAlbum = savedAlbums.remove(at: index)
+        saveData()
+        return removedAlbum
     }
 
     @MainActor
@@ -827,8 +987,16 @@ final class DataManager: ObservableObject {
         saveData()
     }
 
+    var likedTracks: [Track] {
+        downloadedTracks.filter(\.isLiked)
+    }
+
+    var downloadedTracks: [Track] {
+        tracks.filter(\.isDownloaded)
+    }
+
     var favoriteTracks: [Track] {
-        tracks.filter { $0.storageLocation == .library }
+        likedTracks
     }
 
     var favoritePlaylists: [Playlist] {
@@ -853,8 +1021,9 @@ final class DataManager: ObservableObject {
         debugLog("Clear all stored data")
         tracks.removeAll()
         playlists.removeAll()
-        favorites.removeAll()
+        likedTrackIDs.removeAll()
         favoriteArtists.removeAll()
+        savedAlbums.removeAll()
         settings = AppSettings()
 
         UserDefaults.standard.removeObject(forKey: legacyTracksKey)
@@ -869,14 +1038,17 @@ final class DataManager: ObservableObject {
     private func loadDataFromFiles() -> Bool {
         let loadedTracks: [Track]? = readJSON(from: tracksFileURL)
         let loadedPlaylists: [Playlist]? = readJSON(from: playlistsFileURL)
-        let loadedFavorites: Set<String>? = readJSON(from: favoritesFileURL)
+        let loadedLikedTrackIDs: Set<String>? = readJSON(from: likedTracksFileURL) ??
+            readJSON(from: legacyFavoritesFileURL)
         let loadedFavoriteArtists: [FavoriteArtist]? = readJSON(from: favoriteArtistsFileURL)
+        let loadedSavedAlbums: [SavedAlbum]? = readJSON(from: savedAlbumsFileURL)
         let loadedSettings: AppSettings? = readJSON(from: settingsFileURL)
 
         let didLoadAnything = loadedTracks != nil ||
             loadedPlaylists != nil ||
-            loadedFavorites != nil ||
+            loadedLikedTrackIDs != nil ||
             loadedFavoriteArtists != nil ||
+            loadedSavedAlbums != nil ||
             loadedSettings != nil
 
         if let loadedTracks {
@@ -887,12 +1059,16 @@ final class DataManager: ObservableObject {
             playlists = loadedPlaylists
         }
 
-        if let loadedFavorites {
-            favorites = loadedFavorites
+        if let loadedLikedTrackIDs {
+            likedTrackIDs = loadedLikedTrackIDs
         }
 
         if let loadedFavoriteArtists {
             favoriteArtists = deduplicatedFavoriteArtists(loadedFavoriteArtists)
+        }
+
+        if let loadedSavedAlbums {
+            savedAlbums = deduplicatedSavedAlbums(loadedSavedAlbums)
         }
 
         if let loadedSettings {
@@ -915,7 +1091,7 @@ final class DataManager: ObservableObject {
 
         if let data = UserDefaults.standard.data(forKey: legacyFavoritesKey),
            let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
-            favorites = decoded
+            likedTrackIDs = decoded
         }
 
         if let data = UserDefaults.standard.data(forKey: legacySettingsKey),
@@ -926,12 +1102,12 @@ final class DataManager: ObservableObject {
 
     private func existingTrackIndex(for track: Track) -> Int? {
         if let sourceID = track.sourceID,
-           let index = tracks.firstIndex(where: { $0.sourceID == sourceID && $0.storageLocation == .library }) {
+           let index = tracks.firstIndex(where: { $0.sourceID == sourceID && $0.isDownloaded }) {
             return index
         }
 
         if let importOriginID = track.importOriginID,
-           let index = tracks.firstIndex(where: { $0.importOriginID == importOriginID && $0.storageLocation == .library }) {
+           let index = tracks.firstIndex(where: { $0.importOriginID == importOriginID && $0.isDownloaded }) {
             return index
         }
 
@@ -973,7 +1149,7 @@ final class DataManager: ObservableObject {
         }
 
         if let fileURL = track.fileURL,
-           track.storageLocation == .library {
+           track.isDownloaded {
             let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
             try? FileManager.default.removeItem(at: resolvedURL)
         }
@@ -1085,7 +1261,7 @@ final class DataManager: ObservableObject {
 
     private func scheduleLyricsPersistenceIfNeeded(for track: Track) {
         guard cleanedImageReference(track.lyricsText) == nil else { return }
-        guard track.storageLocation == .library || isTrackSaved(track) else { return }
+        guard track.isDownloaded || isTrackDownloaded(track) else { return }
 
         Task { [weak self] in
             guard let self else { return }
@@ -1280,6 +1456,34 @@ final class DataManager: ObservableObject {
         return AppFileManager.shared.fileExists(at: value)
     }
 
+    @MainActor
+    private func downloadOnlineTrack(result: OnlineTrackResult, isLiked: Bool) async throws -> Track {
+        let tempURL = try await OnlineMusicService.shared.downloadAudio(for: result)
+        let savedTrack = try await saveDownloadedOnlineTrack(
+            result,
+            from: tempURL,
+            isLiked: isLiked
+        )
+        return savedTrack
+    }
+
+    @MainActor
+    @discardableResult
+    private func setTrackLikedState(forStoredTrackID trackID: String, isLiked: Bool) -> Track? {
+        guard let index = tracks.firstIndex(where: { $0.id == trackID && $0.isDownloaded }) else {
+            return nil
+        }
+
+        tracks[index].isLiked = isLiked
+        if isLiked {
+            likedTrackIDs.insert(trackID)
+        } else {
+            likedTrackIDs.remove(trackID)
+        }
+        saveData()
+        return tracks[index]
+    }
+
     private func readJSON<T: Decodable>(from url: URL) -> T? {
         guard FileManager.default.fileExists(atPath: url.path),
               let data = try? Data(contentsOf: url) else {
@@ -1322,23 +1526,60 @@ final class DataManager: ObservableObject {
         return orderedArtists
     }
 
+    @discardableResult
+    private func upsertSavedAlbum(_ album: SavedAlbum, trackSourceIDs: [String]) -> SavedAlbum {
+        let orderedTrackSourceIDs = orderedUniqueValues(trackSourceIDs)
+        var updatedAlbum = album
+        updatedAlbum.trackSourceIDs = orderedTrackSourceIDs
+
+        if let index = savedAlbums.firstIndex(where: { $0.id == album.id }) {
+            updatedAlbum.addedAt = savedAlbums[index].addedAt
+            savedAlbums[index] = updatedAlbum
+        } else {
+            savedAlbums.insert(updatedAlbum, at: 0)
+        }
+
+        saveData()
+        return updatedAlbum
+    }
+
+    private func deduplicatedSavedAlbums(_ albums: [SavedAlbum]) -> [SavedAlbum] {
+        var seenIDs: Set<String> = []
+        var orderedAlbums: [SavedAlbum] = []
+
+        for album in albums where seenIDs.insert(album.id).inserted {
+            var deduplicatedAlbum = album
+            deduplicatedAlbum.trackSourceIDs = orderedUniqueValues(album.trackSourceIDs)
+            orderedAlbums.append(deduplicatedAlbum)
+        }
+
+        return orderedAlbums
+    }
+
     private func synchronizeUnifiedTrackLibraryState() {
-        let libraryTrackIDs = Set(
+        let downloadedTrackIDs = Set(
             tracks
-                .filter { $0.storageLocation == .library }
+                .filter(\.isDownloaded)
+                .map(\.id)
+        )
+        likedTrackIDs = likedTrackIDs.intersection(downloadedTrackIDs)
+        likedTrackIDs.formUnion(
+            tracks
+                .filter { $0.isDownloaded && $0.isLiked }
                 .map(\.id)
         )
 
-        if favorites != libraryTrackIDs {
-            favorites = libraryTrackIDs
-        }
-
         for index in tracks.indices {
-            let isSavedToLibrary = tracks[index].storageLocation == .library && libraryTrackIDs.contains(tracks[index].id)
-            if tracks[index].isFavorite != isSavedToLibrary {
-                tracks[index].isFavorite = isSavedToLibrary
+            let shouldBeLiked = tracks[index].isDownloaded && likedTrackIDs.contains(tracks[index].id)
+            if tracks[index].isLiked != shouldBeLiked {
+                tracks[index].isLiked = shouldBeLiked
             }
         }
+    }
+
+    private func orderedUniqueValues(_ values: [String]) -> [String] {
+        var seenValues: Set<String> = []
+        return values.filter { seenValues.insert($0).inserted }
     }
 
     private func importTracks(from urls: [URL], requiresSecurityScope: Bool) -> LibraryImportSummary {
@@ -1369,7 +1610,7 @@ final class DataManager: ObservableObject {
         let accessBlock = {
             let importOriginID = self.importOriginIdentifier(for: url)
 
-            if self.tracks.contains(where: { $0.importOriginID == importOriginID && $0.storageLocation == .library }) {
+            if self.tracks.contains(where: { $0.importOriginID == importOriginID && $0.isDownloaded }) {
                 debugLog("Skip already imported file: \(url.lastPathComponent)")
                 return ImportedTrackStatus.skipped
             }
@@ -1749,7 +1990,7 @@ final class DataManager: ObservableObject {
 
     private func shouldRefreshStoredMetadata(for track: Track) -> Bool {
         guard track.source == .local,
-              track.storageLocation == .library,
+              track.isDownloaded,
               track.fileURL != nil else {
             return false
         }

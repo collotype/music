@@ -44,7 +44,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     var lyricsLastUpdated: Date?
     var lyricsURL: String?
     var source: TrackSource
-    var isFavorite: Bool
+    var isLiked: Bool
     var playCount: Int
     var lastPlayed: Date?
     var addedAt: Date
@@ -65,7 +65,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         fileURL: String? = nil,
         coverArtURL: String? = nil,
         source: TrackSource = .local,
-        isFavorite: Bool = false,
+        isLiked: Bool = false,
         playCount: Int = 0,
         lastPlayed: Date? = nil,
         addedAt: Date = Date(),
@@ -105,7 +105,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         self.lyricsLastUpdated = lyricsLastUpdated
         self.lyricsURL = lyricsURL
         self.source = source
-        self.isFavorite = isFavorite
+        self.isLiked = isLiked
         self.playCount = playCount
         self.lastPlayed = lastPlayed
         self.addedAt = addedAt
@@ -137,7 +137,8 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         case lyricsLastUpdated
         case lyricsURL
         case source
-        case isFavorite
+        case isLiked
+        case legacyIsFavorite = "isFavorite"
         case playCount
         case lastPlayed
         case addedAt
@@ -171,7 +172,8 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         lyricsLastUpdated = try container.decodeIfPresent(Date.self, forKey: .lyricsLastUpdated)
         lyricsURL = try container.decodeIfPresent(String.self, forKey: .lyricsURL)
         source = try container.decodeIfPresent(TrackSource.self, forKey: .source) ?? .local
-        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        isLiked = try container.decodeIfPresent(Bool.self, forKey: .isLiked) ??
+            try container.decodeIfPresent(Bool.self, forKey: .legacyIsFavorite) ?? false
         playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
         lastPlayed = try container.decodeIfPresent(Date.self, forKey: .lastPlayed)
         addedAt = try container.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date()
@@ -204,7 +206,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         try container.encodeIfPresent(lyricsLastUpdated, forKey: .lyricsLastUpdated)
         try container.encodeIfPresent(lyricsURL, forKey: .lyricsURL)
         try container.encode(source, forKey: .source)
-        try container.encode(isFavorite, forKey: .isFavorite)
+        try container.encode(isLiked, forKey: .isLiked)
         try container.encode(playCount, forKey: .playCount)
         try container.encodeIfPresent(lastPlayed, forKey: .lastPlayed)
         try container.encode(addedAt, forKey: .addedAt)
@@ -226,6 +228,10 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
 
     var displayArtist: String {
         artist.isEmpty ? "Unknown Artist" : artist
+    }
+
+    var isDownloaded: Bool {
+        storageLocation == .library
     }
 }
 
@@ -356,6 +362,31 @@ struct FavoriteArtist: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+struct SavedAlbum: Identifiable, Codable, Hashable, Sendable {
+    let provider: OnlineTrackProvider
+    let providerAlbumID: String
+    var title: String
+    var artist: String
+    var coverArtURL: String?
+    var webpageURL: String?
+    var releaseDate: Date?
+    var trackCount: Int?
+    var trackSourceIDs: [String]
+    var addedAt: Date
+
+    var id: String {
+        "\(provider.rawValue):album:\(providerAlbumID)"
+    }
+
+    var displayTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled Album" : title
+    }
+
+    var displayArtist: String {
+        artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unknown Artist" : artist
+    }
+}
+
 extension OnlineArtistResult {
     var route: OnlineArtistRoute {
         OnlineArtistRoute(
@@ -451,6 +482,21 @@ extension OnlineAlbumResult {
             artistName: artist,
             imageURL: coverArtURL,
             webpageURL: webpageURL
+        )
+    }
+
+    var savedAlbum: SavedAlbum {
+        SavedAlbum(
+            provider: provider,
+            providerAlbumID: providerAlbumID,
+            title: title,
+            artist: artist,
+            coverArtURL: coverArtURL,
+            webpageURL: webpageURL,
+            releaseDate: releaseDate,
+            trackCount: trackCount,
+            trackSourceIDs: [],
+            addedAt: Date()
         )
     }
 }

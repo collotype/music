@@ -706,8 +706,8 @@ struct TrackRow: View {
                         .fill(Color.white.opacity(0.05))
                 )
 
-            Image(systemName: dataManager.isTrackSaved(track) ? "heart.fill" : "heart")
-                .foregroundColor(dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5))
+            Image(systemName: dataManager.isTrackLiked(track) ? "heart.fill" : "heart")
+                .foregroundColor(dataManager.isTrackLiked(track) ? .red : .white.opacity(0.5))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
