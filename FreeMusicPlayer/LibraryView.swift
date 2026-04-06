@@ -405,11 +405,12 @@ struct LibraryView: View {
         }
     }
 
+    @ViewBuilder
     var mediaSection: some View {
         let hasAlbums = !filteredAlbums.isEmpty
         let hasPlaylists = !filteredPlaylists.isEmpty
 
-        Group {
+        return Group {
             if !hasAlbums && !hasPlaylists {
                 emptyStateView
             } else {
