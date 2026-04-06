@@ -175,9 +175,9 @@ enum OnlineTrackActionHelper {
         for result: OnlineTrackResult,
         dataManager: DataManager
     ) async -> Track? {
-        if let savedTrack = await MainActor.run(body: {
+        if let savedTrack = await MainActor.run {
             dataManager.track(withSourceID: result.id)
-        }) {
+        } {
             return savedTrack
         }
 

@@ -1200,9 +1200,9 @@ private struct OnlineTrackGroupPlaylistPickerView: View {
         savedTracks.reserveCapacity(results.count)
 
         for result in results {
-            if let existingTrack = await MainActor.run(body: {
+            if let existingTrack = await MainActor.run {
                 dataManager.track(withSourceID: result.id)
-            }) {
+            } {
                 savedTracks.append(existingTrack)
                 continue
             }
