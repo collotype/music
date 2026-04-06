@@ -35,7 +35,7 @@ struct LibraryView: View {
             tracks = dataManager.likedTracks
         case .downloaded:
             tracks = dataManager.downloadedTracks
-        case .playlists, .artists, .albums:
+        case .artists, .media:
             return []
         }
 
@@ -87,20 +87,18 @@ struct LibraryView: View {
             return "\(filteredTracks.count) liked tracks"
         case .downloaded:
             return "\(filteredTracks.count) downloaded tracks"
-        case .playlists:
-            return "\(dataManager.playlists.count) playlists"
         case .artists:
             return "\(filteredArtists.count) artists"
-        case .albums:
-            return "\(filteredAlbums.count) albums"
+        case .media:
+            return "\(filteredAlbums.count) albums, \(filteredPlaylists.count) playlists"
         }
     }
 
     private var showsPlaybackActions: Bool {
         switch selectedFilter {
-        case .artists, .albums:
+        case .artists, .media:
             return false
-        case .liked, .downloaded, .playlists:
+        case .liked, .downloaded:
             return true
         }
     }
@@ -376,12 +374,10 @@ struct LibraryView: View {
 
     @ViewBuilder
     var contentSection: some View {
-        if selectedFilter == .playlists {
-            playlistSection
-        } else if selectedFilter == .artists {
+        if selectedFilter == .artists {
             artistsSection
-        } else if selectedFilter == .albums {
-            albumsSection
+        } else if selectedFilter == .media {
+            mediaSection
         } else if filteredTracks.isEmpty {
             emptyStateView
         } else {
@@ -406,6 +402,124 @@ struct LibraryView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color.black)
+        }
+    }
+
+    var mediaSection: some View {
+        let hasAlbums = !filteredAlbums.isEmpty
+        let hasPlaylists = !filteredPlaylists.isEmpty
+
+        Group {
+            if !hasAlbums && !hasPlaylists {
+                emptyStateView
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        if hasPlaylists {
+                            VStack(alignment: .leading, spacing: 0) {
+                                HStack {
+                                    Text("Playlists")
+                                        .font(.system(size: 22, weight: .bold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 16)
+                                        .padding(.top, 16)
+
+                                    Spacer()
+
+                                    Button {
+                                        debugLog("Library playlist create prompt button pressed")
+                                        presentCreatePlaylistPrompt()
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "plus.circle.fill")
+                                            Text("Create")
+                                        }
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color.white.opacity(0.12))
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.trailing, 16)
+                                    .padding(.top, 16)
+                                }
+
+                                ForEach(filteredPlaylists) { playlist in
+                                    Button {
+                                        debugLog("Library playlist row pressed: \(playlist.displayName)")
+                                        router.openPlaylist(playlist.id)
+                                    } label: {
+                                        HStack(spacing: 12) {
+                                            PlaylistArtworkView(
+                                                coverArtURL: playlist.coverArtURL,
+                                                representativeTrack: representativePlaylistTrack(for: playlist),
+                                                fallbackTitle: playlist.displayName,
+                                                size: 52,
+                                                cornerRadius: 10
+                                            )
+
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text(playlist.displayName)
+                                                    .foregroundColor(.white)
+                                                    .lineLimit(1)
+                                                Text("\(playlist.trackCount) tracks")
+                                                    .font(.system(size: 13))
+                                                    .foregroundColor(.gray)
+                                            }
+
+                                            Spacer()
+
+                                            Image(systemName: "chevron.right")
+                                                .foregroundColor(.gray)
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 10)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        if hasAlbums && hasPlaylists {
+                            Divider()
+                                .background(Color.white.opacity(0.1))
+                                .padding(.vertical, 12)
+                        }
+
+                        if hasAlbums {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text("Albums")
+                                    .font(.system(size: 22, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.top, 8)
+                                    .padding(.bottom, 4)
+
+                                ForEach(filteredAlbums) { album in
+                                    NavigationLink {
+                                        TrackCollectionView(
+                                            title: album.displayTitle,
+                                            subtitle: album.displayArtist,
+                                            tracks: dataManager.tracks(for: album),
+                                            contextName: "album:\(album.id)"
+                                        )
+                                    } label: {
+                                        LibraryAlbumRow(album: album)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 6)
+                                }
+                            }
+                        }
+
+                        Spacer(minLength: 20)
+                    }
+                }
+            }
         }
     }
 
@@ -548,33 +662,6 @@ struct LibraryView: View {
         }
     }
 
-    var albumsSection: some View {
-        Group {
-            if filteredAlbums.isEmpty {
-                emptyStateView
-            } else {
-                List {
-                    ForEach(filteredAlbums) { album in
-                        NavigationLink {
-                            TrackCollectionView(
-                                title: album.displayTitle,
-                                subtitle: album.displayArtist,
-                                tracks: dataManager.tracks(for: album),
-                                contextName: "album:\(album.id)"
-                            )
-                        } label: {
-                            LibraryAlbumRow(album: album)
-                        }
-                        .listRowBackground(Color.clear)
-                    }
-                }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .background(Color.black)
-            }
-        }
-    }
-
     private func representativePlaylistTrack(for playlist: Playlist) -> Track? {
         let playlistTracks = dataManager.tracks(for: playlist.id)
         return playlistTracks.first(where: { $0.preferredArtworkReference != nil }) ?? playlistTracks.first
@@ -621,11 +708,9 @@ struct LibraryView: View {
             return "heart"
         case .downloaded:
             return "arrow.down.circle"
-        case .playlists:
-            return "music.note.list"
         case .artists:
             return "person.crop.circle.badge.plus"
-        case .albums:
+        case .media:
             return "square.stack"
         }
     }
@@ -636,12 +721,10 @@ struct LibraryView: View {
             return "No liked tracks yet"
         case .downloaded:
             return "No downloaded tracks yet"
-        case .playlists:
-            return "No playlists yet"
         case .artists:
             return "No favorite artists yet"
-        case .albums:
-            return "No albums yet"
+        case .media:
+            return "No media yet"
         }
     }
 
@@ -651,23 +734,17 @@ struct LibraryView: View {
             return "Tracks you like with the heart button will appear here and stay downloaded."
         case .downloaded:
             return "Downloaded and imported tracks will appear here even if they are not liked."
-        case .playlists:
-            return "Create a playlist to start organizing your library."
         case .artists:
             return "Favorite an artist from an online artist page to keep them here."
-        case .albums:
-            return "Albums you explicitly save will appear here as album entries."
+        case .media:
+            return "Saved albums and playlists will appear here."
         }
     }
 
     private var emptyStateActionTitle: String {
         switch selectedFilter {
-        case .playlists:
-            return "Create playlist"
-        case .artists:
-            return "Find artists"
-        case .albums:
-            return "Find albums"
+        case .artists, .media:
+            return "Find media"
         case .liked, .downloaded:
             return "Find tracks"
         }
@@ -675,19 +752,14 @@ struct LibraryView: View {
 
     private var emptyStateActionSystemImage: String {
         switch selectedFilter {
-        case .playlists:
-            return "plus"
-        case .artists, .albums, .liked, .downloaded:
+        case .artists, .media, .liked, .downloaded:
             return "magnifyingglass"
         }
     }
 
     private func handleEmptyStateAction() {
         switch selectedFilter {
-        case .playlists:
-            debugLog("Empty state create playlist button pressed")
-            presentCreatePlaylistPrompt()
-        case .artists, .albums, .liked, .downloaded:
+        case .artists, .media, .liked, .downloaded:
             debugLog("Empty state search button pressed")
             router.navigate(to: .search)
         }
@@ -699,29 +771,16 @@ struct LibraryView: View {
             return dataManager.likedTracks.count
         case .downloaded:
             return dataManager.downloadedTracks.count
-        case .playlists:
-            return dataManager.playlists.count
         case .artists:
             return dataManager.favoriteArtists.count
-        case .albums:
-            return dataManager.savedAlbums.count
+        case .media:
+            return dataManager.savedAlbums.count + dataManager.playlists.count
         }
     }
 
     private func playPrimarySelection() {
         switch selectedFilter {
-        case .playlists:
-            guard let playlist = filteredPlaylists.first,
-                  let track = dataManager.tracks(for: playlist.id).first else {
-                return
-            }
-            audioPlayer.playTrack(
-                track,
-                in: dataManager.tracks(for: playlist.id),
-                contextName: "playlist:\(playlist.id)"
-            )
-            router.openPlaylist(playlist.id)
-        case .artists, .albums:
+        case .artists, .media:
             return
         case .liked, .downloaded:
             guard let first = filteredTracks.first else { return }
@@ -930,16 +989,14 @@ enum LibraryFilter: CaseIterable {
     case liked
     case downloaded
     case artists
-    case albums
-    case playlists
+    case media
 
     var title: String {
         switch self {
         case .liked: return "Liked"
         case .downloaded: return "Downloaded"
-        case .playlists: return "Playlists"
         case .artists: return "Artists"
-        case .albums: return "Albums"
+        case .media: return "Media"
         }
     }
 
@@ -947,9 +1004,8 @@ enum LibraryFilter: CaseIterable {
         switch self {
         case .liked: return "Liked"
         case .downloaded: return "Downloaded"
-        case .playlists: return "Playlists"
         case .artists: return "Artists"
-        case .albums: return "Albums"
+        case .media: return "Media"
         }
     }
 
@@ -965,12 +1021,10 @@ enum LibraryFilter: CaseIterable {
             return "\(dataManager.likedTracks.count) tracks"
         case .downloaded:
             return "\(dataManager.downloadedTracks.count) tracks"
-        case .playlists:
-            return "\(dataManager.playlists.count) playlists"
         case .artists:
             return "\(dataManager.favoriteArtists.count) artists"
-        case .albums:
-            return "\(dataManager.savedAlbums.count) albums"
+        case .media:
+            return "\(dataManager.savedAlbums.count) albums, \(dataManager.playlists.count) playlists"
         }
     }
 }
