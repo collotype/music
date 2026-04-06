@@ -309,7 +309,7 @@ struct LibraryView: View {
                     HStack(spacing: 12) {
                         Button {
                             debugLog("Library play button pressed")
-                            playPrimarySelection()
+                            playPrimarySelection(shuffled: false)
                         } label: {
                             HStack {
                                 Image(systemName: "play.fill")
@@ -328,7 +328,7 @@ struct LibraryView: View {
 
                         Button {
                             debugLog("Library shuffle button pressed")
-                            dataManager.shuffleTracks()
+                            playPrimarySelection(shuffled: true)
                         } label: {
                             HStack {
                                 Image(systemName: "shuffle")
@@ -778,16 +778,18 @@ struct LibraryView: View {
         }
     }
 
-    private func playPrimarySelection() {
+    private func playPrimarySelection(shuffled: Bool) {
         switch selectedFilter {
         case .artists, .media:
             return
         case .liked, .downloaded:
-            guard let first = filteredTracks.first else { return }
+            let playbackTracks = shuffled ? filteredTracks.shuffled() : filteredTracks
+            guard let first = playbackTracks.first else { return }
             audioPlayer.playTrack(
                 first,
-                in: filteredTracks,
-                contextName: "library:\(selectedFilter.title):\(searchText)"
+                in: playbackTracks,
+                contextName: "library:\(selectedFilter.title):\(searchText)",
+                usesExplicitTrackOrder: true
             )
         }
     }

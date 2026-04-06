@@ -65,6 +65,7 @@ final class AudioPlayer: ObservableObject {
         let name: String
         let kind: Kind
         let tracks: [Track]
+        let usesExplicitTrackOrder: Bool
     }
 
     private enum PlaybackSequence: String {
@@ -445,7 +446,29 @@ final class AudioPlayer: ObservableObject {
 
     @discardableResult
     func playTrack(_ track: Track, in contextTracks: [Track], contextName: String) -> Bool {
-        return playTrack(track, contextTracks: contextTracks, contextName: contextName, updateContext: true)
+        return playTrack(
+            track,
+            contextTracks: contextTracks,
+            contextName: contextName,
+            updateContext: true,
+            usesExplicitTrackOrder: false
+        )
+    }
+
+    @discardableResult
+    func playTrack(
+        _ track: Track,
+        in contextTracks: [Track],
+        contextName: String,
+        usesExplicitTrackOrder: Bool
+    ) -> Bool {
+        return playTrack(
+            track,
+            contextTracks: contextTracks,
+            contextName: contextName,
+            updateContext: true,
+            usesExplicitTrackOrder: usesExplicitTrackOrder
+        )
     }
 
     @discardableResult
@@ -453,7 +476,8 @@ final class AudioPlayer: ObservableObject {
         _ track: Track,
         contextTracks: [Track]?,
         contextName: String?,
-        updateContext: Bool
+        updateContext: Bool,
+        usesExplicitTrackOrder: Bool = false
     ) -> Bool {
         debugLog("playTrack called for: \(track.displayTitle)")
         let resolvedContextName = contextName ?? playbackContext?.name
@@ -466,7 +490,11 @@ final class AudioPlayer: ObservableObject {
         if updateContext {
             if let contextTracks,
                let contextName {
-                updatePlaybackContext(with: contextTracks, name: contextName)
+                updatePlaybackContext(
+                    with: contextTracks,
+                    name: contextName,
+                    usesExplicitTrackOrder: usesExplicitTrackOrder
+                )
                 queueResumeContext = nil
                 playbackSequence = .context
                 shouldPrioritizeQueueOnNextAdvance = false
@@ -507,6 +535,9 @@ final class AudioPlayer: ObservableObject {
 
     func refreshPlaybackContextIfNeeded(name: String, tracks: [Track]) {
         let deduplicatedContextTracks = deduplicatedTracks(from: tracks)
+        let currentUsesExplicitTrackOrder = playbackContext?.name == name
+            ? (playbackContext?.usesExplicitTrackOrder ?? false)
+            : false
 
         if playbackContext?.name == name {
             guard !deduplicatedContextTracks.isEmpty else {
@@ -517,7 +548,8 @@ final class AudioPlayer: ObservableObject {
             playbackContext = PlaybackContext(
                 name: name,
                 kind: playbackContextKind(for: name),
-                tracks: deduplicatedContextTracks
+                tracks: deduplicatedContextTracks,
+                usesExplicitTrackOrder: currentUsesExplicitTrackOrder
             )
             debugLog("Playback context refreshed: \(name) with \(deduplicatedContextTracks.count) tracks")
         }
@@ -532,7 +564,8 @@ final class AudioPlayer: ObservableObject {
                 context: PlaybackContext(
                     name: name,
                     kind: playbackContextKind(for: name),
-                    tracks: deduplicatedContextTracks
+                    tracks: deduplicatedContextTracks,
+                    usesExplicitTrackOrder: queueResumeContext.context.usesExplicitTrackOrder
                 ),
                 anchorTrack: resolvedTrackForPlayback(queueResumeContext.anchorTrack)
             )
@@ -1013,7 +1046,11 @@ final class AudioPlayer: ObservableObject {
         return queuedTrack
     }
 
-    private func updatePlaybackContext(with tracks: [Track], name: String) {
+    private func updatePlaybackContext(
+        with tracks: [Track],
+        name: String,
+        usesExplicitTrackOrder: Bool = false
+    ) {
         let contextTracks = deduplicatedTracks(from: tracks)
         guard !contextTracks.isEmpty else {
             clearPlaybackContext()
@@ -1023,7 +1060,8 @@ final class AudioPlayer: ObservableObject {
         playbackContext = PlaybackContext(
             name: name,
             kind: playbackContextKind(for: name),
-            tracks: contextTracks
+            tracks: contextTracks,
+            usesExplicitTrackOrder: usesExplicitTrackOrder
         )
         debugLog("Playback context updated: \(name) with \(contextTracks.count) tracks")
     }
@@ -1037,13 +1075,25 @@ final class AudioPlayer: ObservableObject {
     private func nextTrackInPlaybackContext() -> Track? {
         guard let playbackContext,
               playbackSequence == .context else { return nil }
-        return adjacentTrack(in: playbackContext.tracks, step: 1, anchorTrack: currentTrack, requiresAnchorMatch: true)
+        return adjacentTrack(
+            in: playbackContext.tracks,
+            step: 1,
+            anchorTrack: currentTrack,
+            requiresAnchorMatch: true,
+            allowsShuffledAdvance: !playbackContext.usesExplicitTrackOrder
+        )
     }
 
     private func previousTrackInPlaybackContext() -> Track? {
         guard let playbackContext,
               playbackSequence == .context else { return nil }
-        return adjacentTrack(in: playbackContext.tracks, step: -1, anchorTrack: currentTrack, requiresAnchorMatch: true)
+        return adjacentTrack(
+            in: playbackContext.tracks,
+            step: -1,
+            anchorTrack: currentTrack,
+            requiresAnchorMatch: true,
+            allowsShuffledAdvance: !playbackContext.usesExplicitTrackOrder
+        )
     }
 
     private func fallbackNextLibraryTrack() -> Track? {
@@ -1058,12 +1108,13 @@ final class AudioPlayer: ObservableObject {
         in trackList: [Track],
         step: Int,
         anchorTrack: Track?,
-        requiresAnchorMatch: Bool = false
+        requiresAnchorMatch: Bool = false,
+        allowsShuffledAdvance: Bool = true
     ) -> Track? {
         let resolvedTracks = deduplicatedTracks(from: trackList)
         guard !resolvedTracks.isEmpty else { return nil }
 
-        if isShuffle {
+        if allowsShuffledAdvance && isShuffle {
             let candidates = resolvedTracks.filter { candidate in
                 guard let anchorTrack else { return true }
                 return !matchesPlaybackIdentity(candidate, anchorTrack)
