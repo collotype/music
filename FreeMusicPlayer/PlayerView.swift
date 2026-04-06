@@ -292,17 +292,15 @@ struct PlayerView: View {
     }
 
     var primaryControls: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 16) {
             playbackModeButton
-            Spacer(minLength: 6)
+            Spacer(minLength: 16)
             previousButton
-            Spacer(minLength: 6)
+            Spacer(minLength: 16)
             playPauseButton
-            Spacer(minLength: 6)
+            Spacer(minLength: 16)
             nextButton
-            Spacer(minLength: 6)
-            downloadButton
-            Spacer(minLength: 6)
+            Spacer(minLength: 16)
             favoriteButton
         }
     }
