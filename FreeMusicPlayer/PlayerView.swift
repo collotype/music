@@ -17,6 +17,7 @@ struct PlayerView: View {
     @State private var showQueueSheet: Bool = false
     @State private var showEQ: Bool = false
     @State private var isTogglingFavorite = false
+    @State private var isTogglingDownload = false
     @State private var favoriteActionErrorMessage: String?
     
     var body: some View {
@@ -300,6 +301,8 @@ struct PlayerView: View {
             Spacer(minLength: 6)
             nextButton
             Spacer(minLength: 6)
+            downloadButton
+            Spacer(minLength: 6)
             favoriteButton
         }
     }
@@ -344,41 +347,67 @@ struct PlayerView: View {
         audioPlayer.currentTrack?.onlineArtistRoute
     }
 
-    private var currentTrackIsSaved: Bool {
+    private var currentTrackIsDownloaded: Bool {
         guard let currentTrack = audioPlayer.currentTrack else { return false }
-        return dataManager.isTrackSaved(currentTrack)
+        return dataManager.isTrackDownloaded(currentTrack)
     }
 
-    private var canToggleFavoriteForCurrentTrack: Bool {
+    private var currentTrackIsLiked: Bool {
+        guard let currentTrack = audioPlayer.currentTrack else { return false }
+        return dataManager.isTrackLiked(currentTrack)
+    }
+
+    private var canToggleDownloadForCurrentTrack: Bool {
         guard let currentTrack = audioPlayer.currentTrack else { return false }
 
-        if dataManager.isTrackSaved(currentTrack) {
+        if dataManager.isTrackDownloaded(currentTrack) {
             return true
         }
 
         return currentTrack.source == .soundcloud && currentTrack.sourceID != nil
     }
 
+    private var canToggleFavoriteForCurrentTrack: Bool {
+        guard let currentTrack = audioPlayer.currentTrack else { return false }
+
+        if currentTrackIsDownloaded {
+            return true
+        }
+
+        return currentTrack.source == .soundcloud && currentTrack.sourceID != nil
+    }
+
+    private var downloadButtonSystemImage: String {
+        guard canToggleDownloadForCurrentTrack else { return "arrow.down.circle" }
+        return currentTrackIsDownloaded ? "arrow.down.circle.fill" : "arrow.down.circle"
+    }
+
+    private var downloadButtonTintColor: Color {
+        guard canToggleDownloadForCurrentTrack else { return .white.opacity(0.24) }
+        return currentTrackIsDownloaded ? .white : .white.opacity(0.72)
+    }
+
+    private var downloadButtonBackgroundColor: Color {
+        guard canToggleDownloadForCurrentTrack else { return Color.white.opacity(0.05) }
+        return currentTrackIsDownloaded ? Color.white.opacity(0.14) : Color.white.opacity(0.08)
+    }
+
     private var favoriteButtonSystemImage: String {
         guard canToggleFavoriteForCurrentTrack else { return "heart.slash" }
-        return currentTrackIsSaved ? "heart.fill" : "heart"
+        return currentTrackIsLiked ? "heart.fill" : "heart"
     }
 
     private var favoriteButtonTintColor: Color {
         guard canToggleFavoriteForCurrentTrack else { return .white.opacity(0.24) }
-        return currentTrackIsSaved ? .red : .white.opacity(0.7)
+        return currentTrackIsLiked ? .red : .white.opacity(0.7)
     }
 
     private var favoriteButtonBackgroundColor: Color {
         guard canToggleFavoriteForCurrentTrack else { return Color.white.opacity(0.05) }
-        return currentTrackIsSaved ? Color.red.opacity(0.14) : Color.white.opacity(0.08)
+        return currentTrackIsLiked ? Color.red.opacity(0.14) : Color.white.opacity(0.08)
     }
 
     private var playbackModeIcon: String {
-        if audioPlayer.repeatMode == .all {
-            return "repeat"
-        }
-
         switch audioPlayer.playbackMode {
         case .ordered:
             return "list.number"
@@ -390,10 +419,6 @@ struct PlayerView: View {
     }
 
     private var playbackModeTintColor: Color {
-        if audioPlayer.repeatMode == .all {
-            return .red
-        }
-
         switch audioPlayer.playbackMode {
         case .ordered:
             return .white.opacity(0.78)
@@ -403,10 +428,6 @@ struct PlayerView: View {
     }
 
     private var playbackModeBackgroundColor: Color {
-        if audioPlayer.repeatMode == .all {
-            return Color.red.opacity(0.14)
-        }
-
         switch audioPlayer.playbackMode {
         case .ordered:
             return Color.white.opacity(0.08)
@@ -431,70 +452,10 @@ struct PlayerView: View {
     }
 
     private var playbackModeButton: some View {
-        Menu {
-            Button {
-                audioPlayer.setPlaybackMode(.ordered)
-                dataManager.setShufflePreference(false)
-                dataManager.setRepeatModePreference(.off)
-            } label: {
-                Label("Play in order", systemImage: "list.number")
-            }
-
-            Button {
-                audioPlayer.setPlaybackMode(.shuffled)
-                dataManager.setShufflePreference(true)
-                dataManager.setRepeatModePreference(.off)
-            } label: {
-                Label("Shuffle", systemImage: "shuffle")
-            }
-
-            Button {
-                audioPlayer.setRepeatMode(.all)
-                dataManager.setShufflePreference(audioPlayer.isShuffle)
-                dataManager.setRepeatModePreference(.all)
-            } label: {
-                Label("Repeat all", systemImage: "repeat")
-            }
-
-            Button {
-                audioPlayer.setPlaybackMode(.repeatOne)
-                dataManager.setShufflePreference(false)
-                dataManager.setRepeatModePreference(.one)
-            } label: {
-                Label("Repeat one", systemImage: "repeat.1")
-            }
-
-            Divider()
-
-            Button {
-                audioPlayer.setPlaybackSpeed(0.75)
-            } label: {
-                Label("0.75x", systemImage: "speedometer")
-            }
-
-            Button {
-                audioPlayer.setPlaybackSpeed(1.0)
-            } label: {
-                Label("1.0x", systemImage: "speedometer")
-            }
-
-            Button {
-                audioPlayer.setPlaybackSpeed(1.25)
-            } label: {
-                Label("1.25x", systemImage: "speedometer")
-            }
-
-            Button {
-                audioPlayer.setPlaybackSpeed(1.5)
-            } label: {
-                Label("1.5x", systemImage: "speedometer")
-            }
-
-            Button {
-                audioPlayer.setPlaybackSpeed(2.0)
-            } label: {
-                Label("2.0x", systemImage: "speedometer")
-            }
+        Button {
+            audioPlayer.cyclePlaybackMode()
+            dataManager.setShufflePreference(audioPlayer.isShuffle)
+            dataManager.setRepeatModePreference(audioPlayer.repeatMode == .one ? .one : .off)
         } label: {
             ZStack {
                 Circle()
@@ -590,6 +551,31 @@ struct PlayerView: View {
         .disabled(!canToggleFavoriteForCurrentTrack || isTogglingFavorite)
     }
 
+    private var downloadButton: some View {
+        Button {
+            toggleDownloadForCurrentTrack()
+        } label: {
+            ZStack {
+                Circle()
+                    .fill(downloadButtonBackgroundColor)
+                    .frame(width: 40, height: 40)
+
+                Group {
+                    if isTogglingDownload {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: downloadButtonSystemImage)
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(downloadButtonTintColor)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!canToggleDownloadForCurrentTrack || isTogglingDownload)
+    }
+
     private var artworkHint: some View {
         VStack {
             Spacer()
@@ -676,7 +662,7 @@ struct PlayerView: View {
             }
 
             do {
-                let savedTrack = try await dataManager.toggleTrackSavedState(for: currentTrack)
+                let savedTrack = try await dataManager.toggleTrackLikedState(for: currentTrack)
 
                 await MainActor.run {
                     if let savedTrack {
@@ -685,6 +671,40 @@ struct PlayerView: View {
                 }
             } catch {
                 debugLog("Player favorite toggle failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    favoriteActionErrorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func toggleDownloadForCurrentTrack() {
+        guard let currentTrack = audioPlayer.currentTrack,
+              canToggleDownloadForCurrentTrack,
+              !isTogglingDownload else {
+            return
+        }
+
+        isTogglingDownload = true
+        favoriteActionErrorMessage = nil
+
+        Task {
+            defer {
+                Task { @MainActor in
+                    isTogglingDownload = false
+                }
+            }
+
+            do {
+                let savedTrack = try await dataManager.toggleTrackSavedState(for: currentTrack)
+
+                await MainActor.run {
+                    if let savedTrack {
+                        audioPlayer.syncCurrentTrackReference(with: savedTrack)
+                    }
+                }
+            } catch {
+                debugLog("Player download toggle failed: \(error.localizedDescription)")
                 await MainActor.run {
                     favoriteActionErrorMessage = error.localizedDescription
                 }
