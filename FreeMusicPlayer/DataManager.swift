@@ -2218,6 +2218,19 @@ struct AppSettings: Codable, Equatable {
         try container.encode(importFolders, forKey: .importFolders)
         try container.encode(myWaveSettings, forKey: .myWaveSettings)
     }
+
+    static func == (lhs: AppSettings, rhs: AppSettings) -> Bool {
+        lhs.theme == rhs.theme
+            && lhs.accentColor == rhs.accentColor
+            && lhs.autoplay == rhs.autoplay
+            && lhs.shuffle == rhs.shuffle
+            && lhs.repeatMode == rhs.repeatMode
+            && lhs.quality == rhs.quality
+            && lhs.showLyrics == rhs.showLyrics
+            && lhs.cacheEnabled == rhs.cacheEnabled
+            && lhs.importFolders == rhs.importFolders
+            && lhs.myWaveSettings == rhs.myWaveSettings
+    }
 }
 
 struct LibraryImportSummary {
