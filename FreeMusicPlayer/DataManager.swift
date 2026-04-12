@@ -1617,7 +1617,7 @@ final class DataManager: ObservableObject {
 
     /// Only writes to disk if the value has actually changed from the persisted version.
     /// Avoids redundant atomic file writes when nothing has been modified.
-    private func writeJSONIfChanged<T: Encodable & Equatable>(_ value: T, to url: URL) {
+    private func writeJSONIfChanged<T: Codable & Equatable>(_ value: T, to url: URL) {
         if let existing: T = readJSON(from: url), existing == value {
             return
         }
@@ -2145,7 +2145,7 @@ final class DataManager: ObservableObject {
     }
 }
 
-struct AppSettings: Codable {
+struct AppSettings: Codable, Equatable {
     var theme: AppTheme = .dark
     var accentColor: String = "FF0000"
     var autoplay: Bool = true
