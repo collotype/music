@@ -413,6 +413,14 @@ struct UserTasteProfile: Equatable, Sendable {
     }
 }
 
+struct UserProfile: Equatable, Sendable {
+    var topArtists: [String: Double]
+    var likedTracks: Set<String>
+    var recentTracks: [String]
+
+    static let empty = UserProfile(topArtists: [:], likedTracks: [], recentTracks: [])
+}
+
 enum RecommendationCandidateOrigin: String, Codable, CaseIterable, Hashable, Sendable {
     case library
     case favoriteArtist

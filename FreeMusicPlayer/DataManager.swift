@@ -1091,6 +1091,15 @@ final class DataManager: ObservableObject {
 
         tracks[index].playCount += 1
         tracks[index].lastPlayed = Date()
+        tracks[index].lastPlayedAt = Date()
+        scheduleSave()
+    }
+
+    func markTrackSkipped(_ track: Track) {
+        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
+
+        tracks[index].skipCount += 1
+        tracks[index].lastPlayedAt = Date()
         scheduleSave()
     }
 

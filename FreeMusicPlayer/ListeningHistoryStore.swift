@@ -109,6 +109,24 @@ actor ListeningHistoryStore {
         await postSignalsDidChangeNotification()
     }
 
+    func markPlayed(track: Track) async {
+        await record(
+            kind: .play,
+            track: TrackTasteSnapshot(track: track),
+            playbackPosition: track.duration * 0.5,
+            completionRatio: 0.5
+        )
+    }
+
+    func markSkipped(track: Track) async {
+        await record(
+            kind: .quickSkip,
+            track: TrackTasteSnapshot(track: track),
+            playbackPosition: track.duration * 0.1,
+            completionRatio: 0.1
+        )
+    }
+
     private func loadPayloadIfNeeded() -> ListeningHistoryPayload {
         if let payload {
             return payload

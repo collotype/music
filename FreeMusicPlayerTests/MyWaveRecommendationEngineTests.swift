@@ -362,7 +362,9 @@ final class MyWaveRecommendationEngineTests: XCTestCase {
             duration: 180,
             source: .soundcloud,
             playCount: playCount,
+            skipCount: 0,
             lastPlayed: Date(),
+            lastPlayedAt: Date(),
             sourceID: sourceID,
             storageLocation: .library,
             providerArtistID: "artist:\(artist)"

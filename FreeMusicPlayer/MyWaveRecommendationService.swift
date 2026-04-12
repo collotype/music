@@ -1,4 +1,4 @@
-//
+﻿//
 //  MyWaveRecommendationService.swift
 //  FreeMusicPlayer
 //
@@ -6,6 +6,8 @@
 //
 
 import Foundation
+
+// MARK: - Legacy Taste Profile Builder (preserved for backward compatibility)
 
 struct TasteProfileBuilderConfiguration {
     var libraryTrackWeight: Double = 3.2
@@ -302,6 +304,451 @@ struct UserTasteProfileBuilder {
     }
 }
 
+// MARK: - Enhanced Recommendation Engine (My Wave v2)
+
+struct MyWaveConfiguration {
+    var targetCount: Int = 20
+    var maxConsecutiveArtistTracks: Int = 1
+    var explorationRatio: Double = 0.2
+    var recentPlayedExclusionWindow: Int = 10
+
+    var artistAffinityWeight: Double = 0.4
+    var playCountWeight: Double = 0.2
+    var recencyWeight: Double = 0.1
+    var likeBonusWeight: Double = 0.2
+    var skipPenaltyWeight: Double = 0.3
+
+    var recencyHalfLife: Double = 7.0
+    var maxSkipPenalty: Double = 3.0
+    var playCountLogScale: Double = 1.0
+}
+
+struct MyWaveRecommendationService {
+    static let shared = MyWaveRecommendationService()
+
+    private let historyStore: ListeningHistoryStore
+    private let candidateSource: MyWaveCandidateSource
+    private let profileBuilder: UserTasteProfileBuilder
+    private let legacyEngine: RecommendationEngine
+    private let cacheFileURL: URL
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+    private var configuration: MyWaveConfiguration
+
+    private var cachedSnapshot: MyWaveRecommendationSnapshot?
+
+    init(
+        historyStore: ListeningHistoryStore = .shared,
+        candidateSource: MyWaveCandidateSource = MyWaveCandidateSource(),
+        profileBuilder: UserTasteProfileBuilder = UserTasteProfileBuilder(),
+        recommendationEngine: RecommendationEngine = RecommendationEngine(),
+        cacheFileURL: URL = AppFileManager.shared.dataFileURL(named: "my_wave_cache.json"),
+        configuration: MyWaveConfiguration = MyWaveConfiguration()
+    ) {
+        self.historyStore = historyStore
+        self.candidateSource = candidateSource
+        self.profileBuilder = profileBuilder
+        self.legacyEngine = recommendationEngine
+        self.cacheFileURL = cacheFileURL
+        self.configuration = configuration
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        AppFileManager.shared.prepareDirectories()
+    }
+
+    // MARK: - UserProfile
+
+    func buildUserProfile(from history: ListeningHistorySnapshot, libraryTracks: [Track]) -> UserProfile {
+        var artistScores: [String: Double] = [:]
+        var likedTracks: Set<String> = []
+        var recentTracks: [String] = []
+
+        let sortedEvents = history.events.sorted { $0.occurredAt > $1.occurredAt }
+
+        for track in libraryTracks where track.isLiked {
+            let snapshot = TrackTasteSnapshot(track: track)
+            likedTracks.insert(snapshot.identityKey)
+            artistScores[snapshot.artistKey, default: 0] += 2.0
+        }
+
+        for event in sortedEvents {
+            let artistKey = event.track.artistKey
+            let trackKey = event.track.identityKey
+
+            switch event.kind {
+            case .play, .finishedPlayback:
+                artistScores[artistKey, default: 0] += 1.0
+                if !recentTracks.contains(trackKey) {
+                    recentTracks.insert(trackKey, at: 0)
+                }
+            case .libraryAdd:
+                artistScores[artistKey, default: 0] += 1.5
+                likedTracks.insert(trackKey)
+            case .quickSkip:
+                artistScores[artistKey, default: 0] -= 0.5
+            }
+        }
+
+        let topArtists = artistScores
+            .filter { $0.value > 0 }
+            .sorted { $0.value > $1.value }
+            .prefix(20)
+            .reduce(into: [String: Double]()) { $0[$1.key] = $1.value }
+
+        recentTracks = Array(recentTracks.prefix(50))
+
+        return UserProfile(topArtists: topArtists, likedTracks: likedTracks, recentTracks: recentTracks)
+    }
+
+    // MARK: - Scoring
+
+    func score(track: Track, profile: UserProfile, now: Date = Date()) -> Double {
+        let snapshot = TrackTasteSnapshot(track: track)
+        let artistKey = snapshot.artistKey
+        let trackKey = snapshot.identityKey
+
+        let artistAffinity = profile.topArtists[artistKey] ?? 0
+        let normalizedArtistAffinity = min(artistAffinity / 5.0, 1.0)
+
+        let playCountScore = log1p(Double(track.playCount)) / log1p(100.0)
+
+        let daysAgo: Double
+        if let lastPlayedAt = track.lastPlayedAt {
+            daysAgo = max(now.timeIntervalSince(lastPlayedAt) / 86400.0, 0)
+        } else if let lastPlayed = track.lastPlayed {
+            daysAgo = max(now.timeIntervalSince(lastPlayed) / 86400.0, 0)
+        } else {
+            daysAgo = 30.0
+        }
+        let recencyScore = exp(-daysAgo / configuration.recencyHalfLife)
+
+        let likeBonus = track.isLiked ? 1.0 : 0.0
+
+        let skipPenalty = min(Double(track.skipCount) / 5.0, configuration.maxSkipPenalty)
+
+        let totalScore = normalizedArtistAffinity * configuration.artistAffinityWeight
+            + playCountScore * configuration.playCountWeight
+            + recencyScore * configuration.recencyWeight
+            + likeBonus * configuration.likeBonusWeight
+            - skipPenalty * configuration.skipPenaltyWeight
+
+        return totalScore
+    }
+
+    func score(candidate: RecommendationCandidate, profile: UserProfile, now: Date = Date()) -> Double {
+        if let libraryTrack = candidate.libraryTrack {
+            return score(track: libraryTrack, profile: profile, now: now)
+        }
+
+        let artistKey = candidate.track.artistKey
+        let artistAffinity = profile.topArtists[artistKey] ?? 0
+        let normalizedArtistAffinity = min(artistAffinity / 5.0, 1.0)
+
+        let playCountScore = log1p(Double(candidate.playCount)) / log1p(100.0)
+
+        let daysAgo: Double
+        if let lastPlayed = candidate.lastPlayed {
+            daysAgo = max(now.timeIntervalSince(lastPlayed) / 86400.0, 0)
+        } else {
+            daysAgo = 30.0
+        }
+        let recencyScore = exp(-daysAgo / configuration.recencyHalfLife)
+
+        let likeBonus = candidate.isInLibrary ? 0.5 : 0.0
+
+        let skipPenalty = 0.0
+
+        let totalScore = normalizedArtistAffinity * configuration.artistAffinityWeight
+            + playCountScore * configuration.playCountWeight
+            + recencyScore * configuration.recencyWeight
+            + likeBonus * configuration.likeBonusWeight
+            - skipPenalty * configuration.skipPenaltyWeight
+            + candidate.popularityHint * 0.15
+            + candidate.discoveryBias * 0.1
+
+        return totalScore
+    }
+
+    // MARK: - Candidate Generation
+
+    func gatherCandidates(
+        from tracks: [Track],
+        onlineTracks: [RecommendationCandidate],
+        profile: UserProfile
+    ) -> [ScoredMyWaveCandidate] {
+        let recentTrackSet = Set(profile.recentTracks.prefix(configuration.recentPlayedExclusionWindow))
+
+        var allCandidates: [ScoredMyWaveCandidate] = []
+
+        for track in tracks where track.storageLocation == .library {
+            let snapshot = TrackTasteSnapshot(track: track)
+            if recentTrackSet.contains(snapshot.identityKey) {
+                continue
+            }
+
+            let scored = ScoredMyWaveCandidate(
+                track: track,
+                onlineResult: nil,
+                snapshot: snapshot,
+                score: score(track: track, profile: profile),
+                origin: .library
+            )
+            allCandidates.append(scored)
+        }
+
+        for candidate in onlineTracks {
+            if recentTrackSet.contains(candidate.track.identityKey) {
+                continue
+            }
+
+            let scored = ScoredMyWaveCandidate(
+                track: nil,
+                onlineResult: candidate.onlineResult,
+                snapshot: candidate.track,
+                score: score(candidate: candidate, profile: profile),
+                origin: candidate.origins.first ?? .exploration
+            )
+            allCandidates.append(scored)
+        }
+
+        let explorationCount = max(Int(Double(allCandidates.count) * configuration.explorationRatio / (1.0 - configuration.explorationRatio)), 3)
+        let alreadyIncluded = Set(allCandidates.map(\.snapshot.identityKey))
+
+        let shuffledOnline = onlineTracks.shuffled()
+        var added = 0
+        for candidate in shuffledOnline where added < explorationCount {
+            if !alreadyIncluded.contains(candidate.track.identityKey)
+                && !recentTrackSet.contains(candidate.track.identityKey) {
+                let scored = ScoredMyWaveCandidate(
+                    track: nil,
+                    onlineResult: candidate.onlineResult,
+                    snapshot: candidate.track,
+                    score: score(candidate: candidate, profile: profile) + 0.1,
+                    origin: .exploration
+                )
+                allCandidates.append(scored)
+                added += 1
+            }
+        }
+
+        let shuffledLibrary = tracks.filter { $0.storageLocation == .library }.shuffled()
+        for track in shuffledLibrary where added < explorationCount {
+            let snapshot = TrackTasteSnapshot(track: track)
+            if !alreadyIncluded.contains(snapshot.identityKey)
+                && !recentTrackSet.contains(snapshot.identityKey) {
+                let scored = ScoredMyWaveCandidate(
+                    track: track,
+                    onlineResult: nil,
+                    snapshot: snapshot,
+                    score: score(track: track, profile: profile) + 0.1,
+                    origin: .exploration
+                )
+                allCandidates.append(scored)
+                added += 1
+            }
+        }
+
+        return allCandidates
+    }
+
+    // MARK: - Final Algorithm
+
+    func recommend(
+        context: MyWaveRecommendationContext,
+        history: ListeningHistorySnapshot,
+        now: Date = Date()
+    ) async -> MyWaveRecommendationSnapshot {
+        let profile = buildUserProfile(from: history, libraryTracks: context.libraryTracks)
+        let tasteProfile = profileBuilder.build(context: context, history: history, now: now)
+
+        let candidates = await candidateSource.candidates(for: context, profile: tasteProfile)
+
+        let scoredCandidates = gatherCandidates(
+            from: context.libraryTracks,
+            onlineTracks: candidates,
+            profile: profile
+        )
+
+        let sortedCandidates = scoredCandidates.sorted { left, right in
+            if left.score != right.score {
+                return left.score > right.score
+            }
+            return left.snapshot.artistKey < right.snapshot.artistKey
+        }
+
+        let diversified = applyDiversity(
+            candidates: sortedCandidates,
+            targetCount: configuration.targetCount
+        )
+
+        let items = diversified.map { candidate -> MyWaveRecommendationItem in
+            let legacyCandidate = RecommendationCandidate(
+                track: candidate.snapshot,
+                libraryTrack: candidate.track,
+                onlineResult: candidate.onlineResult,
+                isInLibrary: candidate.track != nil,
+                playCount: candidate.track?.playCount ?? 0,
+                lastPlayed: candidate.track?.lastPlayed,
+                popularityHint: candidate.onlineResult != nil ? 0.5 : 0.3,
+                discoveryBias: candidate.origin == .exploration ? 0.5 : 0.1,
+                sourceRank: 0,
+                origins: [candidate.origin]
+            )
+            let legacyScored = ScoredRecommendationCandidate(
+                candidate: legacyCandidate,
+                breakdown: RecommendationScoreBreakdown(
+                    artistAffinity: profile.topArtists[candidate.snapshot.artistKey] ?? 0,
+                    genreAffinity: 0,
+                    tagAffinity: 0,
+                    moodAffinity: 0,
+                    likedSeedAffinity: 0,
+                    recentSeedAffinity: 0,
+                    recentArtistAffinity: 0,
+                    popularityBoost: 0,
+                    originBoost: 0,
+                    discoveryBoost: 0,
+                    settingsBoost: 0,
+                    quickSkipPenalty: 0,
+                    inLibraryPenalty: 0,
+                    recentImpressionPenalty: 0
+                )
+            )
+            return MyWaveRecommendationItem(scoredCandidate: legacyScored)
+        }
+
+        let snapshot = MyWaveRecommendationSnapshot(
+            items: items,
+            summaryLine: profile.summaryLine,
+            generatedAt: now,
+            settings: context.settings
+        )
+
+        cachedSnapshot = snapshot
+        persistCache(snapshot)
+        await historyStore.recordImpressions(for: Array(items.prefix(8)), shownAt: now)
+        return snapshot
+    }
+
+    private func applyDiversity(
+        candidates: [ScoredMyWaveCandidate],
+        targetCount: Int
+    ) -> [ScoredMyWaveCandidate] {
+        var selected: [ScoredMyWaveCandidate] = []
+        var selectedIDs: Set<String> = []
+        var lastArtistKey: String? = nil
+
+        for candidate in candidates where selected.count < targetCount {
+            let artistKey = candidate.snapshot.artistKey
+
+            if selectedIDs.contains(candidate.snapshot.identityKey) {
+                continue
+            }
+
+            if let lastArtist = lastArtistKey, lastArtist == artistKey {
+                let consecutiveCount = selected.suffix(configuration.maxConsecutiveArtistTracks)
+                    .filter { $0.snapshot.artistKey == artistKey }.count
+                if consecutiveCount >= configuration.maxConsecutiveArtistTracks {
+                    continue
+                }
+            }
+
+            selected.append(candidate)
+            selectedIDs.insert(candidate.snapshot.identityKey)
+            lastArtistKey = artistKey
+        }
+
+        return selected
+    }
+
+    // MARK: - Cache
+
+    func cachedRecommendations(matching settings: MyWaveSettings? = nil) -> MyWaveRecommendationSnapshot? {
+        if let cachedSnapshot {
+            guard settings == nil || cachedSnapshot.settings == settings else {
+                return nil
+            }
+            return cachedSnapshot
+        }
+
+        guard let data = try? Data(contentsOf: cacheFileURL),
+              let decodedSnapshot = try? decoder.decode(MyWaveRecommendationSnapshot.self, from: data) else {
+            return nil
+        }
+
+        cachedSnapshot = decodedSnapshot
+        guard settings == nil || decodedSnapshot.settings == settings else {
+            return nil
+        }
+        return decodedSnapshot
+    }
+
+    func recommendations(
+        for context: MyWaveRecommendationContext,
+        now: Date = Date()
+    ) async -> MyWaveRecommendationSnapshot {
+        let history = await historyStore.snapshot()
+
+        if context.libraryTracks.isEmpty {
+            if let cached = cachedRecommendations(matching: context.settings) {
+                return cached
+            }
+            return MyWaveRecommendationSnapshot(
+                items: [],
+                summaryLine: "Add some music to your library to get personalized recommendations.",
+                generatedAt: now,
+                settings: context.settings
+            )
+        }
+
+        let snapshot = await recommend(context: context, history: history, now: now)
+
+        if snapshot.items.isEmpty,
+           let cached = cachedRecommendations(matching: context.settings) {
+            return cached
+        }
+
+        return snapshot
+    }
+
+    private func persistCache(_ snapshot: MyWaveRecommendationSnapshot) {
+        guard let encodedSnapshot = try? encoder.encode(snapshot) else {
+            return
+        }
+
+        try? encodedSnapshot.write(to: cacheFileURL, options: .atomic)
+    }
+}
+
+struct ScoredMyWaveCandidate {
+    let track: Track?
+    let onlineResult: OnlineTrackResult?
+    let snapshot: TrackTasteSnapshot
+    let score: Double
+    let origin: RecommendationCandidateOrigin
+}
+
+extension UserProfile {
+    var summaryLine: String {
+        let topArtistNames = topArtists
+            .sorted { $0.value > $1.value }
+            .prefix(2)
+            .map { key, _ in
+                key.replacingOccurrences(of: "artist:", with: "")
+            }
+
+        if !topArtistNames.isEmpty {
+            return "Personalized from \(topArtistNames.joined(separator: ", ")) and your recent listens."
+        }
+
+        if !likedTracks.isEmpty {
+            return "Personalized from your liked tracks and listening history."
+        }
+
+        return "Personalized from your library and playback history."
+    }
+}
+
+// MARK: - Legacy Recommendation Engine (preserved for backward compatibility & tests)
+
 struct RecommendationEngineConfiguration {
     var targetCount: Int = 20
     var maxConsecutiveArtistTracks: Int = 1
@@ -351,7 +798,6 @@ struct RecommendationEngine {
                 if left.totalScore != right.totalScore {
                     return left.totalScore > right.totalScore
                 }
-
                 return left.candidate.sourceRank < right.candidate.sourceRank
             }
 
@@ -372,11 +818,9 @@ struct RecommendationEngine {
                 if !phase.allowLibrary && candidate.candidate.isInLibrary {
                     return false
                 }
-
                 if !phase.allowRecentImpressions && profile.recentlyShownTrackKeys.contains(candidate.candidate.id) {
                     return false
                 }
-
                 return !selectedIDs.contains(candidate.candidate.id)
             }
 
@@ -422,38 +866,21 @@ struct RecommendationEngine {
             partial + (configuration.originBoosts[origin] ?? 0)
         }
         let discoveryBoost = candidate.discoveryBias * configuration.discoveryWeight
-        let familiarityScore = artistAffinity +
-            genreAffinity +
-            tagAffinity +
-            moodAffinity +
-            likedSeedAffinity +
-            recentSeedAffinity +
-            recentArtistAffinity
-        let settingsBoost = settingsBoost(
-            for: candidate,
-            familiarityScore: familiarityScore,
-            settings: settings
-        )
+        let familiarityScore = artistAffinity + genreAffinity + tagAffinity + moodAffinity +
+            likedSeedAffinity + recentSeedAffinity + recentArtistAffinity
+        let settingsBoost = settingsBoost(for: candidate, familiarityScore: familiarityScore, settings: settings)
         let quickSkipPenalty = Double(profile.quickSkipCounts[candidate.id] ?? 0) * configuration.quickSkipPenalty
         let inLibraryPenalty = candidate.isInLibrary ? configuration.inLibraryPenalty : 0
         let recentImpressionPenalty = profile.recentlyShownTrackKeys.contains(candidate.id)
-            ? configuration.recentImpressionPenalty
-            : 0
+            ? configuration.recentImpressionPenalty : 0
 
         let breakdown = RecommendationScoreBreakdown(
-            artistAffinity: artistAffinity,
-            genreAffinity: genreAffinity,
-            tagAffinity: tagAffinity,
-            moodAffinity: moodAffinity,
-            likedSeedAffinity: likedSeedAffinity,
-            recentSeedAffinity: recentSeedAffinity,
-            recentArtistAffinity: recentArtistAffinity,
-            popularityBoost: popularityBoost,
-            originBoost: originBoost,
-            discoveryBoost: discoveryBoost,
-            settingsBoost: settingsBoost,
-            quickSkipPenalty: quickSkipPenalty,
-            inLibraryPenalty: inLibraryPenalty,
+            artistAffinity: artistAffinity, genreAffinity: genreAffinity,
+            tagAffinity: tagAffinity, moodAffinity: moodAffinity,
+            likedSeedAffinity: likedSeedAffinity, recentSeedAffinity: recentSeedAffinity,
+            recentArtistAffinity: recentArtistAffinity, popularityBoost: popularityBoost,
+            originBoost: originBoost, discoveryBoost: discoveryBoost, settingsBoost: settingsBoost,
+            quickSkipPenalty: quickSkipPenalty, inLibraryPenalty: inLibraryPenalty,
             recentImpressionPenalty: recentImpressionPenalty
         )
 
@@ -466,20 +893,10 @@ struct RecommendationEngine {
         }
     }
 
-    private func similarity(
-        between left: TrackTasteSnapshot,
-        and right: TrackTasteSnapshot
-    ) -> Double {
+    private func similarity(between left: TrackTasteSnapshot, and right: TrackTasteSnapshot) -> Double {
         var score = 0.0
-
-        if left.artistKey == right.artistKey {
-            score += 1.0
-        }
-
-        if left.titleKey == right.titleKey {
-            score += 0.3
-        }
-
+        if left.artistKey == right.artistKey { score += 1.0 }
+        if left.titleKey == right.titleKey { score += 0.3 }
         let leftTerms = Set(left.metadataTerms)
         let rightTerms = Set(right.metadataTerms)
         if !leftTerms.isEmpty && !rightTerms.isEmpty {
@@ -487,119 +904,60 @@ struct RecommendationEngine {
             let denominator = Double(max(leftTerms.count, rightTerms.count))
             score += overlap / denominator
         }
-
         return min(score, 1.75)
     }
 
-    private func settingsBoost(
-        for candidate: RecommendationCandidate,
-        familiarityScore: Double,
-        settings: MyWaveSettings
-    ) -> Double {
+    private func settingsBoost(for candidate: RecommendationCandidate, familiarityScore: Double, settings: MyWaveSettings) -> Double {
         guard settings.isCustomized else { return 0 }
-
         var boost = 0.0
         let searchableTerms = searchableTerms(for: candidate.track)
-
         if let activity = settings.activity {
-            boost += metadataMatchScore(
-                searchableTerms: searchableTerms,
-                preferredTerms: activity.matchTerms
-            ) * configuration.settingsActivityWeight
+            boost += metadataMatchScore(searchableTerms: searchableTerms, preferredTerms: activity.matchTerms) * configuration.settingsActivityWeight
         }
-
         if let mood = settings.mood {
-            boost += metadataMatchScore(
-                searchableTerms: searchableTerms,
-                preferredTerms: mood.matchTerms
-            ) * configuration.settingsMoodWeight
+            boost += metadataMatchScore(searchableTerms: searchableTerms, preferredTerms: mood.matchTerms) * configuration.settingsMoodWeight
         }
-
         if let language = settings.language {
-            boost += languageMatchScore(
-                for: candidate.track,
-                language: language,
-                searchableTerms: searchableTerms
-            ) * configuration.settingsLanguageWeight
+            boost += languageMatchScore(for: candidate.track, language: language, searchableTerms: searchableTerms) * configuration.settingsLanguageWeight
         }
-
         if let vibe = settings.vibe {
-            boost += vibeBoost(
-                vibe,
-                candidate: candidate,
-                familiarityScore: familiarityScore
-            )
+            boost += vibeBoost(vibe, candidate: candidate, familiarityScore: familiarityScore)
         }
-
         return boost
     }
 
     private func searchableTerms(for track: TrackTasteSnapshot) -> Set<String> {
-        Set(
-            track.metadataTerms +
-            RecommendationTextNormalizer.tokenizedTerms(track.title) +
-            RecommendationTextNormalizer.tokenizedTerms(track.artistName) +
-            RecommendationTextNormalizer.tokenizedTerms(track.album)
-        )
+        Set(track.metadataTerms + RecommendationTextNormalizer.tokenizedTerms(track.title) +
+            RecommendationTextNormalizer.tokenizedTerms(track.artistName) + RecommendationTextNormalizer.tokenizedTerms(track.album))
     }
 
-    private func metadataMatchScore(
-        searchableTerms: Set<String>,
-        preferredTerms: [String]
-    ) -> Double {
-        let normalizedPreferredTerms = Set(
-            RecommendationTextNormalizer.normalizedTerms(preferredTerms) +
-            preferredTerms.flatMap { RecommendationTextNormalizer.tokenizedTerms($0) }
-        )
-        guard !searchableTerms.isEmpty,
-              !normalizedPreferredTerms.isEmpty else {
-            return 0
-        }
-
+    private func metadataMatchScore(searchableTerms: Set<String>, preferredTerms: [String]) -> Double {
+        let normalizedPreferredTerms = Set(RecommendationTextNormalizer.normalizedTerms(preferredTerms) +
+            preferredTerms.flatMap { RecommendationTextNormalizer.tokenizedTerms($0) })
+        guard !searchableTerms.isEmpty, !normalizedPreferredTerms.isEmpty else { return 0 }
         let overlapCount = searchableTerms.intersection(normalizedPreferredTerms).count
         guard overlapCount > 0 else { return 0 }
         return min(Double(overlapCount) / Double(normalizedPreferredTerms.count), 1.0)
     }
 
-    private func languageMatchScore(
-        for track: TrackTasteSnapshot,
-        language: MyWaveSettings.Language,
-        searchableTerms: Set<String>
-    ) -> Double {
+    private func languageMatchScore(for track: TrackTasteSnapshot, language: MyWaveSettings.Language, searchableTerms: Set<String>) -> Double {
         let titleAndArtist = "\(track.title) \(track.artistName) \(track.album ?? "")"
         let containsCyrillic = titleAndArtist.range(of: "\\p{Cyrillic}", options: .regularExpression) != nil
-        let instrumentalTerms = Set(
-            RecommendationTextNormalizer.normalizedTerms(
-                MyWaveSettings.Language.instrumental.matchTerms +
-                ["instrumental", "instrumental mix", "instrumental version", "no vocals"]
-            )
-        )
+        let instrumentalTerms = Set(RecommendationTextNormalizer.normalizedTerms(MyWaveSettings.Language.instrumental.matchTerms +
+            ["instrumental", "instrumental mix", "instrumental version", "no vocals"]))
         let looksInstrumental = !searchableTerms.intersection(instrumentalTerms).isEmpty
-
         switch language {
         case .russian:
-            if containsCyrillic {
-                return 1.0
-            }
-            return metadataMatchScore(
-                searchableTerms: searchableTerms,
-                preferredTerms: language.matchTerms
-            )
+            return containsCyrillic ? 1.0 : metadataMatchScore(searchableTerms: searchableTerms, preferredTerms: language.matchTerms)
         case .foreign:
-            if looksInstrumental {
-                return 0.1
-            }
+            if looksInstrumental { return 0.1 }
             return containsCyrillic ? 0 : 0.85
         case .instrumental:
             return looksInstrumental ? 1.0 : 0
         }
     }
 
-    private func vibeBoost(
-        _ vibe: MyWaveSettings.Vibe,
-        candidate: RecommendationCandidate,
-        familiarityScore: Double
-    ) -> Double {
+    private func vibeBoost(_ vibe: MyWaveSettings.Vibe, candidate: RecommendationCandidate, familiarityScore: Double) -> Double {
         switch vibe {
         case .favorite:
             let libraryBoost = candidate.isInLibrary ? 0.45 : 0
@@ -623,7 +981,6 @@ struct RecommendationEngine {
     ) -> [ScoredRecommendationCandidate] {
         var familiarPool: [ScoredRecommendationCandidate] = []
         var discoveryPool: [ScoredRecommendationCandidate] = []
-
         for candidate in candidates {
             if familiarityScore(for: candidate) >= configuration.familiarThreshold || candidate.candidate.isInLibrary {
                 familiarPool.append(candidate)
@@ -636,17 +993,11 @@ struct RecommendationEngine {
         var runningSelection = alreadySelected
 
         while results.count < desiredCount && (!familiarPool.isEmpty || !discoveryPool.isEmpty) {
-            let shouldPreferDiscovery = configuration.discoveryInterval > 0 &&
-                !discoveryPool.isEmpty &&
+            let shouldPreferDiscovery = configuration.discoveryInterval > 0 && !discoveryPool.isEmpty &&
                 ((runningSelection.count + 1) % configuration.discoveryInterval == 0)
-
             if let nextCandidate = takeNextCandidate(
-                preferDiscovery: shouldPreferDiscovery,
-                familiarPool: &familiarPool,
-                discoveryPool: &discoveryPool,
-                runningSelection: runningSelection,
-                selectedIDs: &selectedIDs,
-                selectedSignatures: &selectedSignatures
+                preferDiscovery: shouldPreferDiscovery, familiarPool: &familiarPool, discoveryPool: &discoveryPool,
+                runningSelection: runningSelection, selectedIDs: &selectedIDs, selectedSignatures: &selectedSignatures
             ) {
                 results.append(nextCandidate)
                 runningSelection.append(nextCandidate)
@@ -654,70 +1005,37 @@ struct RecommendationEngine {
                 break
             }
         }
-
         return results
     }
 
     private func takeNextCandidate(
-        preferDiscovery: Bool,
-        familiarPool: inout [ScoredRecommendationCandidate],
-        discoveryPool: inout [ScoredRecommendationCandidate],
-        runningSelection: [ScoredRecommendationCandidate],
-        selectedIDs: inout Set<String>,
-        selectedSignatures: inout Set<String>
+        preferDiscovery: Bool, familiarPool: inout [ScoredRecommendationCandidate],
+        discoveryPool: inout [ScoredRecommendationCandidate], runningSelection: [ScoredRecommendationCandidate],
+        selectedIDs: inout Set<String>, selectedSignatures: inout Set<String>
     ) -> ScoredRecommendationCandidate? {
-        let preferredSelections = preferDiscovery
-            ? [PoolSelection.discovery, .familiar]
-            : [PoolSelection.familiar, .discovery]
-
+        let preferredSelections = preferDiscovery ? [PoolSelection.discovery, .familiar] : [.familiar, .discovery]
         for selection in preferredSelections {
             switch selection {
             case .familiar:
-                if let candidate = popNextValidCandidate(
-                    from: &familiarPool,
-                    runningSelection: runningSelection,
-                    selectedIDs: &selectedIDs,
-                    selectedSignatures: &selectedSignatures
-                ) {
-                    return candidate
-                }
+                if let candidate = popNextValidCandidate(from: &familiarPool, runningSelection: runningSelection,
+                    selectedIDs: &selectedIDs, selectedSignatures: &selectedSignatures) { return candidate }
             case .discovery:
-                if let candidate = popNextValidCandidate(
-                    from: &discoveryPool,
-                    runningSelection: runningSelection,
-                    selectedIDs: &selectedIDs,
-                    selectedSignatures: &selectedSignatures
-                ) {
-                    return candidate
-                }
+                if let candidate = popNextValidCandidate(from: &discoveryPool, runningSelection: runningSelection,
+                    selectedIDs: &selectedIDs, selectedSignatures: &selectedSignatures) { return candidate }
             }
         }
-
         return nil
     }
 
     private func popNextValidCandidate(
-        from pool: inout [ScoredRecommendationCandidate],
-        runningSelection: [ScoredRecommendationCandidate],
-        selectedIDs: inout Set<String>,
-        selectedSignatures: inout Set<String>
+        from pool: inout [ScoredRecommendationCandidate], runningSelection: [ScoredRecommendationCandidate],
+        selectedIDs: inout Set<String>, selectedSignatures: inout Set<String>
     ) -> ScoredRecommendationCandidate? {
-        let relaxedPasses: [(Bool, Bool)] = [
-            (true, true),
-            (true, false),
-            (false, false),
-        ]
-
+        let relaxedPasses: [(Bool, Bool)] = [(true, true), (true, false), (false, false)]
         for pass in relaxedPasses {
             if let index = pool.firstIndex(where: { candidate in
-                isValid(
-                    candidate: candidate,
-                    runningSelection: runningSelection,
-                    selectedIDs: selectedIDs,
-                    selectedSignatures: selectedSignatures,
-                    enforceArtistRun: pass.0,
-                    enforceSimilarity: pass.1
-                )
+                isValid(candidate: candidate, runningSelection: runningSelection, selectedIDs: selectedIDs,
+                    selectedSignatures: selectedSignatures, enforceArtistRun: pass.0, enforceSimilarity: pass.1)
             }) {
                 let candidate = pool.remove(at: index)
                 selectedIDs.insert(candidate.candidate.id)
@@ -725,56 +1043,34 @@ struct RecommendationEngine {
                 return candidate
             }
         }
-
         return nil
     }
 
-    private func isValid(
-        candidate: ScoredRecommendationCandidate,
-        runningSelection: [ScoredRecommendationCandidate],
-        selectedIDs: Set<String>,
-        selectedSignatures: Set<String>,
-        enforceArtistRun: Bool,
-        enforceSimilarity: Bool
-    ) -> Bool {
+    private func isValid(candidate: ScoredRecommendationCandidate, runningSelection: [ScoredRecommendationCandidate],
+        selectedIDs: Set<String>, selectedSignatures: Set<String>, enforceArtistRun: Bool, enforceSimilarity: Bool) -> Bool {
         guard !selectedIDs.contains(candidate.candidate.id),
-              !selectedSignatures.contains(candidate.candidate.contentSignature) else {
-            return false
-        }
-
+              !selectedSignatures.contains(candidate.candidate.contentSignature) else { return false }
         if enforceArtistRun {
-            let consecutiveArtistRun = runningSelection
-                .suffix(configuration.maxConsecutiveArtistTracks)
-                .filter { $0.candidate.track.artistKey == candidate.candidate.track.artistKey }
-                .count
-            if consecutiveArtistRun >= configuration.maxConsecutiveArtistTracks {
-                return false
-            }
+            let consecutiveArtistRun = runningSelection.suffix(configuration.maxConsecutiveArtistTracks)
+                .filter { $0.candidate.track.artistKey == candidate.candidate.track.artistKey }.count
+            if consecutiveArtistRun >= configuration.maxConsecutiveArtistTracks { return false }
         }
-
-        if enforceSimilarity,
-           runningSelection.last?.candidate.similaritySignature == candidate.candidate.similaritySignature {
+        if enforceSimilarity, runningSelection.last?.candidate.similaritySignature == candidate.candidate.similaritySignature {
             return false
         }
-
         return true
     }
 
     private func familiarityScore(for candidate: ScoredRecommendationCandidate) -> Double {
-        candidate.breakdown.artistAffinity +
-            candidate.breakdown.genreAffinity +
-            candidate.breakdown.tagAffinity +
-            candidate.breakdown.moodAffinity +
-            candidate.breakdown.likedSeedAffinity +
-            candidate.breakdown.recentSeedAffinity +
-            candidate.breakdown.recentArtistAffinity
+        candidate.breakdown.artistAffinity + candidate.breakdown.genreAffinity + candidate.breakdown.tagAffinity +
+            candidate.breakdown.moodAffinity + candidate.breakdown.likedSeedAffinity +
+            candidate.breakdown.recentSeedAffinity + candidate.breakdown.recentArtistAffinity
     }
 
-    private enum PoolSelection {
-        case familiar
-        case discovery
-    }
+    private enum PoolSelection { case familiar, case discovery }
 }
+
+// MARK: - Candidate Source (preserved for backward compatibility)
 
 struct CandidateSourceConfiguration {
     var maxArtistSeeds: Int = 3
@@ -789,431 +1085,169 @@ struct CandidateSourceConfiguration {
 actor MyWaveCandidateSource {
     var configuration = CandidateSourceConfiguration()
 
-    func candidates(
-        for context: MyWaveRecommendationContext,
-        profile: UserTasteProfile
-    ) async -> [RecommendationCandidate] {
+    func candidates(for context: MyWaveRecommendationContext, profile: UserTasteProfile) async -> [RecommendationCandidate] {
         let libraryTrackKeys = Set(context.libraryTracks.map { TrackTasteSnapshot(track: $0).identityKey })
         let librarySignatures = Set(context.libraryTracks.map { TrackTasteSnapshot(track: $0).contentSignature })
 
         var mergedByID: [String: RecommendationCandidate] = [:]
         var idsBySignature: [String: String] = [:]
 
-        merge(
-            candidates: localLibraryCandidates(from: context.libraryTracks),
-            into: &mergedByID,
-            idsBySignature: &idsBySignature
-        )
+        merge(candidates: localLibraryCandidates(from: context.libraryTracks), into: &mergedByID, idsBySignature: &idsBySignature)
 
-        let onlineCandidates = await onlineCandidates(
-            profile: profile,
-            settings: context.settings,
-            libraryTrackKeys: libraryTrackKeys,
-            librarySignatures: librarySignatures
-        )
-        merge(
-            candidates: onlineCandidates,
-            into: &mergedByID,
-            idsBySignature: &idsBySignature
-        )
+        let onlineCandidates = await onlineCandidates(profile: profile, settings: context.settings,
+            libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
+        merge(candidates: onlineCandidates, into: &mergedByID, idsBySignature: &idsBySignature)
 
         return mergedByID.values.sorted { left, right in
-            if left.sourceRank != right.sourceRank {
-                return left.sourceRank < right.sourceRank
-            }
-
+            if left.sourceRank != right.sourceRank { return left.sourceRank < right.sourceRank }
             return left.playCount > right.playCount
         }
     }
 
     private func localLibraryCandidates(from tracks: [Track]) -> [RecommendationCandidate] {
-        tracks
-            .filter { $0.storageLocation == .library }
-            .enumerated()
-            .map { index, track in
-                RecommendationCandidate(
-                    track: TrackTasteSnapshot(track: track),
-                    libraryTrack: track,
-                    onlineResult: nil,
-                    isInLibrary: true,
-                    playCount: track.playCount,
-                    lastPlayed: track.lastPlayed,
-                    popularityHint: min(log1p(Double(max(track.playCount, 0))) / 3.0, 1.0),
-                    discoveryBias: 0,
-                    sourceRank: index,
-                    origins: [.library]
-                )
-            }
+        tracks.filter { $0.storageLocation == .library }.enumerated().map { index, track in
+            RecommendationCandidate(track: TrackTasteSnapshot(track: track), libraryTrack: track, onlineResult: nil,
+                isInLibrary: true, playCount: track.playCount, lastPlayed: track.lastPlayed,
+                popularityHint: min(log1p(Double(max(track.playCount, 0))) / 3.0, 1.0), discoveryBias: 0,
+                sourceRank: index, origins: [.library])
+        }
     }
 
-    private func onlineCandidates(
-        profile: UserTasteProfile,
-        settings: MyWaveSettings,
-        libraryTrackKeys: Set<String>,
-        librarySignatures: Set<String>
-    ) async -> [RecommendationCandidate] {
+    private func onlineCandidates(profile: UserTasteProfile, settings: MyWaveSettings,
+        libraryTrackKeys: Set<String>, librarySignatures: Set<String>) async -> [RecommendationCandidate] {
         await withTaskGroup(of: [RecommendationCandidate].self) { group in
             let artistSeeds = Array(profile.preferredArtists.prefix(configuration.maxArtistSeeds))
             for (index, seed) in artistSeeds.enumerated() {
                 group.addTask { [configuration] in
-                    await self.artistSeedCandidates(
-                        for: seed,
-                        sourceRank: index,
-                        maxCandidates: configuration.maxCandidatesPerSource,
-                        libraryTrackKeys: libraryTrackKeys,
-                        librarySignatures: librarySignatures
-                    )
+                    await self.artistSeedCandidates(for: seed, sourceRank: index, maxCandidates: configuration.maxCandidatesPerSource,
+                        libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
                 }
             }
-
             let genreQueries = Array(profile.topGenreTerms.prefix(configuration.maxGenreQueries))
             for (index, query) in genreQueries.enumerated() {
                 group.addTask { [configuration] in
-                    await self.searchQueryCandidates(
-                        query: query,
-                        origin: .genreSearch,
-                        sourceRank: 100 + index,
-                        discoveryBias: 0.35,
-                        maxCandidates: configuration.maxCandidatesPerSource,
-                        libraryTrackKeys: libraryTrackKeys,
-                        librarySignatures: librarySignatures
-                    )
+                    await self.searchQueryCandidates(query: query, origin: .genreSearch, sourceRank: 100 + index,
+                        discoveryBias: 0.35, maxCandidates: configuration.maxCandidatesPerSource,
+                        libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
                 }
             }
-
             let tagQueries = Array(profile.topTagTerms.prefix(configuration.maxTagQueries))
             for (index, query) in tagQueries.enumerated() {
                 group.addTask { [configuration] in
-                    await self.searchQueryCandidates(
-                        query: query,
-                        origin: .tagSearch,
-                        sourceRank: 150 + index,
-                        discoveryBias: 0.42,
-                        maxCandidates: configuration.maxCandidatesPerSource,
-                        libraryTrackKeys: libraryTrackKeys,
-                        librarySignatures: librarySignatures
-                    )
+                    await self.searchQueryCandidates(query: query, origin: .tagSearch, sourceRank: 150 + index,
+                        discoveryBias: 0.42, maxCandidates: configuration.maxCandidatesPerSource,
+                        libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
                 }
             }
-
             let moodQueries = Array(profile.topMoodTerms.prefix(configuration.maxMoodQueries))
             for (index, query) in moodQueries.enumerated() {
                 group.addTask { [configuration] in
-                    await self.searchQueryCandidates(
-                        query: query,
-                        origin: .moodSearch,
-                        sourceRank: 180 + index,
-                        discoveryBias: 0.45,
-                        maxCandidates: configuration.maxCandidatesPerSource,
-                        libraryTrackKeys: libraryTrackKeys,
-                        librarySignatures: librarySignatures
-                    )
+                    await self.searchQueryCandidates(query: query, origin: .moodSearch, sourceRank: 180 + index,
+                        discoveryBias: 0.45, maxCandidates: configuration.maxCandidatesPerSource,
+                        libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
                 }
             }
-
             let trackQueries = Array(profile.positiveSeedTracks.prefix(configuration.maxTrackQueries))
             for (index, seedTrack) in trackQueries.enumerated() {
                 let query = "\(seedTrack.track.artistName) \(seedTrack.track.title)"
                 group.addTask { [configuration] in
-                    await self.searchQueryCandidates(
-                        query: query,
-                        origin: .likedTrackSearch,
-                        sourceRank: 220 + index,
-                        discoveryBias: 0.28,
-                        maxCandidates: configuration.maxCandidatesPerSource,
-                        libraryTrackKeys: libraryTrackKeys,
-                        librarySignatures: librarySignatures
-                    )
+                    await self.searchQueryCandidates(query: query, origin: .likedTrackSearch, sourceRank: 220 + index,
+                        discoveryBias: 0.28, maxCandidates: configuration.maxCandidatesPerSource,
+                        libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
                 }
             }
-
             let settingsQueries = Array(settings.searchSeedQueries.prefix(configuration.maxSettingsQueries))
             for (index, query) in settingsQueries.enumerated() {
                 group.addTask { [configuration] in
-                    await self.searchQueryCandidates(
-                        query: query,
-                        origin: .settingsSearch,
-                        sourceRank: 260 + index,
-                        discoveryBias: 0.33,
-                        maxCandidates: configuration.maxCandidatesPerSource,
-                        libraryTrackKeys: libraryTrackKeys,
-                        librarySignatures: librarySignatures
-                    )
+                    await self.searchQueryCandidates(query: query, origin: .settingsSearch, sourceRank: 260 + index,
+                        discoveryBias: 0.33, maxCandidates: configuration.maxCandidatesPerSource,
+                        libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
                 }
             }
-
             var aggregated: [RecommendationCandidate] = []
-            for await partialResult in group {
-                aggregated.append(contentsOf: partialResult)
-            }
-
+            for await partialResult in group { aggregated.append(contentsOf: partialResult) }
             return aggregated
         }
     }
 
-    private func artistSeedCandidates(
-        for seed: PreferredArtistSeed,
-        sourceRank: Int,
-        maxCandidates: Int,
-        libraryTrackKeys: Set<String>,
-        librarySignatures: Set<String>
-    ) async -> [RecommendationCandidate] {
-        if seed.provider == .soundcloud,
-           let providerArtistID = seed.providerArtistID {
-            let route = OnlineArtistRoute(
-                provider: .soundcloud,
-                providerArtistID: providerArtistID,
-                artistName: seed.displayName,
-                imageURL: nil,
-                webpageURL: nil
-            )
-
+    private func artistSeedCandidates(for seed: PreferredArtistSeed, sourceRank: Int, maxCandidates: Int,
+        libraryTrackKeys: Set<String>, librarySignatures: Set<String>) async -> [RecommendationCandidate] {
+        if seed.provider == .soundcloud, let providerArtistID = seed.providerArtistID {
+            let route = OnlineArtistRoute(provider: .soundcloud, providerArtistID: providerArtistID,
+                artistName: seed.displayName, imageURL: nil, webpageURL: nil)
             if let tracks = try? await OnlineMusicService.shared.fetchSoundCloudTracks(for: route) {
-                return makeOnlineCandidates(
-                    from: Array(tracks.prefix(maxCandidates)),
-                    origin: seed.origin,
-                    sourceRank: sourceRank,
-                    discoveryBias: seed.origin == .favoriteArtist ? 0.15 : 0.2,
-                    libraryTrackKeys: libraryTrackKeys,
-                    librarySignatures: librarySignatures
-                )
+                return makeOnlineCandidates(from: Array(tracks.prefix(maxCandidates)), origin: seed.origin,
+                    sourceRank: sourceRank, discoveryBias: seed.origin == .favoriteArtist ? 0.15 : 0.2,
+                    libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
             }
         }
-
-        guard let searchResults = try? await OnlineMusicService.shared.search(seed.displayName, provider: .soundcloud) else {
-            return []
-        }
-
+        guard let searchResults = try? await OnlineMusicService.shared.search(seed.displayName, provider: .soundcloud) else { return [] }
         let normalizedArtistName = RecommendationTextNormalizer.normalizedKey(seed.displayName)
         let matchingTracks = searchResults.tracks.filter { result in
             let snapshot = TrackTasteSnapshot(result: result)
-            return snapshot.artistKey == seed.artistKey ||
-                RecommendationTextNormalizer.normalizedKey(result.artist) == normalizedArtistName
+            return snapshot.artistKey == seed.artistKey || RecommendationTextNormalizer.normalizedKey(result.artist) == normalizedArtistName
         }
-
         let candidateResults = matchingTracks.isEmpty ? searchResults.tracks : matchingTracks
-        return makeOnlineCandidates(
-            from: Array(candidateResults.prefix(maxCandidates)),
-            origin: seed.origin,
-            sourceRank: sourceRank,
-            discoveryBias: seed.origin == .favoriteArtist ? 0.15 : 0.22,
-            libraryTrackKeys: libraryTrackKeys,
-            librarySignatures: librarySignatures
-        )
+        return makeOnlineCandidates(from: Array(candidateResults.prefix(maxCandidates)), origin: seed.origin,
+            sourceRank: sourceRank, discoveryBias: seed.origin == .favoriteArtist ? 0.15 : 0.22,
+            libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
     }
 
-    private func searchQueryCandidates(
-        query: String,
-        origin: RecommendationCandidateOrigin,
-        sourceRank: Int,
-        discoveryBias: Double,
-        maxCandidates: Int,
-        libraryTrackKeys: Set<String>,
-        librarySignatures: Set<String>
-    ) async -> [RecommendationCandidate] {
-        guard let searchResults = try? await OnlineMusicService.shared.search(query, provider: .soundcloud) else {
-            return []
-        }
-
-        return makeOnlineCandidates(
-            from: Array(searchResults.tracks.prefix(maxCandidates)),
-            origin: origin,
-            sourceRank: sourceRank,
-            discoveryBias: discoveryBias,
-            libraryTrackKeys: libraryTrackKeys,
-            librarySignatures: librarySignatures
-        )
+    private func searchQueryCandidates(query: String, origin: RecommendationCandidateOrigin, sourceRank: Int,
+        discoveryBias: Double, maxCandidates: Int, libraryTrackKeys: Set<String>, librarySignatures: Set<String>) async -> [RecommendationCandidate] {
+        guard let searchResults = try? await OnlineMusicService.shared.search(query, provider: .soundcloud) else { return [] }
+        return makeOnlineCandidates(from: Array(searchResults.tracks.prefix(maxCandidates)), origin: origin,
+            sourceRank: sourceRank, discoveryBias: discoveryBias, libraryTrackKeys: libraryTrackKeys, librarySignatures: librarySignatures)
     }
 
-    private func makeOnlineCandidates(
-        from results: [OnlineTrackResult],
-        origin: RecommendationCandidateOrigin,
-        sourceRank: Int,
-        discoveryBias: Double,
-        libraryTrackKeys: Set<String>,
-        librarySignatures: Set<String>
-    ) -> [RecommendationCandidate] {
+    private func makeOnlineCandidates(from results: [OnlineTrackResult], origin: RecommendationCandidateOrigin,
+        sourceRank: Int, discoveryBias: Double, libraryTrackKeys: Set<String>, librarySignatures: Set<String>) -> [RecommendationCandidate] {
         results.enumerated().map { offset, result in
             let snapshot = TrackTasteSnapshot(result: result)
-            let isInLibrary = libraryTrackKeys.contains(snapshot.identityKey) ||
-                librarySignatures.contains(snapshot.contentSignature)
+            let isInLibrary = libraryTrackKeys.contains(snapshot.identityKey) || librarySignatures.contains(snapshot.contentSignature)
             let popularitySignal = Double(result.playbackCount ?? 0) + Double(result.likesCount ?? 0)
-
-            return RecommendationCandidate(
-                track: snapshot,
-                libraryTrack: nil,
-                onlineResult: result,
-                isInLibrary: isInLibrary,
-                playCount: 0,
-                lastPlayed: nil,
-                popularityHint: min(log1p(max(popularitySignal, 0)) / 14.0, 1.0),
-                discoveryBias: discoveryBias,
-                sourceRank: sourceRank + offset,
-                origins: [origin]
-            )
+            return RecommendationCandidate(track: snapshot, libraryTrack: nil, onlineResult: result,
+                isInLibrary: isInLibrary, playCount: 0, lastPlayed: nil,
+                popularityHint: min(log1p(max(popularitySignal, 0)) / 14.0, 1.0), discoveryBias: discoveryBias,
+                sourceRank: sourceRank + offset, origins: [origin])
         }
     }
 
-    private func merge(
-        candidates: [RecommendationCandidate],
-        into mergedByID: inout [String: RecommendationCandidate],
-        idsBySignature: inout [String: String]
-    ) {
+    private func merge(candidates: [RecommendationCandidate], into mergedByID: inout [String: RecommendationCandidate], idsBySignature: inout [String: String]) {
         for candidate in candidates {
             if let existingCandidate = mergedByID[candidate.id] {
                 mergedByID[candidate.id] = preferredCandidate(between: existingCandidate, and: candidate)
                 continue
             }
-
-            if let existingID = idsBySignature[candidate.contentSignature],
-               let existingCandidate = mergedByID[existingID] {
+            if let existingID = idsBySignature[candidate.contentSignature], let existingCandidate = mergedByID[existingID] {
                 mergedByID[existingID] = preferredCandidate(between: existingCandidate, and: candidate)
                 continue
             }
-
             mergedByID[candidate.id] = candidate
             idsBySignature[candidate.contentSignature] = candidate.id
         }
     }
 
-    private func preferredCandidate(
-        between existing: RecommendationCandidate,
-        and newValue: RecommendationCandidate
-    ) -> RecommendationCandidate {
+    private func preferredCandidate(between existing: RecommendationCandidate, and newValue: RecommendationCandidate) -> RecommendationCandidate {
         var mergedCandidate = existing
         mergedCandidate.origins.formUnion(newValue.origins)
-
         if existing.isInLibrary != newValue.isInLibrary {
             return existing.isInLibrary ? mergedWithPrimary(newValue, mergedCandidate) : mergedCandidate
         }
-
         if existing.sourceRank != newValue.sourceRank {
-            return existing.sourceRank < newValue.sourceRank
-                ? mergedCandidate
-                : mergedWithPrimary(newValue, mergedCandidate)
+            return existing.sourceRank < newValue.sourceRank ? mergedCandidate : mergedWithPrimary(newValue, mergedCandidate)
         }
-
-        return existing.popularityHint >= newValue.popularityHint
-            ? mergedCandidate
-            : mergedWithPrimary(newValue, mergedCandidate)
+        return existing.popularityHint >= newValue.popularityHint ? mergedCandidate : mergedWithPrimary(newValue, mergedCandidate)
     }
 
-    private func mergedWithPrimary(
-        _ primary: RecommendationCandidate,
-        _ mergedCandidate: RecommendationCandidate
-    ) -> RecommendationCandidate {
-        RecommendationCandidate(
-            track: primary.track,
-            libraryTrack: primary.libraryTrack ?? mergedCandidate.libraryTrack,
+    private func mergedWithPrimary(_ primary: RecommendationCandidate, _ mergedCandidate: RecommendationCandidate) -> RecommendationCandidate {
+        RecommendationCandidate(track: primary.track, libraryTrack: primary.libraryTrack ?? mergedCandidate.libraryTrack,
             onlineResult: primary.onlineResult ?? mergedCandidate.onlineResult,
             isInLibrary: primary.isInLibrary || mergedCandidate.isInLibrary,
             playCount: max(primary.playCount, mergedCandidate.playCount),
             lastPlayed: primary.lastPlayed ?? mergedCandidate.lastPlayed,
             popularityHint: max(primary.popularityHint, mergedCandidate.popularityHint),
             discoveryBias: max(primary.discoveryBias, mergedCandidate.discoveryBias),
-            sourceRank: min(primary.sourceRank, mergedCandidate.sourceRank),
-            origins: mergedCandidate.origins
-        )
-    }
-}
-
-actor MyWaveRecommendationService {
-    static let shared = MyWaveRecommendationService()
-
-    private let historyStore: ListeningHistoryStore
-    private let candidateSource: MyWaveCandidateSource
-    private let profileBuilder: UserTasteProfileBuilder
-    private let recommendationEngine: RecommendationEngine
-    private let cacheFileURL: URL
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
-
-    private var cachedSnapshot: MyWaveRecommendationSnapshot?
-
-    init(
-        historyStore: ListeningHistoryStore = .shared,
-        candidateSource: MyWaveCandidateSource = MyWaveCandidateSource(),
-        profileBuilder: UserTasteProfileBuilder = UserTasteProfileBuilder(),
-        recommendationEngine: RecommendationEngine = RecommendationEngine(),
-        cacheFileURL: URL = AppFileManager.shared.dataFileURL(named: "my_wave_cache.json")
-    ) {
-        self.historyStore = historyStore
-        self.candidateSource = candidateSource
-        self.profileBuilder = profileBuilder
-        self.recommendationEngine = recommendationEngine
-        self.cacheFileURL = cacheFileURL
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        AppFileManager.shared.prepareDirectories()
-    }
-
-    func cachedRecommendations(matching settings: MyWaveSettings? = nil) -> MyWaveRecommendationSnapshot? {
-        if let cachedSnapshot {
-            guard settings == nil || cachedSnapshot.settings == settings else {
-                return nil
-            }
-            return cachedSnapshot
-        }
-
-        guard let data = try? Data(contentsOf: cacheFileURL),
-              let decodedSnapshot = try? decoder.decode(MyWaveRecommendationSnapshot.self, from: data) else {
-            return nil
-        }
-
-        cachedSnapshot = decodedSnapshot
-        guard settings == nil || decodedSnapshot.settings == settings else {
-            return nil
-        }
-        return decodedSnapshot
-    }
-
-    func recommendations(
-        for context: MyWaveRecommendationContext,
-        now: Date = Date()
-    ) async -> MyWaveRecommendationSnapshot {
-        let history = await historyStore.snapshot()
-        let profile = profileBuilder.build(context: context, history: history, now: now)
-        let candidates = await candidateSource.candidates(for: context, profile: profile)
-        let currentTrackKey = context.currentTrack.map { TrackTasteSnapshot(track: $0).identityKey }
-        let rankedCandidates = recommendationEngine.rank(
-            candidates: candidates,
-            profile: profile,
-            currentTrackKey: currentTrackKey,
-            settings: context.settings
-        )
-
-        let items = rankedCandidates.map(MyWaveRecommendationItem.init)
-        if items.isEmpty,
-           !context.libraryTracks.isEmpty,
-           let cachedSnapshot = cachedRecommendations(matching: context.settings) {
-            return cachedSnapshot
-        }
-
-        let snapshot = MyWaveRecommendationSnapshot(
-            items: items,
-            summaryLine: summaryLine(profile: profile, settings: context.settings),
-            generatedAt: now,
-            settings: context.settings
-        )
-
-        cachedSnapshot = snapshot
-        persistCache(snapshot)
-        await historyStore.recordImpressions(for: Array(items.prefix(8)), shownAt: now)
-        return snapshot
-    }
-
-    private func persistCache(_ snapshot: MyWaveRecommendationSnapshot) {
-        guard let encodedSnapshot = try? encoder.encode(snapshot) else {
-            return
-        }
-
-        try? encodedSnapshot.write(to: cacheFileURL, options: .atomic)
-    }
-
-    private func summaryLine(profile: UserTasteProfile, settings: MyWaveSettings) -> String {
-        guard settings.isCustomized else {
-            return profile.summaryLine
-        }
-
-        return "\(profile.summaryLine) Tuned to your My Wave filters."
+            sourceRank: min(primary.sourceRank, mergedCandidate.sourceRank), origins: mergedCandidate.origins)
     }
 }

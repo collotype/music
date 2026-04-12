@@ -372,7 +372,6 @@ final class AudioPlayer: ObservableObject {
             seek(to: 0)
             if let currentTrack {
                 startPlaybackSession(for: currentTrack, contextName: playbackContext?.name)
-                DataManager.shared.markTrackPlayed(currentTrack)
                 recordListeningEvent(kind: .play, track: currentTrack, contextName: playbackContext?.name)
             }
             play()
@@ -517,7 +516,6 @@ final class AudioPlayer: ObservableObject {
         guard load(track: track) else { return false }
 
         startPlaybackSession(for: track, contextName: resolvedContextName)
-        DataManager.shared.markTrackPlayed(track)
         recordListeningEvent(kind: .play, track: track, contextName: resolvedContextName)
         let didStartPlayback = play()
         debugLog("Playback \(didStartPlayback ? "success" : "failure") for track: \(track.displayTitle)")
@@ -1006,6 +1004,19 @@ final class AudioPlayer: ObservableObject {
                 playbackDuration: playbackDuration,
                 completionRatio: completionRatio
             )
+
+            switch kind {
+            case .play, .finishedPlayback:
+                await MainActor.run {
+                    DataManager.shared.markTrackPlayed(track)
+                }
+            case .quickSkip:
+                await MainActor.run {
+                    DataManager.shared.markTrackSkipped(track)
+                }
+            case .libraryAdd:
+                break
+            }
         }
     }
 

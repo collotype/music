@@ -46,7 +46,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     var source: TrackSource
     var isLiked: Bool
     var playCount: Int
+    var skipCount: Int
     var lastPlayed: Date?
+    var lastPlayedAt: Date?
     var addedAt: Date
     var sourceID: String?
     var remotePageURL: String?
@@ -67,7 +69,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         source: TrackSource = .local,
         isLiked: Bool = false,
         playCount: Int = 0,
+        skipCount: Int = 0,
         lastPlayed: Date? = nil,
+        lastPlayedAt: Date? = nil,
         addedAt: Date = Date(),
         sourceID: String? = nil,
         remotePageURL: String? = nil,
@@ -107,7 +111,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         self.source = source
         self.isLiked = isLiked
         self.playCount = playCount
+        self.skipCount = skipCount
         self.lastPlayed = lastPlayed
+        self.lastPlayedAt = lastPlayedAt
         self.addedAt = addedAt
         self.sourceID = sourceID
         self.remotePageURL = remotePageURL
@@ -140,7 +146,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         case isLiked
         case legacyIsFavorite = "isFavorite"
         case playCount
+        case skipCount
         case lastPlayed
+        case lastPlayedAt
         case addedAt
         case sourceID
         case remotePageURL
@@ -176,7 +184,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
             ?? (try? container.decodeIfPresent(Bool.self, forKey: .legacyIsFavorite))
             ?? false
         playCount = try container.decodeIfPresent(Int.self, forKey: .playCount) ?? 0
+        skipCount = try container.decodeIfPresent(Int.self, forKey: .skipCount) ?? 0
         lastPlayed = try container.decodeIfPresent(Date.self, forKey: .lastPlayed)
+        lastPlayedAt = try container.decodeIfPresent(Date.self, forKey: .lastPlayedAt)
         addedAt = try container.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date()
         sourceID = try container.decodeIfPresent(String.self, forKey: .sourceID)
         remotePageURL = try container.decodeIfPresent(String.self, forKey: .remotePageURL)
@@ -209,7 +219,9 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         try container.encode(source, forKey: .source)
         try container.encode(isLiked, forKey: .isLiked)
         try container.encode(playCount, forKey: .playCount)
+        try container.encode(skipCount, forKey: .skipCount)
         try container.encodeIfPresent(lastPlayed, forKey: .lastPlayed)
+        try container.encodeIfPresent(lastPlayedAt, forKey: .lastPlayedAt)
         try container.encode(addedAt, forKey: .addedAt)
         try container.encodeIfPresent(sourceID, forKey: .sourceID)
         try container.encodeIfPresent(remotePageURL, forKey: .remotePageURL)
