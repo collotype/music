@@ -498,51 +498,28 @@ struct PlaylistCard: View {
 struct PopularSection: View {
     @EnvironmentObject var dataManager: DataManager
 
-    private var popularTracks: [Track] {
-        Array(
-            dataManager.tracks
-                .filter { $0.playCount > 0 }
-                .sorted(by: popularTrackSort)
-                .prefix(5)
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Popular")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
-            if popularTracks.isEmpty {
+            if dataManager.popularTracks.isEmpty {
                 sectionPlaceholder("Play a few tracks to build your most-played picks.")
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
-                        ForEach(Array(popularTracks.enumerated()), id: \.element.id) { entry in
+                        ForEach(Array(dataManager.popularTracks.enumerated()), id: \.element.id) { entry in
                             PopularCard(
                                 track: entry.element,
                                 rank: entry.offset + 1,
-                                contextTracks: popularTracks
+                                contextTracks: dataManager.popularTracks
                             )
                         }
                     }
                 }
             }
         }
-    }
-
-    private func popularTrackSort(_ left: Track, _ right: Track) -> Bool {
-        if left.playCount != right.playCount {
-            return left.playCount > right.playCount
-        }
-
-        let leftLastPlayed = left.lastPlayed ?? .distantPast
-        let rightLastPlayed = right.lastPlayed ?? .distantPast
-        if leftLastPlayed != rightLastPlayed {
-            return leftLastPlayed > rightLastPlayed
-        }
-
-        return left.addedAt > right.addedAt
     }
 
     private func sectionPlaceholder(_ message: String) -> some View {
@@ -607,22 +584,13 @@ struct PopularCard: View {
 struct RecentSection: View {
     @EnvironmentObject var dataManager: DataManager
 
-    private var recentTracks: [Track] {
-        Array(
-            dataManager.tracks
-                .filter { $0.lastPlayed != nil }
-                .sorted(by: recentTrackSort)
-                .prefix(10)
-        )
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
-            if recentTracks.isEmpty {
+            if dataManager.recentTracks.isEmpty {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(Color.white.opacity(0.03))
                     .frame(maxWidth: .infinity)
@@ -636,8 +604,8 @@ struct RecentSection: View {
                     )
             } else {
                 VStack(spacing: 0) {
-                    ForEach(recentTracks) { track in
-                        TrackRow(track: track, contextTracks: recentTracks)
+                    ForEach(dataManager.recentTracks) { track in
+                        TrackRow(track: track, contextTracks: dataManager.recentTracks)
                     }
                 }
                 .background(
@@ -646,20 +614,6 @@ struct RecentSection: View {
                 )
             }
         }
-    }
-
-    private func recentTrackSort(_ left: Track, _ right: Track) -> Bool {
-        let leftLastPlayed = left.lastPlayed ?? .distantPast
-        let rightLastPlayed = right.lastPlayed ?? .distantPast
-        if leftLastPlayed != rightLastPlayed {
-            return leftLastPlayed > rightLastPlayed
-        }
-
-        if left.playCount != right.playCount {
-            return left.playCount > right.playCount
-        }
-
-        return left.addedAt > right.addedAt
     }
 }
 

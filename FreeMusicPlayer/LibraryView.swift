@@ -1318,10 +1318,18 @@ struct TrackArtworkView: View {
 
     @ViewBuilder
     private var artworkContent: some View {
-        if let image = localArtworkImage {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
+        if let localArtworkURL {
+            // AsyncImage loads off the main thread — avoids synchronous disk reads in body
+            AsyncImage(url: localArtworkURL) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    fallbackArtwork
+                }
+            }
         } else if let remoteArtworkURL {
             AsyncImage(url: remoteArtworkURL) { phase in
                 switch phase {
@@ -1350,16 +1358,6 @@ struct TrackArtworkView: View {
                 endPoint: .bottomTrailing
             )
         }
-    }
-
-    private var localArtworkImage: UIImage? {
-        guard let localArtworkURL else { return nil }
-        guard let data = try? Data(contentsOf: localArtworkURL),
-              let image = UIImage(data: data) else {
-            return nil
-        }
-
-        return image
     }
 
     private var localArtworkURL: URL? {

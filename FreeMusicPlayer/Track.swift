@@ -303,9 +303,11 @@ struct Playlist: Identifiable, Codable, Equatable, Sendable {
     var isStarred: Bool = false
 
     var tracks: [Track] {
-        trackIDs.compactMap { trackID in
-            DataManager.shared.tracks.first(where: { $0.id == trackID })
-        }
+        // Build a dictionary for O(1) lookups instead of O(n*m) linear scan
+        let trackDictionary = Dictionary(uniqueKeysWithValues:
+            DataManager.shared.tracks.map { ($0.id, $0) }
+        )
+        return trackIDs.compactMap { trackDictionary[$0] }
     }
 
     var trackCount: Int {

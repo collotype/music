@@ -39,6 +39,7 @@ final class AudioPlayer: ObservableObject {
     private var queueResumeContext: QueueResumeContext?
     private var shouldPrioritizeQueueOnNextAdvance = false
     private var activePlaybackSession: PlaybackSession?
+    private var audioSessionConfigured = false
 
     private let quickSkipMaximumPosition: TimeInterval = 18
     private let quickSkipMaximumCompletionRatio: Double = 0.3
@@ -109,14 +110,18 @@ final class AudioPlayer: ObservableObject {
     }
 
     init() {
-        configureAudioSession()
+        // Audio session activation is deferred to first play() call — avoids 10-50ms sync system call at launch.
         setupNotifications()
         setupRemoteTransportControls()
         updateRemoteCommandAvailability()
         clearNowPlayingInfo()
     }
 
-    private func configureAudioSession() {
+    /// Called lazily on first playback attempt. Avoids blocking app launch with AVAudioSession.setActive.
+    private func ensureAudioSessionConfigured() {
+        guard !audioSessionConfigured else { return }
+        audioSessionConfigured = true
+
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [])
@@ -601,11 +606,8 @@ final class AudioPlayer: ObservableObject {
             return false
         }
 
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            debugLog("Audio session activation failed: \(error.localizedDescription)")
-        }
+        // Lazy audio session setup — ensures session is configured on first play, not at app launch.
+        ensureAudioSessionConfigured()
 
         debugLog("Playback start: \(currentTrack?.displayTitle ?? "Unknown Track")")
         player.play()

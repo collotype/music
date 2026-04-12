@@ -53,6 +53,8 @@ struct ContentView: View {
         }
         .accentColor(.red)
         .task {
+            // Start heavy data loading AFTER the first render — runs off main thread.
+            dataManager.loadData()
             audioPlayer.applySavedPlaybackPreferences(dataManager.settings)
         }
     }

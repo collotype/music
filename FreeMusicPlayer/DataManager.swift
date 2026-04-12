@@ -31,6 +31,18 @@ final class DataManager: ObservableObject {
     @Published var savedAlbums: [SavedAlbum] = []
     @Published var settings: AppSettings = AppSettings()
 
+    // Pre-computed derived collections to avoid expensive body computations
+    @Published var popularTracks: [Track] = []
+    @Published var recentTracks: [Track] = []
+    @Published var likedTracksList: [Track] = []
+    @Published var downloadedTracksList: [Track] = []
+
+    private var isLoadingData = false
+    private var hasLoadedData = false
+
+    // Debounced save to avoid redundant disk writes
+    private var saveDebounceTask: Task<Void, Never>?
+
     private let legacyTracksKey = "fmp_tracks"
     private let legacyPlaylistsKey = "fmp_playlists"
     private let legacyFavoritesKey = "fmp_favorites"
@@ -57,7 +69,8 @@ final class DataManager: ObservableObject {
     }
 
     init() {
-        loadData()
+        // Data loading is deferred to loadData() which runs heavy I/O off the main thread.
+        // See loadData() for the async background loading pipeline.
     }
 
     func setMyWaveActivity(_ activity: MyWaveSettings.Activity?) {
@@ -121,41 +134,140 @@ final class DataManager: ObservableObject {
     }
 
     func loadData() {
-        AppFileManager.shared.prepareDirectories(resetTemporaryStorage: true)
+        guard !hasLoadedData, !isLoadingData else { return }
+        isLoadingData = true
 
-        let didLoadFromFiles = loadDataFromFiles()
-        if !didLoadFromFiles {
-            migrateLegacyUserDefaults()
-        }
+        Task.detached(priority: .high) { [weak self] in
+            guard let self else { return }
 
-        // Temp tracks should never survive app relaunch because temp storage is cleared on launch.
-        tracks = tracks.filter { track in
-            track.storageLocation != .temp
-        }
+            AppFileManager.shared.prepareDirectories(resetTemporaryStorage: true)
 
-        tracks = tracks.filter { track in
-            guard let fileURL = track.fileURL else { return true }
-            if URL(string: fileURL)?.scheme != nil {
-                return true
+            let didLoadFromFiles = self.loadDataFromFiles()
+            if !didLoadFromFiles {
+                self.migrateLegacyUserDefaults()
             }
-            return AppFileManager.shared.fileExists(at: fileURL)
-        }
 
-        refreshStoredLocalMetadataIfNeeded()
-        synchronizeUnifiedTrackLibraryState()
-        saveData()
+            // Filter out temp tracks and verify file existence in background
+            var filteredTracks = self.tracks.filter { track in
+                track.storageLocation != .temp
+            }
+
+            filteredTracks = filteredTracks.filter { track in
+                guard let fileURL = track.fileURL else { return true }
+                if URL(string: fileURL)?.scheme != nil { return true }
+                return AppFileManager.shared.fileExists(at: fileURL)
+            }
+
+            // Publish results back on main thread
+            await MainActor.run {
+                self.tracks = filteredTracks
+                self.refreshStoredLocalMetadataIfNeeded()
+                self.synchronizeUnifiedTrackLibraryState()
+                self.refreshDerivedCollections()
+                self.isLoadingData = false
+                self.hasLoadedData = true
+            }
+
+            // Save in background — only write files that actually changed
+            self.saveDataInBackground()
+        }
     }
 
     func saveData() {
         synchronizeUnifiedTrackLibraryState()
+        refreshDerivedCollections()
+
         let persistedTracks = tracks.filter { $0.storageLocation != .temp }
-        writeJSON(persistedTracks, to: tracksFileURL)
-        writeJSON(playlists, to: playlistsFileURL)
-        writeJSON(likedTrackIDs, to: likedTracksFileURL)
-        writeJSON(favoriteArtists, to: favoriteArtistsFileURL)
-        writeJSON(savedAlbums, to: savedAlbumsFileURL)
-        writeJSON(settings, to: settingsFileURL)
+        writeJSONIfChanged(persistedTracks, to: tracksFileURL)
+        writeJSONIfChanged(playlists, to: playlistsFileURL)
+        writeJSONIfChanged(likedTrackIDs, to: likedTracksFileURL)
+        writeJSONIfChanged(favoriteArtists, to: favoriteArtistsFileURL)
+        writeJSONIfChanged(savedAlbums, to: savedAlbumsFileURL)
+        writeJSONIfChanged(settings, to: settingsFileURL)
         NotificationCenter.default.post(name: .myWaveSignalsDidChange, object: nil)
+    }
+
+    /// Debounced save — coalesces rapid successive calls into a single disk write.
+    func scheduleSave() {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self.saveData()
+            }
+        }
+    }
+
+    /// Runs saveData() entirely on a background thread — all file writes happen off main.
+    private func saveDataInBackground() {
+        synchronizeUnifiedTrackLibraryState()
+        refreshDerivedCollections()
+
+        let persistedTracks = tracks.filter { $0.storageLocation != .temp }
+        let currentPlaylists = playlists
+        let currentLikedIDs = likedTrackIDs
+        let currentArtists = favoriteArtists
+        let currentAlbums = savedAlbums
+        let currentSettings = settings
+
+        Task.detached(priority: .utility) {
+            self.writeJSONIfChanged(persistedTracks, to: self.tracksFileURL)
+            self.writeJSONIfChanged(currentPlaylists, to: self.playlistsFileURL)
+            self.writeJSONIfChanged(currentLikedIDs, to: self.likedTracksFileURL)
+            self.writeJSONIfChanged(currentArtists, to: self.favoriteArtistsFileURL)
+            self.writeJSONIfChanged(currentAlbums, to: self.savedAlbumsFileURL)
+            self.writeJSONIfChanged(currentSettings, to: self.settingsFileURL)
+
+            await MainActor.run {
+                NotificationCenter.default.post(name: .myWaveSignalsDidChange, object: nil)
+            }
+        }
+    }
+
+    /// Refreshes pre-computed derived collections so Views don't compute them in body.
+    private func refreshDerivedCollections() {
+        popularTracks = Array(
+            tracks
+                .filter { $0.playCount > 0 }
+                .sorted(by: popularTrackSort)
+                .prefix(5)
+        )
+
+        recentTracks = Array(
+            tracks
+                .filter { $0.lastPlayed != nil }
+                .sorted(by: recentTrackSort)
+                .prefix(10)
+        )
+
+        likedTracksList = tracks.filter { $0.isLiked && $0.isDownloaded }
+        downloadedTracksList = tracks.filter { $0.isDownloaded }
+    }
+
+    private func popularTrackSort(_ left: Track, _ right: Track) -> Bool {
+        if left.playCount != right.playCount {
+            return left.playCount > right.playCount
+        }
+        let leftLastPlayed = left.lastPlayed ?? .distantPast
+        let rightLastPlayed = right.lastPlayed ?? .distantPast
+        if leftLastPlayed != rightLastPlayed {
+            return leftLastPlayed > rightLastPlayed
+        }
+        return left.addedAt > right.addedAt
+    }
+
+    private func recentTrackSort(_ left: Track, _ right: Track) -> Bool {
+        let leftLastPlayed = left.lastPlayed ?? .distantPast
+        let rightLastPlayed = right.lastPlayed ?? .distantPast
+        if leftLastPlayed != rightLastPlayed {
+            return leftLastPlayed > rightLastPlayed
+        }
+        if left.playCount != right.playCount {
+            return left.playCount > right.playCount
+        }
+        return left.addedAt > right.addedAt
     }
 
     @discardableResult
@@ -438,9 +550,11 @@ final class DataManager: ObservableObject {
     func tracks(for playlistId: String) -> [Track] {
         guard let playlist = playlist(withID: playlistId) else { return [] }
 
-        return playlist.trackIDs.compactMap { trackID in
-            tracks.first(where: { $0.id == trackID })
-        }
+        // Build a dictionary for O(1) lookups instead of O(n*m) linear scan
+        let trackDictionary = Dictionary(uniqueKeysWithValues:
+            tracks.map { ($0.id, $0) }
+        )
+        return playlist.trackIDs.compactMap { trackDictionary[$0] }
     }
 
     func addTrack(_ track: Track, toPlaylistID playlistId: String) {
@@ -977,7 +1091,7 @@ final class DataManager: ObservableObject {
 
         tracks[index].playCount += 1
         tracks[index].lastPlayed = Date()
-        saveData()
+        scheduleSave()
     }
 
     func shuffleTracks() {
@@ -988,11 +1102,11 @@ final class DataManager: ObservableObject {
     }
 
     var likedTracks: [Track] {
-        downloadedTracks.filter(\.isLiked)
+        likedTracksList
     }
 
     var downloadedTracks: [Track] {
-        tracks.filter(\.isDownloaded)
+        downloadedTracksList
     }
 
     var favoriteTracks: [Track] {
@@ -1499,6 +1613,15 @@ final class DataManager: ObservableObject {
 
         guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// Only writes to disk if the value has actually changed from the persisted version.
+    /// Avoids redundant atomic file writes when nothing has been modified.
+    private func writeJSONIfChanged<T: Encodable & Equatable>(_ value: T, to url: URL) {
+        if let existing: T = readJSON(from: url), existing == value {
+            return
+        }
+        writeJSON(value, to: url)
     }
 
     private func deleteStoredImageIfNeeded(reference: String?) {
