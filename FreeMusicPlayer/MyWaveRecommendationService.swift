@@ -323,7 +323,7 @@ struct MyWaveConfiguration {
     var playCountLogScale: Double = 1.0
 }
 
-struct MyWaveRecommendationService {
+final class MyWaveRecommendationService {
     static let shared = MyWaveRecommendationService()
 
     private let historyStore: ListeningHistoryStore
@@ -1067,7 +1067,10 @@ struct RecommendationEngine {
             candidate.breakdown.recentSeedAffinity + candidate.breakdown.recentArtistAffinity
     }
 
-    private enum PoolSelection { case familiar, case discovery }
+    private enum PoolSelection {
+        case familiar
+        case discovery
+    }
 }
 
 // MARK: - Candidate Source (preserved for backward compatibility)
