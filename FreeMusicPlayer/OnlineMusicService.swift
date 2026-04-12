@@ -780,6 +780,12 @@ final class OnlineMusicService {
             )
         }
 
+        if result.duration > 7200 {
+            throw OnlineMusicServiceError.unsupportedSource(
+                "This track is too long to download. Tracks over 2 hours are not supported."
+            )
+        }
+
         if let cachedURL = cachedTemporaryFile(for: result.id) {
             let cachedValidation = downloadedAudioValidationResult(
                 from: cachedURL,
@@ -813,11 +819,30 @@ final class OnlineMusicService {
             debugLog("Resolution start for \(result.providerTrackURN) [attempt \(attempt)/\(offlineDownloadAttemptCount)]")
             debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
 
-            let finalURL = try await resolveSoundCloudStreamURL(
+            var finalURL = try await resolveSoundCloudStreamURL(
                 for: chosenCandidate,
                 trackAuthorization: result.trackAuthorization,
                 clientID: clientID
             )
+
+            if finalURL.pathExtension.lowercased() == "m3u8" || finalURL.lastPathComponent.lowercased().hasSuffix(".m3u8") {
+                debugLog("Skipping HLS stream (.m3u8) for \(result.providerTrackURN)")
+                throw OnlineMusicServiceError.unsupportedSource(
+                    "This track is only available as a stream and cannot be downloaded."
+                )
+            }
+
+            if let urlQuery = finalURL.query, urlQuery.contains("m3u8") {
+                debugLog("Skipping m3u8 query URL for \(result.providerTrackURN)")
+                if attempt < offlineDownloadAttemptCount {
+                    removeTemporaryAudioFiles(for: result.id)
+                    continue
+                }
+                throw OnlineMusicServiceError.unsupportedSource(
+                    "This track is only available as a stream and cannot be downloaded."
+                )
+            }
+
             debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
             debugLog("Download start for \(result.providerTrackURN) [attempt \(attempt)/\(offlineDownloadAttemptCount)]: \(finalURL.absoluteString)")
 
@@ -838,7 +863,7 @@ final class OnlineMusicService {
             let response: URLResponse
 
             do {
-                (temporaryDownloadURL, response) = try await session.download(for: request)
+                (temporaryDownloadURL, response) = try await downloadViaTask(request: request)
             } catch {
                 debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
                 throw OnlineMusicServiceError.networkFailure(
@@ -2450,6 +2475,27 @@ final class OnlineMusicService {
         }
 
         return ordered
+    }
+
+    private func downloadViaTask(request: URLRequest) async throws -> (URL, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            let task = session.downloadTask(with: request) { localURL, response, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let localURL else {
+                    continuation.resume(throwing: URLError(.cannotFindHost))
+                    return
+                }
+                guard let response else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                    return
+                }
+                continuation.resume(returning: (localURL, response))
+            }
+            task.resume()
+        }
     }
 
     private func resolveSoundCloudStreamURL(

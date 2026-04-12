@@ -11,11 +11,15 @@ struct MiniPlayer: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
     @Binding var showPlayer: Bool
-    @State private var showQueueSheet = false
 
     private let backgroundCornerRadius: CGFloat = 22
     private let rowHeight: CGFloat = 64
-    
+
+    private var currentTrackIsLiked: Bool {
+        guard let track = audioPlayer.currentTrack else { return false }
+        return dataManager.isTrackLiked(track)
+    }
+
     var body: some View {
         miniPlayerRow
         .background {
@@ -40,9 +44,6 @@ struct MiniPlayer: View {
         }
         .onChange(of: audioPlayer.currentTrack?.id) { _ in
             debugLog("Mini player layout state updated: \(audioPlayer.currentTrack?.displayTitle ?? "none")")
-        }
-        .sheet(isPresented: $showQueueSheet) {
-            UpNextQueueSheet()
         }
     }
 
@@ -93,29 +94,18 @@ struct MiniPlayer: View {
 
             Spacer(minLength: 12)
 
-            Button {
-                debugLog("Mini player queue button pressed")
-                showQueueSheet = true
-            } label: {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "list.bullet")
-                        .foregroundColor(audioPlayer.queuedTracks.isEmpty ? .white.opacity(0.72) : .white)
-                        .font(.system(size: 19, weight: .semibold))
-
-                    if !audioPlayer.queuedTracks.isEmpty {
-                        Text("\(audioPlayer.queuedTracks.count)")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.white))
-                            .offset(x: 9, y: -8)
-                    }
+            if let currentTrack = audioPlayer.currentTrack {
+                Button {
+                    debugLog("Mini player like button pressed")
+                    dataManager.toggleFavorite(currentTrack)
+                } label: {
+                    Image(systemName: currentTrackIsLiked ? "heart.fill" : "heart")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(currentTrackIsLiked ? .red : .white)
+                        .frame(width: 40, height: 40)
                 }
-                .frame(width: 30, height: 30)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .padding(.trailing, 4)
 
             Button {
                 debugLog("Mini player play/pause button pressed")
