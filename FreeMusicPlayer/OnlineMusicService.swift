@@ -489,6 +489,12 @@ final class OnlineMusicService {
     private let soundCloudRuntimeState = SoundCloudRuntimeState()
     private let spotifyRuntimeState = SpotifyRuntimeState()
     private let resolvedPlaybackStreamCache = ResolvedPlaybackStreamCache()
+    private lazy var soundCloudClient = SoundCloudClient(
+        session: session,
+        logger: { [weak self] message in
+            self?.debugLog(message)
+        }
+    )
 
     private func debugLog(_ message: String) {
 #if DEBUG
@@ -955,36 +961,23 @@ final class OnlineMusicService {
     }
 
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
-        do {
-            return try await withSoundCloudClientIDRetry(operationName: "SoundCloud search") { clientID in
-                self.debugLog("Using client_id: \(self.maskedClientID(clientID))")
+        let tracks = try await soundCloudClient.searchOnlineTracks(query: query)
+        let results = makeSoundCloudSearchResults(
+            from: tracks,
+            directAlbumMatches: [],
+            query: query
+        )
 
-                let tracks = try await self.searchTracksViaSoundCloud(
-                    query: query,
-                    clientID: clientID,
-                    limit: 20
-                )
-                let results = self.makeSoundCloudSearchResults(
-                    from: tracks,
-                    directAlbumMatches: [],
-                    query: query
-                )
+        logMappedResultCounts(provider: .soundcloud, results: results)
+        debugLog(
+            "Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
+        )
 
-                self.logMappedResultCounts(provider: .soundcloud, results: results)
-                self.debugLog(
-                    "Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
-                )
-
-                guard !results.isEmpty else {
-                    throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
-                }
-
-                return results
-            }
-        } catch {
-            self.debugLog("SC error: \(error.localizedDescription)")
-            throw error
+        guard !results.isEmpty else {
+            throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
         }
+
+        return results
     }
 
     private func executeSoundCloudSearch(query: String, clientID: String) async throws -> OnlineSearchResults {
@@ -2971,6 +2964,496 @@ final class OnlineMusicService {
     }
 }
 
+private final class SoundCloudClient: @unchecked Sendable {
+    enum SoundCloudError: LocalizedError, Equatable {
+        case unavailable
+        case unauthorized
+        case invalidResponse
+        case decodingFailed
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                return "SoundCloud is temporarily unavailable."
+            case .unauthorized:
+                return "SoundCloud rejected the current client_id."
+            case .invalidResponse:
+                return "SoundCloud returned an invalid response."
+            case .decodingFailed:
+                return "SoundCloud returned malformed track data."
+            }
+        }
+    }
+
+    private let session: URLSession
+    private let decoder = JSONDecoder()
+    private let logger: @Sendable (String) -> Void
+    private let stateLock = NSLock()
+    private var clientID: String?
+
+    private let homepageURL = URL(string: "https://soundcloud.com")!
+    private let searchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
+    private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    private let clientIDPatterns = [
+        #"client_id:"([A-Za-z0-9]{8,})""#,
+        #"client_id\s*:\s*"([A-Za-z0-9]{8,})""#,
+        #"client_id\s*=\s*"([A-Za-z0-9]{8,})""#,
+    ]
+    private let assetPatterns = [
+        #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#,
+        #"/assets/[^"']+\.js"#,
+    ]
+    private let iso8601DateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+    private let iso8601DateFormatterWithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    init(session: URLSession, logger: @escaping @Sendable (String) -> Void) {
+        self.session = session
+        self.logger = logger
+    }
+
+    func fetchClientID() async throws -> String {
+        try await fetchClientID(forceRefresh: false)
+    }
+
+    func searchTracks(query: String) async throws -> [Track] {
+        let results = try await searchOnlineTracks(query: query)
+        return results.map { makeTrack(from: $0) }
+    }
+
+    func searchOnlineTracks(query: String) async throws -> [OnlineTrackResult] {
+        var lastError: Error = SoundCloudError.unavailable
+
+        for attempt in 0..<2 {
+            let currentClientID = try await fetchClientID(forceRefresh: attempt > 0)
+            logger("Using client_id: \(maskedClientID(currentClientID))")
+
+            do {
+                let response = try await fetchSearchResponse(query: query, clientID: currentClientID)
+                return deduplicatedTrackResults(
+                    response.collection.compactMap { makeOnlineTrackResult(from: $0) }
+                )
+            } catch SoundCloudError.unauthorized {
+                lastError = SoundCloudError.unauthorized
+                invalidateClientID(currentClientID)
+                guard attempt == 0 else { break }
+            } catch {
+                lastError = error
+                throw error
+            }
+        }
+
+        if let controlledError = lastError as? SoundCloudError {
+            throw controlledError == .unauthorized ? .unavailable : controlledError
+        }
+
+        throw SoundCloudError.unavailable
+    }
+
+    private func fetchClientID(forceRefresh: Bool) async throws -> String {
+        if !forceRefresh, let cachedClientID = cachedClientID() {
+            return cachedClientID
+        }
+
+        logger("Fetching new SoundCloud client_id")
+
+        let homepageHTML = try await fetchText(
+            from: homepageURL,
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
+
+        if let inlineClientID = extractFirstMatch(in: homepageHTML, patterns: clientIDPatterns) {
+            storeClientID(inlineClientID)
+            return inlineClientID
+        }
+
+        let assetMatches = orderedUniqueValues(
+            assetPatterns.flatMap { extractAllMatches(in: homepageHTML, pattern: $0) }
+        )
+        let assetURLs = assetMatches.compactMap { resolveAssetURL(from: $0) }
+
+        for assetURL in assetURLs.prefix(12) {
+            do {
+                let assetText = try await fetchText(from: assetURL, accept: "*/*")
+                if let discoveredClientID = extractFirstMatch(in: assetText, patterns: clientIDPatterns) {
+                    storeClientID(discoveredClientID)
+                    return discoveredClientID
+                }
+            } catch {
+                logger("SC error: \(error.localizedDescription)")
+            }
+        }
+
+        throw SoundCloudError.unavailable
+    }
+
+    private func fetchSearchResponse(query: String, clientID: String) async throws -> SoundCloudSearchResponseDTO {
+        var components = URLComponents(url: searchURL, resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "limit", value: "20")
+        ]
+
+        guard let requestURL = components?.url else {
+            throw SoundCloudError.unavailable
+        }
+
+        let data = try await fetchData(from: requestURL, accept: "application/json, text/plain, */*")
+
+        do {
+            return try decoder.decode(SoundCloudSearchResponseDTO.self, from: data)
+        } catch {
+            logger("SC error: \(error.localizedDescription)")
+            throw SoundCloudError.decodingFailed
+        }
+    }
+
+    private func fetchText(from url: URL, accept: String) async throws -> String {
+        let data = try await fetchData(from: url, accept: accept)
+
+        if let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+
+        if let text = String(data: data, encoding: .unicode) {
+            return text
+        }
+
+        throw SoundCloudError.invalidResponse
+    }
+
+    private func fetchData(from url: URL, accept: String) async throws -> Data {
+        logger("SC request: \(url.absoluteString)")
+
+        var request = URLRequest(url: url)
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue(homepageURL.absoluteString, forHTTPHeaderField: "Referer")
+
+        let data: Data
+        let response: URLResponse
+
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            logger("SC error: \(error.localizedDescription)")
+            throw SoundCloudError.unavailable
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SoundCloudError.invalidResponse
+        }
+
+        logger("SC status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200...299:
+            return data
+        case 401:
+            throw SoundCloudError.unauthorized
+        default:
+            throw SoundCloudError.unavailable
+        }
+    }
+
+    private func makeTrack(from result: OnlineTrackResult) -> Track {
+        Track(
+            id: result.id,
+            title: result.title,
+            artist: result.artist,
+            album: result.album,
+            genres: result.genres,
+            tags: result.tags,
+            moods: result.moods,
+            duration: result.duration,
+            coverArtURL: result.coverArtURL,
+            source: .soundcloud,
+            sourceID: result.providerTrackURN,
+            remotePageURL: result.webpageURL,
+            storageLocation: .remote,
+            remoteCoverArtURL: result.coverArtURL,
+            artistImageURL: result.artistImageURL,
+            remoteArtistImageURL: result.artistImageURL,
+            providerArtistID: result.providerArtistID,
+            artistWebpageURL: result.artistWebpageURL
+        )
+    }
+
+    private func makeOnlineTrackResult(from track: SoundCloudTrackDTO) -> OnlineTrackResult? {
+        guard let urn = cleanedText(track.urn),
+              let webpageURL = cleanedText(track.permalinkURL),
+              let title = cleanedText(track.title) else {
+            return nil
+        }
+
+        let streams = (track.media?.transcodings ?? []).compactMap { makeStreamCandidate(from: $0) }
+        guard !streams.isEmpty else {
+            return nil
+        }
+
+        let artist = cleanedText(track.publisherMetadata?.artist) ??
+            cleanedText(track.user?.username) ??
+            "Unknown Artist"
+        let album = cleanedText(track.publisherMetadata?.albumTitle) ??
+            cleanedText(track.publisherMetadata?.releaseTitle)
+        let coverArtURL = normalizedArtworkURL(track.artworkURL) ??
+            normalizedArtworkURL(track.user?.avatarURL)
+        let resolvedDurationMilliseconds = max(track.fullDuration ?? 0, track.duration ?? 0)
+
+        return OnlineTrackResult(
+            provider: .soundcloud,
+            providerTrackURN: urn,
+            providerArtistID: cleanedText(track.user?.urn),
+            title: title,
+            artist: artist,
+            album: album,
+            genres: normalizedMetadataTerms(from: [track.genre]),
+            tags: normalizedTagTerms(from: track.tagList),
+            moods: [],
+            duration: TimeInterval(resolvedDurationMilliseconds) / 1000,
+            coverArtURL: coverArtURL,
+            artistImageURL: normalizedArtworkURL(track.user?.avatarURL) ?? coverArtURL,
+            webpageURL: webpageURL,
+            artistWebpageURL: cleanedText(track.user?.permalinkURL),
+            playbackCount: track.playbackCount,
+            likesCount: track.likesCount,
+            releaseDate: parsedISO8601Date(track.releaseDate),
+            directAudioURL: nil,
+            directFileExtension: nil,
+            trackAuthorization: cleanedText(track.trackAuthorization),
+            playbackStreams: streams
+        )
+    }
+
+    private func makeStreamCandidate(from transcoding: SoundCloudTranscodingDTO) -> SoundCloudStreamCandidate? {
+        guard let url = cleanedText(transcoding.url),
+              let preset = cleanedText(transcoding.preset),
+              let protocolName = cleanedText(transcoding.format?.protocolName),
+              let mimeType = cleanedText(transcoding.format?.mimeType) else {
+            return nil
+        }
+
+        let normalizedPreset = preset.lowercased()
+        let normalizedProtocol = protocolName.lowercased()
+        let normalizedMimeType = mimeType.lowercased()
+
+        let kind: SoundCloudStreamCandidate.StreamKind
+        if normalizedPreset.contains("aac_160") && normalizedProtocol.contains("hls") {
+            kind = .hlsAAC160
+        } else if normalizedPreset.contains("aac_96") && normalizedProtocol.contains("hls") {
+            kind = .hlsAAC96
+        } else if normalizedPreset.contains("aac") && normalizedProtocol.contains("hls") {
+            kind = .hlsAAC
+        } else if normalizedPreset.contains("mp3") && normalizedProtocol == "progressive" {
+            kind = .progressiveMP3
+        } else if normalizedPreset.contains("mp3") && normalizedProtocol.contains("hls") {
+            kind = .hlsMP3
+        } else if normalizedMimeType.contains("opus") && normalizedProtocol.contains("hls") {
+            kind = .hlsOpus
+        } else {
+            return nil
+        }
+
+        return SoundCloudStreamCandidate(
+            kind: kind,
+            transcodingURL: url,
+            protocolName: protocolName,
+            mimeType: mimeType,
+            isLegacy: transcoding.isLegacyTranscoding ?? false
+        )
+    }
+
+    private func parsedISO8601Date(_ rawValue: String?) -> Date? {
+        guard let rawValue = cleanedText(rawValue) else { return nil }
+
+        return iso8601DateFormatterWithFractionalSeconds.date(from: rawValue) ??
+            iso8601DateFormatter.date(from: rawValue)
+    }
+
+    private func normalizedArtworkURL(_ rawValue: String?) -> String? {
+        guard let cleanedValue = cleanedText(rawValue) else { return nil }
+
+        return cleanedValue
+            .replacingOccurrences(of: "-large.", with: "-t500x500.")
+            .replacingOccurrences(of: "-crop.", with: "-t500x500.")
+    }
+
+    private func normalizedMetadataTerms(from values: [String?]) -> [String] {
+        var seenTerms: Set<String> = []
+        var resolvedTerms: [String] = []
+
+        for rawValue in values {
+            guard let cleanedValue = cleanedText(rawValue) else { continue }
+
+            let normalizedValue = cleanedValue
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "/", with: " ")
+                .replacingOccurrences(of: ",", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !normalizedValue.isEmpty else { continue }
+
+            let dedupeKey = normalizedValue
+                .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+                .lowercased()
+
+            guard seenTerms.insert(dedupeKey).inserted else { continue }
+            resolvedTerms.append(normalizedValue)
+        }
+
+        return resolvedTerms
+    }
+
+    private func normalizedTagTerms(from rawTagList: String?) -> [String] {
+        normalizedMetadataTerms(from: splitSoundCloudTagList(rawTagList).map(Optional.some))
+    }
+
+    private func splitSoundCloudTagList(_ rawValue: String?) -> [String] {
+        guard let rawValue = cleanedText(rawValue) else { return [] }
+
+        var tags: [String] = []
+        var currentTag = ""
+        var isInsideQuotes = false
+
+        for character in rawValue {
+            switch character {
+            case "\"":
+                if isInsideQuotes {
+                    let cleanedTag = currentTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleanedTag.isEmpty {
+                        tags.append(cleanedTag)
+                    }
+                    currentTag = ""
+                }
+
+                isInsideQuotes.toggle()
+            case " " where !isInsideQuotes:
+                let cleanedTag = currentTag.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleanedTag.isEmpty {
+                    tags.append(cleanedTag)
+                }
+                currentTag = ""
+            default:
+                currentTag.append(character)
+            }
+        }
+
+        let cleanedTag = currentTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanedTag.isEmpty {
+            tags.append(cleanedTag)
+        }
+
+        return tags
+    }
+
+    private func deduplicatedTrackResults(_ results: [OnlineTrackResult]) -> [OnlineTrackResult] {
+        var seenIDs: Set<String> = []
+
+        return results.filter { result in
+            seenIDs.insert(result.id).inserted
+        }
+    }
+
+    private func cachedClientID() -> String? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return clientID
+    }
+
+    private func storeClientID(_ newClientID: String) {
+        stateLock.lock()
+        clientID = newClientID
+        stateLock.unlock()
+    }
+
+    private func invalidateClientID(_ invalidClientID: String) {
+        stateLock.lock()
+        if clientID == invalidClientID {
+            clientID = nil
+        }
+        stateLock.unlock()
+    }
+
+    private func resolveAssetURL(from rawValue: String) -> URL? {
+        if let absoluteURL = URL(string: rawValue), absoluteURL.scheme != nil {
+            return absoluteURL
+        }
+
+        return URL(string: rawValue, relativeTo: homepageURL)?.absoluteURL
+    }
+
+    private func cleanedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+
+        let cleanedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanedValue.isEmpty ? nil : cleanedValue
+    }
+
+    private func maskedClientID(_ clientID: String) -> String {
+        guard clientID.count > 8 else { return clientID }
+        let prefix = clientID.prefix(4)
+        let suffix = clientID.suffix(4)
+        return "\(prefix)...\(suffix)"
+    }
+
+    private func extractFirstMatch(in text: String, patterns: [String]) -> String? {
+        for pattern in patterns {
+            if let match = extractFirstMatch(in: text, pattern: pattern) {
+                return match
+            }
+        }
+
+        return nil
+    }
+
+    private func extractFirstMatch(in text: String, pattern: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return nil
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              match.numberOfRanges > 1,
+              let captureRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+
+        return String(text[captureRange])
+    }
+
+    private func extractAllMatches(in text: String, pattern: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return []
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.matches(in: text, options: [], range: range).compactMap { match in
+            guard let matchRange = Range(match.range, in: text) else { return nil }
+            return String(text[matchRange])
+        }
+    }
+
+    private func orderedUniqueValues(_ values: [String]) -> [String] {
+        var seenValues: Set<String> = []
+        var orderedValues: [String] = []
+
+        for value in values where seenValues.insert(value).inserted {
+            orderedValues.append(value)
+        }
+
+        return orderedValues
+    }
+}
+
 @MainActor
 private final class SpotifyAuthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
@@ -3171,6 +3654,102 @@ private struct SpotifyCredentials {
     let accessToken: String
     let refreshToken: String?
     let expirationDate: Date
+}
+
+private struct SoundCloudSearchResponseDTO: Decodable {
+    let collection: [SoundCloudTrackDTO]
+}
+
+private struct SoundCloudTrackDTO: Decodable {
+    let artworkURL: String?
+    let duration: Int?
+    let fullDuration: Int?
+    let genre: String?
+    let id: Int?
+    let likesCount: Int?
+    let media: SoundCloudMediaDTO?
+    let permalinkURL: String?
+    let playbackCount: Int?
+    let publisherMetadata: SoundCloudPublisherMetadataDTO?
+    let releaseDate: String?
+    let tagList: String?
+    let title: String?
+    let trackAuthorization: String?
+    let urn: String?
+    let user: SoundCloudUserDTO?
+
+    enum CodingKeys: String, CodingKey {
+        case artworkURL = "artwork_url"
+        case duration
+        case fullDuration = "full_duration"
+        case genre
+        case id
+        case likesCount = "likes_count"
+        case media
+        case permalinkURL = "permalink_url"
+        case playbackCount = "playback_count"
+        case publisherMetadata = "publisher_metadata"
+        case releaseDate = "release_date"
+        case tagList = "tag_list"
+        case title
+        case trackAuthorization = "track_authorization"
+        case urn
+        case user
+    }
+}
+
+private struct SoundCloudPublisherMetadataDTO: Decodable {
+    let albumTitle: String?
+    let artist: String?
+    let releaseTitle: String?
+
+    enum CodingKeys: String, CodingKey {
+        case albumTitle = "album_title"
+        case artist
+        case releaseTitle = "release_title"
+    }
+}
+
+private struct SoundCloudUserDTO: Decodable {
+    let avatarURL: String?
+    let permalinkURL: String?
+    let urn: String?
+    let username: String?
+
+    enum CodingKeys: String, CodingKey {
+        case avatarURL = "avatar_url"
+        case permalinkURL = "permalink_url"
+        case urn
+        case username
+    }
+}
+
+private struct SoundCloudMediaDTO: Decodable {
+    let transcodings: [SoundCloudTranscodingDTO]
+}
+
+private struct SoundCloudTranscodingDTO: Decodable {
+    let format: SoundCloudTranscodingFormatDTO?
+    let isLegacyTranscoding: Bool?
+    let preset: String?
+    let url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case format
+        case isLegacyTranscoding = "is_legacy_transcoding"
+        case preset
+        case url
+    }
+}
+
+private struct SoundCloudTranscodingFormatDTO: Decodable {
+    let mimeType: String?
+    let protocolName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case mimeType = "mime_type"
+        case protocolName = "protocol"
+    }
 }
 
 private struct SoundCloudSearchResponse: Decodable {
