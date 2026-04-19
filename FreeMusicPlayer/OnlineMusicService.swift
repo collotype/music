@@ -2597,6 +2597,21 @@ final class OnlineMusicService {
         operation: @escaping @Sendable (String) async throws -> T
     ) async throws -> T {
         var attemptedClientIDs: Set<String> = []
+        var networkRetryCount = 0
+        let maxNetworkRetries = 2
+
+        func shouldRetryNetworkError(_ error: Error) -> Bool {
+            guard let serviceError = error as? OnlineMusicServiceError else {
+                return false
+            }
+
+            switch serviceError {
+            case .networkFailure, .timedOut:
+                return true
+            default:
+                return false
+            }
+        }
 
         for clientID in await initialSoundCloudClientIDs() {
             do {
@@ -2605,6 +2620,11 @@ final class OnlineMusicService {
                 return result
             } catch {
                 guard isSoundCloudUnauthorizedError(error) else {
+                    if shouldRetryNetworkError(error), networkRetryCount < maxNetworkRetries {
+                        networkRetryCount += 1
+                        debugLog("\(operationName) network error for client_id \(maskedClientID(clientID)); retrying (\(networkRetryCount)/\(maxNetworkRetries))")
+                        continue
+                    }
                     throw error
                 }
 
@@ -2632,6 +2652,11 @@ final class OnlineMusicService {
                 return result
             } catch {
                 guard isSoundCloudUnauthorizedError(error) else {
+                    if shouldRetryNetworkError(error), networkRetryCount < maxNetworkRetries {
+                        networkRetryCount += 1
+                        debugLog("\(operationName) network error for discovered client_id \(maskedClientID(discoveredClientID)); retrying (\(networkRetryCount)/\(maxNetworkRetries))")
+                        continue
+                    }
                     throw error
                 }
 
@@ -2664,7 +2689,7 @@ final class OnlineMusicService {
             return false
         }
 
-        return message.contains("HTTP 401")
+        return message.contains("HTTP 401") || message.contains("HTTP 403")
     }
 
     private func cachedTemporaryFile(for sourceID: String) -> URL? {
@@ -2733,6 +2758,8 @@ final class OnlineMusicService {
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.setValue(soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
 
+        debugLog("SoundCloud request: \(url.absoluteString)")
+
         let data: Data
         let response: URLResponse
 
@@ -2747,6 +2774,8 @@ final class OnlineMusicService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw OnlineMusicServiceError.networkFailure("The online provider returned an invalid response.")
         }
+
+        debugLog("Response status: \(httpResponse.statusCode)")
 
         guard (200...299).contains(httpResponse.statusCode) else {
             throw OnlineMusicServiceError.networkFailure(
