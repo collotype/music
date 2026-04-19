@@ -955,89 +955,53 @@ final class OnlineMusicService {
     }
 
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
-        let clientIDs = [
-            "9ec7d0f1b7a64d9b8f2c1e3a4b5c6d7e",
-            "4f8c2a9e1d3b7f6a5c0e8d2b1a9f7c6d",
-            "b71d3f5c9a2e4d6f8c1b0a7e5d3f9c2a"
-        ]
-
         var lastError: Error?
+        var refreshedClientID = false
 
-        for clientID in clientIDs {
-            self.debugLog("Trying client_id: \(self.maskedClientID(clientID))")
-
-            var components = URLComponents(url: self.soundCloudSearchURL, resolvingAgainstBaseURL: false)
-            components?.queryItems = [
-                URLQueryItem(name: "q", value: query),
-                URLQueryItem(name: "client_id", value: clientID),
-                URLQueryItem(name: "limit", value: "20"),
-                URLQueryItem(name: "offset", value: "0")
-            ]
-
-            guard let requestURL = components?.url else {
-                lastError = OnlineMusicServiceError.networkFailure("SoundCloud search URL could not be created.")
-                self.debugLog("SC error: SoundCloud search URL could not be created.")
-                continue
-            }
-
-            self.debugLog("SC URL: \(requestURL.absoluteString)")
-
-            var request = URLRequest(url: requestURL)
-            request.setValue(self.browserUserAgent, forHTTPHeaderField: "User-Agent")
-            request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-            request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-            request.setValue(self.soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
+        for attempt in 0..<2 {
+            let clientID: String
 
             do {
-                let (data, response) = try await self.session.data(for: request)
-
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    lastError = OnlineMusicServiceError.networkFailure("The online provider returned an invalid response.")
-                    self.debugLog("SC error: The online provider returned an invalid response.")
-                    continue
-                }
-
-                self.debugLog("SC status: \(httpResponse.statusCode)")
-
-                if httpResponse.statusCode == 401 {
-                    lastError = OnlineMusicServiceError.networkFailure("The SoundCloud provider returned HTTP 401.")
-                    continue
-                }
-
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    lastError = OnlineMusicServiceError.networkFailure("The SoundCloud provider returned HTTP \(httpResponse.statusCode).")
-                    continue
-                }
-
-                do {
-                    let response = try self.decoder.decode(SoundCloudSearchResponse.self, from: data)
-                    let tracks = self.deduplicatedTrackResults(
-                        response.collection.compactMap { self.makeOnlineTrackResult(from: $0) }
-                    )
-                    let directAlbums = try await self.searchReleasesViaSoundCloud(query: query, clientID: clientID)
-                    let results = self.makeSoundCloudSearchResults(
-                        from: tracks,
-                        directAlbumMatches: directAlbums,
-                        query: query
-                    )
-                    await self.soundCloudRuntimeState.setClientID(clientID)
-                    self.logMappedResultCounts(provider: .soundcloud, results: results)
-                    self.debugLog("Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)")
-
-                    guard !results.isEmpty else {
-                        throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
-                    }
-
-                    return results
-                } catch {
-                    lastError = error
-                    self.debugLog("SC error: \(error.localizedDescription)")
-                    continue
-                }
+                clientID = try await self.soundCloudClientID()
             } catch {
                 lastError = error
                 self.debugLog("SC error: \(error.localizedDescription)")
-                continue
+                throw error
+            }
+
+            self.debugLog("Using client_id: \(self.maskedClientID(clientID))")
+
+            do {
+                let tracks = try await self.searchTracksViaSoundCloud(
+                    query: query,
+                    clientID: clientID,
+                    limit: 20
+                )
+                let results = self.makeSoundCloudSearchResults(
+                    from: tracks,
+                    directAlbumMatches: [],
+                    query: query
+                )
+
+                await self.soundCloudRuntimeState.setClientID(clientID)
+                self.logMappedResultCounts(provider: .soundcloud, results: results)
+                self.debugLog("Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)")
+
+                guard !results.isEmpty else {
+                    throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
+                }
+
+                return results
+            } catch {
+                lastError = error
+                self.debugLog("SC error: \(error.localizedDescription)")
+
+                guard !refreshedClientID, self.isSoundCloudUnauthorizedError(error) else {
+                    throw error
+                }
+
+                refreshedClientID = true
+                await self.soundCloudRuntimeState.invalidateClientID(clientID)
             }
         }
 
@@ -2611,6 +2575,7 @@ final class OnlineMusicService {
             return cachedClientID
         }
 
+        debugLog("Fetching new SoundCloud client_id")
         let discoveredClientID = try await discoverSoundCloudClientID(excluding: [])
         await soundCloudRuntimeState.setClientID(discoveredClientID)
         return discoveredClientID
@@ -2623,21 +2588,7 @@ final class OnlineMusicService {
             candidateIDs.append(cachedClientID)
         }
 
-        if let configuredClientID = Bundle.main.object(forInfoDictionaryKey: "SoundCloudClientID") as? String,
-           let cleanedConfiguredClientID = cleanedText(configuredClientID) {
-            candidateIDs.append(cleanedConfiguredClientID)
-        }
-
-        candidateIDs.append(contentsOf: bundledFallbackClientIDs)
-
-        let uniqueCandidates = orderedUniqueValues(candidateIDs.compactMap { self.cleanedText($0) })
-        var filteredCandidates: [String] = []
-
-        for clientID in uniqueCandidates where !(await soundCloudRuntimeState.isClientIDInvalid(clientID)) {
-            filteredCandidates.append(clientID)
-        }
-
-        return filteredCandidates
+        return orderedUniqueValues(candidateIDs.compactMap { self.cleanedText($0) })
     }
 
     private func discoverSoundCloudClientID(excluding excludedClientIDs: Set<String>) async throws -> String {
@@ -2842,7 +2793,7 @@ final class OnlineMusicService {
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
         request.setValue(soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
 
-        debugLog("SoundCloud request: \(url.absoluteString)")
+        debugLog("SC URL: \(url.absoluteString)")
 
         let data: Data
         let response: URLResponse
@@ -2860,7 +2811,7 @@ final class OnlineMusicService {
             throw OnlineMusicServiceError.networkFailure("The online provider returned an invalid response.")
         }
 
-        debugLog("Response status: \(httpResponse.statusCode)")
+        debugLog("Status: \(httpResponse.statusCode)")
 
         guard (200...299).contains(httpResponse.statusCode) else {
             throw OnlineMusicServiceError.networkFailure(
