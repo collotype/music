@@ -955,23 +955,10 @@ final class OnlineMusicService {
     }
 
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
-        var lastError: Error?
-        var refreshedClientID = false
+        do {
+            return try await withSoundCloudClientIDRetry(operationName: "SoundCloud search") { clientID in
+                self.debugLog("Using client_id: \(self.maskedClientID(clientID))")
 
-        for attempt in 0..<2 {
-            let clientID: String
-
-            do {
-                clientID = try await self.soundCloudClientID()
-            } catch {
-                lastError = error
-                self.debugLog("SC error: \(error.localizedDescription)")
-                throw error
-            }
-
-            self.debugLog("Using client_id: \(self.maskedClientID(clientID))")
-
-            do {
                 let tracks = try await self.searchTracksViaSoundCloud(
                     query: query,
                     clientID: clientID,
@@ -983,33 +970,21 @@ final class OnlineMusicService {
                     query: query
                 )
 
-                await self.soundCloudRuntimeState.setClientID(clientID)
                 self.logMappedResultCounts(provider: .soundcloud, results: results)
-                self.debugLog("Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)")
+                self.debugLog(
+                    "Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
+                )
 
                 guard !results.isEmpty else {
                     throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
                 }
 
                 return results
-            } catch {
-                lastError = error
-                self.debugLog("SC error: \(error.localizedDescription)")
-
-                guard !refreshedClientID, self.isSoundCloudUnauthorizedError(error) else {
-                    throw error
-                }
-
-                refreshedClientID = true
-                await self.soundCloudRuntimeState.invalidateClientID(clientID)
             }
+        } catch {
+            self.debugLog("SC error: \(error.localizedDescription)")
+            throw error
         }
-
-        if let lastError {
-            throw lastError
-        }
-
-        throw OnlineMusicServiceError.unavailableSources
     }
 
     private func executeSoundCloudSearch(query: String, clientID: String) async throws -> OnlineSearchResults {
@@ -2576,9 +2551,16 @@ final class OnlineMusicService {
         }
 
         debugLog("Fetching new SoundCloud client_id")
-        let discoveredClientID = try await discoverSoundCloudClientID(excluding: [])
-        await soundCloudRuntimeState.setClientID(discoveredClientID)
-        return discoveredClientID
+        do {
+            let discoveredClientID = try await discoverSoundCloudClientID(excluding: [])
+            await soundCloudRuntimeState.setClientID(discoveredClientID)
+            return discoveredClientID
+        } catch {
+            debugLog("SC error: \(error.localizedDescription)")
+            throw OnlineMusicServiceError.networkFailure(
+                "SoundCloud client_id could not be refreshed."
+            )
+        }
     }
 
     private func initialSoundCloudClientIDs() async -> [String] {
@@ -2605,13 +2587,20 @@ final class OnlineMusicService {
             return inlineClientID
         }
 
-        let assetURLs = orderedUniqueValues(
-            extractAllMatches(in: homepageHTML, pattern: soundCloudAssetPattern)
+        let assetMatches = orderedUniqueValues(
+            extractAllMatches(in: homepageHTML, pattern: soundCloudAssetPattern) +
+            extractAllMatches(in: homepageHTML, pattern: #"/assets/[^"']+\.js"#)
         )
 
-        for assetURLString in assetURLs.prefix(12) {
-            guard let assetURL = URL(string: assetURLString) else { continue }
+        let assetURLs = assetMatches.compactMap { assetMatch -> URL? in
+            if let absoluteURL = URL(string: assetMatch), absoluteURL.scheme != nil {
+                return absoluteURL
+            }
 
+            return URL(string: assetMatch, relativeTo: soundCloudHomepageURL)?.absoluteURL
+        }
+
+        for assetURL in assetURLs.prefix(12) {
             do {
                 let assetText = try await fetchText(from: assetURL, accept: "*/*")
                 if let extractedClientID = extractFirstMatch(in: assetText, patterns: soundCloudClientIDPatterns),
@@ -2631,75 +2620,39 @@ final class OnlineMusicService {
         operationName: String,
         operation: @escaping @Sendable (String) async throws -> T
     ) async throws -> T {
-        var attemptedClientIDs: Set<String> = []
-        var networkRetryCount = 0
-        let maxNetworkRetries = 2
+        var lastError: Error?
 
-        func shouldRetryNetworkError(_ error: Error) -> Bool {
-            guard let serviceError = error as? OnlineMusicServiceError else {
-                return false
+        for retryIndex in 0..<2 {
+            let clientID: String
+
+            do {
+                clientID = try await soundCloudClientID()
+            } catch {
+                lastError = error
+                throw error
             }
 
-            switch serviceError {
-            case .networkFailure, .timedOut:
-                return true
-            default:
-                return false
-            }
-        }
-
-        for clientID in await initialSoundCloudClientIDs() {
             do {
                 let result = try await operation(clientID)
                 await soundCloudRuntimeState.setClientID(clientID)
                 return result
             } catch {
-                guard isSoundCloudUnauthorizedError(error) else {
-                    if shouldRetryNetworkError(error), networkRetryCount < maxNetworkRetries {
-                        networkRetryCount += 1
-                        debugLog("\(operationName) network error for client_id \(maskedClientID(clientID)); retrying (\(networkRetryCount)/\(maxNetworkRetries))")
-                        continue
-                    }
+                lastError = error
+
+                guard retryIndex == 0, isSoundCloudUnauthorizedError(error) else {
                     throw error
                 }
 
-                attemptedClientIDs.insert(clientID)
                 await soundCloudRuntimeState.invalidateClientID(clientID)
-                debugLog("\(operationName) received HTTP 401 for client_id \(maskedClientID(clientID)); retrying")
+                debugLog("\(operationName) received HTTP 401 for client_id \(maskedClientID(clientID)); refreshing")
             }
         }
 
-        while true {
-            let discoveredClientID: String
-
-            do {
-                discoveredClientID = try await discoverSoundCloudClientID(excluding: attemptedClientIDs)
-            } catch {
-                if let lastUnauthorizedClientID = attemptedClientIDs.sorted().last {
-                    debugLog("\(operationName) could not refresh client_id after invalidating \(maskedClientID(lastUnauthorizedClientID))")
-                }
-                throw error
-            }
-
-            do {
-                let result = try await operation(discoveredClientID)
-                await soundCloudRuntimeState.setClientID(discoveredClientID)
-                return result
-            } catch {
-                guard isSoundCloudUnauthorizedError(error) else {
-                    if shouldRetryNetworkError(error), networkRetryCount < maxNetworkRetries {
-                        networkRetryCount += 1
-                        debugLog("\(operationName) network error for discovered client_id \(maskedClientID(discoveredClientID)); retrying (\(networkRetryCount)/\(maxNetworkRetries))")
-                        continue
-                    }
-                    throw error
-                }
-
-                attemptedClientIDs.insert(discoveredClientID)
-                await soundCloudRuntimeState.invalidateClientID(discoveredClientID)
-                debugLog("\(operationName) received HTTP 401 for discovered client_id \(maskedClientID(discoveredClientID)); refreshing")
-            }
+        if let lastError {
+            throw lastError
         }
+
+        throw OnlineMusicServiceError.unavailableSources
     }
 
     private func isUsableSoundCloudClientID(
