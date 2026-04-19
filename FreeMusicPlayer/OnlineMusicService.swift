@@ -490,6 +490,12 @@ final class OnlineMusicService {
     private let spotifyRuntimeState = SpotifyRuntimeState()
     private let resolvedPlaybackStreamCache = ResolvedPlaybackStreamCache()
 
+    private func debugLog(_ message: String) {
+#if DEBUG
+        print("[OnlineMusicService] \(message)")
+#endif
+    }
+
     private let soundCloudAPIBaseURL = URL(string: "https://api-v2.soundcloud.com")!
     private let soundCloudHomepageURL = URL(string: "https://soundcloud.com")!
     private let soundCloudSearchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
