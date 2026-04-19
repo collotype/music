@@ -585,7 +585,7 @@ final class OnlineMusicService {
         }
 
         let profile = try await withSoundCloudClientIDRetry(operationName: "SoundCloud artist profile") { clientID in
-            try await fetchSoundCloudUserProfile(
+            try await self.fetchSoundCloudUserProfile(
                 providerArtistID: providerArtistID,
                 clientID: clientID
             )
@@ -608,25 +608,25 @@ final class OnlineMusicService {
         }
 
         let finalTracks = try await withSoundCloudClientIDRetry(operationName: "SoundCloud artist tracks") { clientID in
-            debugLog(
-                "Provider start: SoundCloud artist tracks for \(artist.artistName) [\(providerArtistID)] using client_id \(maskedClientID(clientID))"
+            self.debugLog(
+                "Provider start: SoundCloud artist tracks for \(artist.artistName) [\(providerArtistID)] using client_id \(self.maskedClientID(clientID))"
             )
 
             let fetchedTracks: [OnlineTrackResult]
             do {
-                fetchedTracks = try await fetchTracksViaSoundCloudArtist(
+                fetchedTracks = try await self.fetchTracksViaSoundCloudArtist(
                     providerArtistID: providerArtistID,
                     clientID: clientID
                 )
             } catch {
-                debugLog("SoundCloud artist tracks endpoint failed for \(providerArtistID): \(error.localizedDescription)")
-                fetchedTracks = try await fetchTracksViaSoundCloudArtistSearch(
+                self.debugLog("SoundCloud artist tracks endpoint failed for \(providerArtistID): \(error.localizedDescription)")
+                fetchedTracks = try await self.fetchTracksViaSoundCloudArtistSearch(
                     artist: artist,
                     clientID: clientID
                 )
             }
 
-            return Array(sortedPopularTracks(fetchedTracks).prefix(soundCloudArtistTrackLimit))
+            return Array(self.sortedPopularTracks(fetchedTracks).prefix(self.soundCloudArtistTrackLimit))
         }
 
         debugLog("Provider finish: SoundCloud artist \(artist.artistName) with tracks=\(finalTracks.count)")
@@ -652,12 +652,12 @@ final class OnlineMusicService {
         }
 
         let mergedReleases = try await withSoundCloudClientIDRetry(operationName: "SoundCloud artist releases") { clientID in
-            async let albums = fetchSoundCloudReleases(
+            async let albums = self.fetchSoundCloudReleases(
                 userID: numericUserID,
                 collectionPath: "albums",
                 clientID: clientID
             )
-            async let playlists = fetchSoundCloudReleases(
+            async let playlists = self.fetchSoundCloudReleases(
                 userID: numericUserID,
                 collectionPath: "playlists_without_albums",
                 clientID: clientID
@@ -684,20 +684,20 @@ final class OnlineMusicService {
                     throw OnlineMusicServiceError.unsupportedSource("Release lookup requires fallback search.")
                 }
 
-                let playlist = try await fetchSoundCloudPlaylist(
+                let playlist = try await self.fetchSoundCloudPlaylist(
                     releaseID: release.providerReleaseID,
                     clientID: clientID
                 )
 
-                let hydratedTracks = await hydrateReleaseTracks(from: playlist, clientID: clientID)
-                return makeOnlineReleasePageData(
+                let hydratedTracks = await self.hydrateReleaseTracks(from: playlist, clientID: clientID)
+                return self.makeOnlineReleasePageData(
                     from: playlist,
                     fallbackRoute: release,
                     tracks: hydratedTracks
                 )
             } catch {
-                debugLog("SoundCloud release detail fallback for \(release.providerReleaseID): \(error.localizedDescription)")
-                return try await fetchFallbackSoundCloudReleaseDetail(
+                self.debugLog("SoundCloud release detail fallback for \(release.providerReleaseID): \(error.localizedDescription)")
+                return try await self.fetchFallbackSoundCloudReleaseDetail(
                     for: release,
                     clientID: clientID
                 )
@@ -726,21 +726,21 @@ final class OnlineMusicService {
 
         if let chosenCandidate = playbackCandidates.first {
             let resolvedStream = try await withSoundCloudClientIDRetry(operationName: "SoundCloud stream resolution") { clientID in
-                debugLog("Resolution start for \(result.providerTrackURN)")
+                self.debugLog("Resolution start for \(result.providerTrackURN)")
 
                 if chosenCandidate.kind == .progressiveMP3 {
-                    debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue) (SoundCloud fallback)")
+                    self.debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue) (SoundCloud fallback)")
                 } else {
-                    debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
+                    self.debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
                 }
 
-                let finalURL = try await resolveSoundCloudStreamURL(
+                let finalURL = try await self.resolveSoundCloudStreamURL(
                     for: chosenCandidate,
                     trackAuthorization: result.trackAuthorization,
                     clientID: clientID
                 )
 
-                debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
+                self.debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
 
                 return ResolvedAudioStream(
                     url: finalURL,
@@ -812,27 +812,27 @@ final class OnlineMusicService {
         }
 
         return try await withSoundCloudClientIDRetry(operationName: "SoundCloud download") { clientID in
-            for attempt in 1...offlineDownloadAttemptCount {
-                debugLog("Resolution start for \(result.providerTrackURN) [attempt \(attempt)/\(offlineDownloadAttemptCount)]")
-                debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
+            for attempt in 1...self.offlineDownloadAttemptCount {
+                self.debugLog("Resolution start for \(result.providerTrackURN) [attempt \(attempt)/\(self.offlineDownloadAttemptCount)]")
+                self.debugLog("Chosen stream URL type: \(chosenCandidate.kind.rawValue)")
 
-                let finalURL = try await resolveSoundCloudStreamURL(
+                let finalURL = try await self.resolveSoundCloudStreamURL(
                     for: chosenCandidate,
                     trackAuthorization: result.trackAuthorization,
                     clientID: clientID
                 )
 
                 if finalURL.pathExtension.lowercased() == "m3u8" || finalURL.lastPathComponent.lowercased().hasSuffix(".m3u8") {
-                    debugLog("Skipping HLS stream (.m3u8) for \(result.providerTrackURN)")
+                    self.debugLog("Skipping HLS stream (.m3u8) for \(result.providerTrackURN)")
                     throw OnlineMusicServiceError.unsupportedSource(
                         "This track is only available as a stream and cannot be downloaded."
                     )
                 }
 
                 if let urlQuery = finalURL.query, urlQuery.contains("m3u8") {
-                    debugLog("Skipping m3u8 query URL for \(result.providerTrackURN)")
-                    if attempt < offlineDownloadAttemptCount {
-                        removeTemporaryAudioFiles(for: result.id)
+                    self.debugLog("Skipping m3u8 query URL for \(result.providerTrackURN)")
+                    if attempt < self.offlineDownloadAttemptCount {
+                        self.removeTemporaryAudioFiles(for: result.id)
                         continue
                     }
                     throw OnlineMusicServiceError.unsupportedSource(
@@ -840,15 +840,15 @@ final class OnlineMusicService {
                     )
                 }
 
-                debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
-                debugLog("Download start for \(result.providerTrackURN) [attempt \(attempt)/\(offlineDownloadAttemptCount)]: \(finalURL.absoluteString)")
+                self.debugLog("Resolution end for \(result.providerTrackURN): \(finalURL.absoluteString)")
+                self.debugLog("Download start for \(result.providerTrackURN) [attempt \(attempt)/\(self.offlineDownloadAttemptCount)]: \(finalURL.absoluteString)")
 
                 var request = URLRequest(url: finalURL)
                 request.cachePolicy = .reloadIgnoringLocalCacheData
-                request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+                request.setValue(self.browserUserAgent, forHTTPHeaderField: "User-Agent")
                 request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
                 request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
-                request.setValue(soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
+                request.setValue(self.soundCloudHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
 
                 if attempt > 1 {
                     request.setValue("no-cache, no-store, max-age=0", forHTTPHeaderField: "Cache-Control")
@@ -860,9 +860,9 @@ final class OnlineMusicService {
                 let response: URLResponse
 
                 do {
-                    (temporaryDownloadURL, response) = try await downloadViaTask(request: request)
+                    (temporaryDownloadURL, response) = try await self.downloadViaTask(request: request)
                 } catch {
-                    debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
+                    self.debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
                     throw OnlineMusicServiceError.networkFailure(
                         "Audio download failed because the SoundCloud file request could not be completed."
                     )
@@ -875,15 +875,15 @@ final class OnlineMusicService {
                     )
                 }
 
-                let fileExtension = preferredFileExtension(
+                let fileExtension = self.preferredFileExtension(
                     mimeType: response.mimeType ?? chosenCandidate.mimeType,
                     resolvedURL: finalURL
                 )
                 let destinationURL = AppFileManager.shared.temporaryAudioURL(for: result.id, fileExtension: fileExtension)
 
                 do {
-                    removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
-                    try fileManager.moveItem(at: temporaryDownloadURL, to: destinationURL)
+                    self.removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
+                    try self.fileManager.moveItem(at: temporaryDownloadURL, to: destinationURL)
                 } catch {
                     throw OnlineMusicServiceError.tempFileWriteFailure(
                         "The downloaded SoundCloud audio could not be stored in temporary app storage."
@@ -894,21 +894,21 @@ final class OnlineMusicService {
                     from: destinationURL,
                     expectedDuration: result.duration,
                     response: response,
-                    fileManager: fileManager
+                    fileManager: self.fileManager
                 )
-                logDownloadedAudioValidation(validation, for: result, context: "Download attempt \(attempt)")
-                debugLog("Temp file path: \(destinationURL.path)")
+                self.logDownloadedAudioValidation(validation, for: result, context: "Download attempt \(attempt)")
+                self.debugLog("Temp file path: \(destinationURL.path)")
 
                 if validation.passedValidation {
                     return destinationURL
                 }
 
-                debugLog(
+                self.debugLog(
                     "Retry trigger for \(result.providerTrackURN): attempt \(attempt) produced \(validation.rejectionReason ?? "invalid-audio")"
                 )
-                removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
+                self.removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
 
-                if attempt == offlineDownloadAttemptCount {
+                if attempt == self.offlineDownloadAttemptCount {
                     throw OnlineMusicServiceError.extractionFailure(
                         "SoundCloud returned an incomplete or unreadable audio file, so the track could not be saved reliably."
                     )
@@ -936,7 +936,7 @@ final class OnlineMusicService {
         }
 
         let rawTrack = try await withSoundCloudClientIDRetry(operationName: "SoundCloud track detail") { clientID in
-            try await fetchSoundCloudTrack(trackID: numericTrackID, clientID: clientID)
+            try await self.fetchSoundCloudTrack(trackID: numericTrackID, clientID: clientID)
         }
 
         guard let result = makeOnlineTrackResult(from: rawTrack) else {
@@ -951,9 +951,9 @@ final class OnlineMusicService {
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
         try await withSoundCloudClientIDRetry(operationName: "SoundCloud search") { clientID in
             do {
-                return try await executeSoundCloudSearch(query: query, clientID: clientID)
+                return try await self.executeSoundCloudSearch(query: query, clientID: clientID)
             } catch {
-                debugLog("Provider error: SoundCloud using client_id \(maskedClientID(clientID)) - \(error.localizedDescription)")
+                self.debugLog("Provider error: SoundCloud using client_id \(self.maskedClientID(clientID)) - \(error.localizedDescription)")
                 throw error
             }
         }
@@ -1020,7 +1020,7 @@ final class OnlineMusicService {
         }
 
         return deduplicatedTrackResults(
-            response.collection.compactMap { makeOnlineTrackResult(from: $0) }
+            response.collection.compactMap { self.makeOnlineTrackResult(from: $0) }
         )
     }
 
@@ -1089,7 +1089,7 @@ final class OnlineMusicService {
         }
 
         return deduplicatedTrackResults(
-            response.collection.compactMap { makeOnlineTrackResult(from: $0) }
+            response.collection.compactMap { self.makeOnlineTrackResult(from: $0) }
         )
     }
 
@@ -1145,7 +1145,7 @@ final class OnlineMusicService {
         }
 
         return deduplicatedAlbumResults(
-            response.collection.compactMap { makeOnlineAlbumResult(from: $0) }
+            response.collection.compactMap { self.makeOnlineAlbumResult(from: $0) }
         )
     }
 
@@ -1241,16 +1241,16 @@ final class OnlineMusicService {
 
         let results = OnlineSearchResults(
             tracks: deduplicatedTrackResults(
-                response.tracks?.items.compactMap { makeOnlineTrackResult(from: $0) } ?? []
+                response.tracks?.items.compactMap { self.makeOnlineTrackResult(from: $0) } ?? []
             ),
             artists: deduplicatedArtistResults(
-                response.artists?.items.compactMap { makeOnlineArtistResult(from: $0) } ?? []
+                response.artists?.items.compactMap { self.makeOnlineArtistResult(from: $0) } ?? []
             ),
             albums: deduplicatedAlbumResults(
-                response.albums?.items.compactMap { makeOnlineAlbumResult(from: $0) } ?? []
+                response.albums?.items.compactMap { self.makeOnlineAlbumResult(from: $0) } ?? []
             ),
             playlists: deduplicatedPlaylistResults(
-                response.playlists?.items.compactMap { makeOnlinePlaylistResult(from: $0) } ?? []
+                response.playlists?.items.compactMap { self.makeOnlinePlaylistResult(from: $0) } ?? []
             )
         )
 
@@ -1574,7 +1574,7 @@ final class OnlineMusicService {
     }
 
     private func logSpotifyConfigurationDiagnostics(_ status: SpotifyConfigurationStatus) {
-        let loadedClientID = status.clientID.map(maskedClientID) ?? "missing"
+        let loadedClientID = status.clientID.map { self.maskedClientID($0) } ?? "missing"
         let loadedRedirectURI = status.explicitRedirectURI ?? status.defaultRedirectURI
         let expectedURLScheme = status.callbackURLScheme ?? "missing"
         let providerState = status.isEnabled ? "enabled" : "disabled"
@@ -1638,7 +1638,7 @@ final class OnlineMusicService {
 
         let schemes = urlTypes
             .flatMap { ($0["CFBundleURLSchemes"] as? [String]) ?? [] }
-            .compactMap(cleanedText)
+            .compactMap { self.cleanedText($0) }
             .map { $0.lowercased() }
 
         return orderedUniqueValues(schemes)
@@ -1753,23 +1753,23 @@ final class OnlineMusicService {
 
     private func makeSoundCloudArtistResults(from tracks: [OnlineTrackResult]) -> [OnlineArtistResult] {
         let groupedResults = Dictionary(grouping: tracks) { track in
-            cleanedText(track.providerArtistID) ??
+            self.cleanedText(track.providerArtistID) ??
                 track.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }
 
         return groupedResults.compactMap { artistIdentifier, groupedTracks in
-            guard let representativeTrack = groupedTracks.first(where: { cleanedText($0.artistImageURL) != nil }) ??
-                    groupedTracks.first(where: hasRemoteArtwork) ??
+            guard let representativeTrack = groupedTracks.first(where: { self.cleanedText($0.artistImageURL) != nil }) ??
+                    groupedTracks.first(where: { self.hasRemoteArtwork($0) }) ??
                     groupedTracks.first,
-                  let artistName = cleanedText(representativeTrack.artist),
-                  let webpageURL = cleanedText(representativeTrack.artistWebpageURL) ??
-                    cleanedText(representativeTrack.webpageURL) else {
+                  let artistName = self.cleanedText(representativeTrack.artist),
+                  let webpageURL = self.cleanedText(representativeTrack.artistWebpageURL) ??
+                    self.cleanedText(representativeTrack.webpageURL) else {
                 return nil
             }
 
             return OnlineArtistResult(
                 provider: .soundcloud,
-                providerArtistID: cleanedText(representativeTrack.providerArtistID) ?? artistIdentifier,
+                providerArtistID: self.cleanedText(representativeTrack.providerArtistID) ?? artistIdentifier,
                 name: artistName,
                 imageURL: representativeTrack.artistImageURL ?? representativeTrack.coverArtURL,
                 webpageURL: webpageURL
@@ -1782,7 +1782,7 @@ final class OnlineMusicService {
 
     private func makeSoundCloudAlbumResults(from tracks: [OnlineTrackResult]) -> [OnlineAlbumResult] {
         let albumTracks = tracks.filter { track in
-            cleanedText(track.album) != nil
+            self.cleanedText(track.album) != nil
         }
 
         let groupedResults = Dictionary(grouping: albumTracks) { track in
@@ -1792,10 +1792,10 @@ final class OnlineMusicService {
         }
 
         return groupedResults.compactMap { groupedID, groupedTracks in
-            guard let representativeTrack = groupedTracks.first(where: hasRemoteArtwork) ?? groupedTracks.first,
-                  let albumTitle = cleanedText(representativeTrack.album),
-                  let artistName = cleanedText(representativeTrack.artist),
-                  let webpageURL = cleanedText(representativeTrack.webpageURL) else {
+            guard let representativeTrack = groupedTracks.first(where: { self.hasRemoteArtwork($0) }) ?? groupedTracks.first,
+                  let albumTitle = self.cleanedText(representativeTrack.album),
+                  let artistName = self.cleanedText(representativeTrack.artist),
+                  let webpageURL = self.cleanedText(representativeTrack.webpageURL) else {
                 return nil
             }
 
@@ -1877,7 +1877,7 @@ final class OnlineMusicService {
         }
 
         return deduplicatedAlbumResults(
-            response.collection.compactMap { makeOnlineAlbumResult(from: $0) }
+            response.collection.compactMap { self.makeOnlineAlbumResult(from: $0) }
         )
     }
 
@@ -1900,13 +1900,13 @@ final class OnlineMusicService {
         let normalizedArtistName = normalizedSearchText(release.artistName)
 
         let albumMatchedTracks = searchResults.filter { track in
-            let normalizedAlbum = normalizedSearchText(track.album ?? "")
+            let normalizedAlbum = self.normalizedSearchText(track.album ?? "")
             guard !normalizedAlbum.isEmpty else { return false }
             return normalizedAlbum == normalizedReleaseTitle
         }
 
         let artistMatchedTracks = albumMatchedTracks.filter { track in
-            let normalizedTrackArtist = normalizedSearchText(track.artist)
+            let normalizedTrackArtist = self.normalizedSearchText(track.artist)
             guard !normalizedArtistName.isEmpty else { return true }
             return normalizedTrackArtist == normalizedArtistName || normalizedTrackArtist.contains(normalizedArtistName)
         }
@@ -1943,8 +1943,8 @@ final class OnlineMusicService {
         query: String
     ) -> [OnlineAlbumResult] {
         let sortedDirectMatches = directMatches.sorted { left, right in
-            let leftRank = albumSearchPriority(for: left, query: query)
-            let rightRank = albumSearchPriority(for: right, query: query)
+            let leftRank = self.albumSearchPriority(for: left, query: query)
+            let rightRank = self.albumSearchPriority(for: right, query: query)
 
             if leftRank != rightRank {
                 return leftRank < rightRank
@@ -2084,7 +2084,7 @@ final class OnlineMusicService {
             return nil
         }
 
-        let streams = (track.media?.transcodings ?? []).compactMap { makeStreamCandidate(from: $0) }
+        let streams = (track.media?.transcodings ?? []).compactMap { self.makeStreamCandidate(from: $0) }
         guard !streams.isEmpty else {
             return nil
         }
@@ -2129,7 +2129,7 @@ final class OnlineMusicService {
             return nil
         }
 
-        let artistNames = track.artists.compactMap { cleanedText($0.name) }
+        let artistNames = track.artists.compactMap { self.cleanedText($0.name) }
         let albumName = cleanedText(track.album?.name)
         let artworkURL = spotifyArtworkURL(from: track.album?.images)
         let webpageURL = cleanedText(track.externalURLs?.spotify) ??
@@ -2184,7 +2184,7 @@ final class OnlineMusicService {
             return nil
         }
 
-        let primaryArtist = album.artists.compactMap { cleanedText($0.name) }.first ?? "Unknown Artist"
+        let primaryArtist = album.artists.compactMap { self.cleanedText($0.name) }.first ?? "Unknown Artist"
         let webpageURL = cleanedText(album.externalURLs?.spotify) ??
             "https://open.spotify.com/album/\(albumID)"
 
@@ -2262,9 +2262,9 @@ final class OnlineMusicService {
             return []
         }
 
-        let orderedTrackKeys = rawTracks.compactMap { trackHydrationKey(from: $0) }
+        let orderedTrackKeys = rawTracks.compactMap { self.trackHydrationKey(from: $0) }
         guard !orderedTrackKeys.isEmpty else {
-            return deduplicatedTrackResults(rawTracks.compactMap { makeOnlineTrackResult(from: $0) })
+            return deduplicatedTrackResults(rawTracks.compactMap { self.makeOnlineTrackResult(from: $0) })
         }
 
         var resultsByKey: [String: OnlineTrackResult] = [:]
@@ -2363,7 +2363,7 @@ final class OnlineMusicService {
             (left.width ?? 0) > (right.width ?? 0)
         }
 
-        return sortedImages.compactMap { cleanedText($0.url) }.first
+        return sortedImages.compactMap { self.cleanedText($0.url) }.first
     }
 
     private func makeStreamCandidate(from transcoding: SoundCloudTranscoding) -> SoundCloudStreamCandidate? {
@@ -2540,7 +2540,7 @@ final class OnlineMusicService {
 
         candidateIDs.append(contentsOf: bundledFallbackClientIDs)
 
-        let uniqueCandidates = orderedUniqueValues(candidateIDs.compactMap(cleanedText))
+        let uniqueCandidates = orderedUniqueValues(candidateIDs.compactMap { self.cleanedText($0) })
         var filteredCandidates: [String] = []
 
         for clientID in uniqueCandidates where !(await soundCloudRuntimeState.isClientIDInvalid(clientID)) {
