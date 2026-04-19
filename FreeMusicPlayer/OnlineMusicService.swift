@@ -1022,6 +1022,7 @@ final class OnlineMusicService {
         do {
             response = try decoder.decode(SoundCloudSearchResponse.self, from: data)
         } catch {
+            debugLog("SC error: \(error.localizedDescription)")
             throw OnlineMusicServiceError.extractionFailure("SoundCloud search returned malformed JSON.")
         }
 
@@ -2766,6 +2767,7 @@ final class OnlineMusicService {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            debugLog("SC error: \(error.localizedDescription)")
             throw OnlineMusicServiceError.networkFailure(
                 "The SoundCloud request could not be completed."
             )
