@@ -2974,9 +2974,9 @@ private final class SoundCloudClient: @unchecked Sendable {
         var errorDescription: String? {
             switch self {
             case .unavailable:
-                return "SoundCloud is temporarily unavailable."
+                return "SoundCloud search is temporarily unavailable."
             case .unauthorized:
-                return "SoundCloud rejected the current client_id."
+                return "SoundCloud rejected the current search request."
             case .invalidResponse:
                 return "SoundCloud returned an invalid response."
             case .decodingFailed:
@@ -2993,16 +2993,8 @@ private final class SoundCloudClient: @unchecked Sendable {
 
     private let homepageURL = URL(string: "https://soundcloud.com")!
     private let searchURL = URL(string: "https://api-v2.soundcloud.com/search/tracks")!
+    private let searchPageURL = URL(string: "https://soundcloud.com/search")!
     private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-    private let clientIDPatterns = [
-        #"client_id:"([A-Za-z0-9]{8,})""#,
-        #"client_id\s*:\s*"([A-Za-z0-9]{8,})""#,
-        #"client_id\s*=\s*"([A-Za-z0-9]{8,})""#,
-    ]
-    private let assetPatterns = [
-        #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#,
-        #"/assets/[^"']+\.js"#,
-    ]
     private let iso8601DateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
@@ -3014,13 +3006,10 @@ private final class SoundCloudClient: @unchecked Sendable {
         return formatter
     }()
 
-    init(session: URLSession, logger: @escaping @Sendable (String) -> Void) {
+    init(session: URLSession, clientID: String? = nil, logger: @escaping @Sendable (String) -> Void) {
         self.session = session
+        self.clientID = clientID
         self.logger = logger
-    }
-
-    func fetchClientID() async throws -> String {
-        try await fetchClientID(forceRefresh: false)
     }
 
     func searchTracks(query: String) async throws -> [Track] {
@@ -3029,78 +3018,40 @@ private final class SoundCloudClient: @unchecked Sendable {
     }
 
     func searchOnlineTracks(query: String) async throws -> [OnlineTrackResult] {
-        var lastError: Error = SoundCloudError.unavailable
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return [] }
 
-        for attempt in 0..<2 {
-            let currentClientID = try await fetchClientID(forceRefresh: attempt > 0)
-            logger("Using client_id: \(maskedClientID(currentClientID))")
-
-            do {
-                let response = try await fetchSearchResponse(query: query, clientID: currentClientID)
-                return deduplicatedTrackResults(
-                    response.collection.compactMap { makeOnlineTrackResult(from: $0) }
-                )
-            } catch SoundCloudError.unauthorized {
-                lastError = SoundCloudError.unauthorized
-                invalidateClientID(currentClientID)
-                guard attempt == 0 else { break }
-            } catch {
-                lastError = error
-                throw error
+        do {
+            let apiTracks = try await searchTracksViaAPI(query: trimmedQuery)
+            if !apiTracks.isEmpty {
+                return apiTracks
             }
+        } catch {
+            logger("SC error: \(error.localizedDescription)")
         }
 
-        if let controlledError = lastError as? SoundCloudError {
-            throw controlledError == .unauthorized ? .unavailable : controlledError
+        let html = try await fetchSearchHTML(query: trimmedQuery)
+        let scrapedTracks = try parseTracksFromSearchHTML(html, query: trimmedQuery)
+        guard !scrapedTracks.isEmpty else {
+            throw SoundCloudError.unavailable
         }
 
-        throw SoundCloudError.unavailable
+        return deduplicatedTrackResults(scrapedTracks)
     }
 
-    private func fetchClientID(forceRefresh: Bool) async throws -> String {
-        if !forceRefresh, let cachedClientID = cachedClientID() {
-            return cachedClientID
-        }
-
-        logger("Fetching new SoundCloud client_id")
-
-        let homepageHTML = try await fetchText(
-            from: homepageURL,
-            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        )
-
-        if let inlineClientID = extractFirstMatch(in: homepageHTML, patterns: clientIDPatterns) {
-            storeClientID(inlineClientID)
-            return inlineClientID
-        }
-
-        let assetMatches = orderedUniqueValues(
-            assetPatterns.flatMap { extractAllMatches(in: homepageHTML, pattern: $0) }
-        )
-        let assetURLs = assetMatches.compactMap { resolveAssetURL(from: $0) }
-
-        for assetURL in assetURLs.prefix(12) {
-            do {
-                let assetText = try await fetchText(from: assetURL, accept: "*/*")
-                if let discoveredClientID = extractFirstMatch(in: assetText, patterns: clientIDPatterns) {
-                    storeClientID(discoveredClientID)
-                    return discoveredClientID
-                }
-            } catch {
-                logger("SC error: \(error.localizedDescription)")
-            }
-        }
-
-        throw SoundCloudError.unavailable
-    }
-
-    private func fetchSearchResponse(query: String, clientID: String) async throws -> SoundCloudSearchResponseDTO {
+    private func searchTracksViaAPI(query: String) async throws -> [OnlineTrackResult] {
         var components = URLComponents(url: searchURL, resolvingAgainstBaseURL: false)
-        components?.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "limit", value: "20")
         ]
+
+        if let clientID = cachedClientID() {
+            logger("Using client_id: \(maskedClientID(clientID))")
+            queryItems.append(URLQueryItem(name: "client_id", value: clientID))
+        }
+
+        components?.queryItems = queryItems
 
         guard let requestURL = components?.url else {
             throw SoundCloudError.unavailable
@@ -3109,25 +3060,123 @@ private final class SoundCloudClient: @unchecked Sendable {
         let data = try await fetchData(from: requestURL, accept: "application/json, text/plain, */*")
 
         do {
-            return try decoder.decode(SoundCloudSearchResponseDTO.self, from: data)
+            let response = try decoder.decode(SoundCloudSearchResponseDTO.self, from: data)
+            return deduplicatedTrackResults(
+                response.collection.compactMap { makeOnlineTrackResult(from: $0) }
+            )
         } catch {
             logger("SC error: \(error.localizedDescription)")
             throw SoundCloudError.decodingFailed
         }
     }
 
-    private func fetchText(from url: URL, accept: String) async throws -> String {
-        let data = try await fetchData(from: url, accept: accept)
+    private func fetchSearchHTML(query: String) async throws -> String {
+        var components = URLComponents(url: searchPageURL, resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "q", value: query)]
 
-        if let text = String(data: data, encoding: .utf8) {
-            return text
+        guard let requestURL = components?.url else {
+            throw SoundCloudError.unavailable
         }
 
-        if let text = String(data: data, encoding: .unicode) {
-            return text
+        let data = try await fetchData(
+            from: requestURL,
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
+
+        if let html = String(data: data, encoding: .utf8) {
+            return html
+        }
+
+        if let html = String(data: data, encoding: .unicode) {
+            return html
         }
 
         throw SoundCloudError.invalidResponse
+    }
+
+    private func parseTracksFromSearchHTML(_ html: String, query: String) throws -> [OnlineTrackResult] {
+        let hydrationTracks = parseHydrationTracks(from: html)
+        if !hydrationTracks.isEmpty {
+            return hydrationTracks
+        }
+
+        let noscriptTracks = parseNoscriptTracks(from: html, query: query)
+        if !noscriptTracks.isEmpty {
+            return noscriptTracks
+        }
+
+        throw SoundCloudError.unavailable
+    }
+
+    private func parseHydrationTracks(from html: String) -> [OnlineTrackResult] {
+        guard let hydrationJSON = extractHydrationJSON(from: html),
+              let hydrationData = hydrationJSON.data(using: .utf8),
+              let hydrationEntries = try? JSONSerialization.jsonObject(with: hydrationData) as? [Any] else {
+            return []
+        }
+
+        var rawTracks: [[String: Any]] = []
+        for entry in hydrationEntries {
+            collectTrackDictionaries(in: entry, into: &rawTracks)
+        }
+
+        let decodedTracks = rawTracks.compactMap { dictionary -> SoundCloudTrackDTO? in
+            guard JSONSerialization.isValidJSONObject(dictionary),
+                  let jsonData = try? JSONSerialization.data(withJSONObject: dictionary),
+                  let track = try? decoder.decode(SoundCloudTrackDTO.self, from: jsonData) else {
+                return nil
+            }
+
+            return track
+        }
+
+        return deduplicatedTrackResults(
+            decodedTracks.compactMap { makeOnlineTrackResult(from: $0) }
+        )
+    }
+
+    private func parseNoscriptTracks(from html: String, query: String) -> [OnlineTrackResult] {
+        let matches = extractCapturedMatches(
+            in: html,
+            pattern: #"<li><h2><a href=\"([^\"]+)\">([^<]+)</a></h2></li>"#,
+            captureCount: 2
+        )
+
+        return matches.compactMap { captures in
+            guard captures.count == 2 else { return nil }
+
+            let rawPath = captures[0]
+            let title = cleanedText(decodedHTMLEntities(captures[1]))
+            guard let title else { return nil }
+
+            let webpageURL = URL(string: rawPath, relativeTo: homepageURL)?.absoluteURL.absoluteString ?? rawPath
+            let artist = inferArtistName(from: rawPath, fallbackQuery: query)
+            let providerTrackURN = cleanedText(rawPath) ?? webpageURL
+
+            return OnlineTrackResult(
+                provider: .soundcloud,
+                providerTrackURN: providerTrackURN,
+                providerArtistID: nil,
+                title: title,
+                artist: artist,
+                album: nil,
+                genres: [],
+                tags: [],
+                moods: [],
+                duration: 0,
+                coverArtURL: nil,
+                artistImageURL: nil,
+                webpageURL: webpageURL,
+                artistWebpageURL: nil,
+                playbackCount: nil,
+                likesCount: nil,
+                releaseDate: nil,
+                directAudioURL: nil,
+                directFileExtension: nil,
+                trackAuthorization: nil,
+                playbackStreams: []
+            )
+        }
     }
 
     private func fetchData(from url: URL, accept: String) async throws -> Data {
@@ -3196,10 +3245,6 @@ private final class SoundCloudClient: @unchecked Sendable {
         }
 
         let streams = (track.media?.transcodings ?? []).compactMap { makeStreamCandidate(from: $0) }
-        guard !streams.isEmpty else {
-            return nil
-        }
-
         let artist = cleanedText(track.publisherMetadata?.artist) ??
             cleanedText(track.user?.username) ??
             "Unknown Artist"
@@ -3270,6 +3315,60 @@ private final class SoundCloudClient: @unchecked Sendable {
             mimeType: mimeType,
             isLegacy: transcoding.isLegacyTranscoding ?? false
         )
+    }
+
+    private func collectTrackDictionaries(in value: Any, into results: inout [[String: Any]]) {
+        if let dictionary = value as? [String: Any] {
+            if looksLikeTrackDictionary(dictionary) {
+                results.append(dictionary)
+            }
+
+            for nestedValue in dictionary.values {
+                collectTrackDictionaries(in: nestedValue, into: &results)
+            }
+            return
+        }
+
+        if let array = value as? [Any] {
+            for item in array {
+                collectTrackDictionaries(in: item, into: &results)
+            }
+        }
+    }
+
+    private func looksLikeTrackDictionary(_ dictionary: [String: Any]) -> Bool {
+        let hasTitle = dictionary["title"] as? String != nil
+        let hasPermalink = dictionary["permalink_url"] as? String != nil
+        let hasURN = dictionary["urn"] as? String != nil
+        return hasTitle && hasPermalink && hasURN
+    }
+
+    private func extractHydrationJSON(from html: String) -> String? {
+        extractFirstMatch(
+            in: html,
+            pattern: #"window\.__sc_hydration\s*=\s*(\[[\s\S]*?\])\s*;"#
+        )
+    }
+
+    private func inferArtistName(from rawPath: String, fallbackQuery: String) -> String {
+        let trimmedPath = rawPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let pathComponents = trimmedPath.split(separator: "/").map(String.init)
+
+        if let firstComponent = pathComponents.first, !firstComponent.isEmpty, firstComponent != "search" {
+            return decodedHTMLEntities(firstComponent)
+                .replacingOccurrences(of: "-", with: " ")
+        }
+
+        return fallbackQuery
+    }
+
+    private func decodedHTMLEntities(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
     }
 
     private func parsedISO8601Date(_ rawValue: String?) -> Date? {
@@ -3369,28 +3468,6 @@ private final class SoundCloudClient: @unchecked Sendable {
         return clientID
     }
 
-    private func storeClientID(_ newClientID: String) {
-        stateLock.lock()
-        clientID = newClientID
-        stateLock.unlock()
-    }
-
-    private func invalidateClientID(_ invalidClientID: String) {
-        stateLock.lock()
-        if clientID == invalidClientID {
-            clientID = nil
-        }
-        stateLock.unlock()
-    }
-
-    private func resolveAssetURL(from rawValue: String) -> URL? {
-        if let absoluteURL = URL(string: rawValue), absoluteURL.scheme != nil {
-            return absoluteURL
-        }
-
-        return URL(string: rawValue, relativeTo: homepageURL)?.absoluteURL
-    }
-
     private func cleanedText(_ value: String?) -> String? {
         guard let value else { return nil }
 
@@ -3403,16 +3480,6 @@ private final class SoundCloudClient: @unchecked Sendable {
         let prefix = clientID.prefix(4)
         let suffix = clientID.suffix(4)
         return "\(prefix)...\(suffix)"
-    }
-
-    private func extractFirstMatch(in text: String, patterns: [String]) -> String? {
-        for pattern in patterns {
-            if let match = extractFirstMatch(in: text, pattern: pattern) {
-                return match
-            }
-        }
-
-        return nil
     }
 
     private func extractFirstMatch(in text: String, pattern: String) -> String? {
@@ -3430,27 +3497,22 @@ private final class SoundCloudClient: @unchecked Sendable {
         return String(text[captureRange])
     }
 
-    private func extractAllMatches(in text: String, pattern: String) -> [String] {
+    private func extractCapturedMatches(in text: String, pattern: String, captureCount: Int) -> [[String]] {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
             return []
         }
 
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        return regex.matches(in: text, options: [], range: range).compactMap { match in
-            guard let matchRange = Range(match.range, in: text) else { return nil }
-            return String(text[matchRange])
+        return regex.matches(in: text, options: [], range: range).map { match in
+            (1...captureCount).compactMap { captureIndex in
+                guard match.numberOfRanges > captureIndex,
+                      let captureRange = Range(match.range(at: captureIndex), in: text) else {
+                    return nil
+                }
+
+                return String(text[captureRange])
+            }
         }
-    }
-
-    private func orderedUniqueValues(_ values: [String]) -> [String] {
-        var seenValues: Set<String> = []
-        var orderedValues: [String] = []
-
-        for value in values where seenValues.insert(value).inserted {
-            orderedValues.append(value)
-        }
-
-        return orderedValues
     }
 }
 
