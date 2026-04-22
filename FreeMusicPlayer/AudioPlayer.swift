@@ -41,10 +41,6 @@ final class AudioPlayer: ObservableObject {
     private var activePlaybackSession: PlaybackSession?
     private var audioSessionConfigured = false
 
-    private let quickSkipMaximumPosition: TimeInterval = 18
-    private let quickSkipMaximumCompletionRatio: Double = 0.3
-    private let finishedCompletionThreshold: Double = 0.92
-
     enum RepeatMode {
         case off
         case all
@@ -82,15 +78,6 @@ final class AudioPlayer: ObservableObject {
 
     private struct PlaybackSession {
         var track: Track
-        let contextName: String?
-        let startedAt: Date
-    }
-
-    private enum PlaybackSessionEndReason {
-        case trackChanged
-        case finished
-        case stopped
-        case failed
     }
 
     private var tracks: [Track] {
@@ -365,14 +352,14 @@ final class AudioPlayer: ObservableObject {
 
         debugLog("Current track ended: \(currentTrack?.displayTitle ?? "Unknown Track")")
         debugLog("Autoplay source context: \(playbackSequenceDescription)")
-        finalizePlaybackSessionIfNeeded(reason: .finished)
+        finalizePlaybackSessionIfNeeded()
 
         switch repeatMode {
         case .one:
             seek(to: 0)
             if let currentTrack {
-                startPlaybackSession(for: currentTrack, contextName: playbackContext?.name)
-                recordListeningEvent(kind: .play, track: currentTrack, contextName: playbackContext?.name)
+                startPlaybackSession(for: currentTrack)
+                recordTrackPlaybackStart(currentTrack)
             }
             play()
         case .all, .off:
@@ -484,11 +471,10 @@ final class AudioPlayer: ObservableObject {
         usesExplicitTrackOrder: Bool = false
     ) -> Bool {
         debugLog("playTrack called for: \(track.displayTitle)")
-        let resolvedContextName = contextName ?? playbackContext?.name
 
         if let currentTrack,
            !matchesPlaybackIdentity(currentTrack, track) {
-            finalizePlaybackSessionIfNeeded(reason: .trackChanged)
+            finalizePlaybackSessionIfNeeded()
         }
 
         if updateContext {
@@ -515,8 +501,8 @@ final class AudioPlayer: ObservableObject {
 
         guard load(track: track) else { return false }
 
-        startPlaybackSession(for: track, contextName: resolvedContextName)
-        recordListeningEvent(kind: .play, track: track, contextName: resolvedContextName)
+        startPlaybackSession(for: track)
+        recordTrackPlaybackStart(track)
         let didStartPlayback = play()
         debugLog("Playback \(didStartPlayback ? "success" : "failure") for track: \(track.displayTitle)")
         return didStartPlayback
@@ -895,7 +881,7 @@ final class AudioPlayer: ObservableObject {
 
     func stop() {
         debugLog("Stop playback")
-        finalizePlaybackSessionIfNeeded(reason: .stopped)
+        finalizePlaybackSessionIfNeeded()
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         manualQueue.removeAll()
@@ -917,107 +903,19 @@ final class AudioPlayer: ObservableObject {
         playbackErrorMessage = nil
     }
 
-    private func startPlaybackSession(for track: Track, contextName: String?) {
+    private func startPlaybackSession(for track: Track) {
         activePlaybackSession = PlaybackSession(
-            track: track,
-            contextName: contextName,
-            startedAt: Date()
+            track: track
         )
     }
 
-    private func finalizePlaybackSessionIfNeeded(reason: PlaybackSessionEndReason) {
-        guard let session = activePlaybackSession else { return }
+    private func finalizePlaybackSessionIfNeeded() {
+        guard activePlaybackSession != nil else { return }
         activePlaybackSession = nil
-
-        let resolvedDuration = max(duration, session.track.duration, currentTime)
-        let resolvedCompletionRatio = resolvedDuration > 0
-            ? min(max(currentTime / resolvedDuration, 0), 1)
-            : nil
-
-        switch reason {
-        case .finished:
-            recordListeningEvent(
-                kind: .finishedPlayback,
-                track: session.track,
-                contextName: session.contextName,
-                playbackPosition: resolvedDuration,
-                playbackDuration: resolvedDuration,
-                completionRatio: 1
-            )
-        case .trackChanged, .stopped:
-            if let resolvedCompletionRatio,
-               resolvedCompletionRatio >= finishedCompletionThreshold {
-                recordListeningEvent(
-                    kind: .finishedPlayback,
-                    track: session.track,
-                    contextName: session.contextName,
-                    playbackPosition: currentTime,
-                    playbackDuration: resolvedDuration,
-                    completionRatio: resolvedCompletionRatio
-                )
-            } else if shouldRecordQuickSkip(
-                playbackPosition: currentTime,
-                completionRatio: resolvedCompletionRatio
-            ) {
-                recordListeningEvent(
-                    kind: .quickSkip,
-                    track: session.track,
-                    contextName: session.contextName,
-                    playbackPosition: currentTime,
-                    playbackDuration: resolvedDuration,
-                    completionRatio: resolvedCompletionRatio
-                )
-            }
-        case .failed:
-            break
-        }
     }
 
-    private func shouldRecordQuickSkip(
-        playbackPosition: TimeInterval,
-        completionRatio: Double?
-    ) -> Bool {
-        if playbackPosition <= 0 {
-            return false
-        }
-
-        let isShortPosition = playbackPosition <= quickSkipMaximumPosition
-        let isShortCompletion = (completionRatio ?? 0) <= quickSkipMaximumCompletionRatio
-        return isShortPosition && isShortCompletion
-    }
-
-    private func recordListeningEvent(
-        kind: ListeningEventKind,
-        track: Track,
-        contextName: String?,
-        playbackPosition: TimeInterval? = nil,
-        playbackDuration: TimeInterval? = nil,
-        completionRatio: Double? = nil
-    ) {
-        let snapshot = TrackTasteSnapshot(track: track)
-        Task(priority: .utility) {
-            await ListeningHistoryStore.shared.record(
-                kind: kind,
-                track: snapshot,
-                sourceContext: contextName,
-                playbackPosition: playbackPosition,
-                playbackDuration: playbackDuration,
-                completionRatio: completionRatio
-            )
-
-            switch kind {
-            case .play, .finishedPlayback:
-                await MainActor.run {
-                    DataManager.shared.markTrackPlayed(track)
-                }
-            case .quickSkip:
-                await MainActor.run {
-                    DataManager.shared.markTrackSkipped(track)
-                }
-            case .libraryAdd:
-                break
-            }
-        }
+    private func recordTrackPlaybackStart(_ track: Track) {
+        DataManager.shared.markTrackPlayed(track)
     }
 
     private func handlePlayerItemStatus(_ status: AVPlayerItem.Status, error: Error?) {
@@ -1039,7 +937,7 @@ final class AudioPlayer: ObservableObject {
 
     private func failPlayback(_ message: String, track: Track?) {
         debugLog("Playback failure for \(track?.displayTitle ?? "Unknown Track"): \(message)")
-        finalizePlaybackSessionIfNeeded(reason: .failed)
+        finalizePlaybackSessionIfNeeded()
         player?.pause()
         player?.replaceCurrentItem(with: nil)
         playerItem = nil

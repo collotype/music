@@ -9,7 +9,6 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var dataManager: DataManager
-    @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var router: AppRouter
 
     var body: some View {
@@ -27,8 +26,6 @@ struct HomeView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    WaveCard()
-                    ListenTogetherCard()
                     PlaylistsSection()
                     PopularSection()
                     RecentSection()
@@ -81,113 +78,6 @@ struct HomeView: View {
                 }
             }
         }
-    }
-}
-
-struct WaveCard: View {
-    @EnvironmentObject var audioPlayer: AudioPlayer
-    @EnvironmentObject var dataManager: DataManager
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("My Wave")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundColor(.white)
-
-                    Text("Start a quick mix from the tracks already in your library.")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.7))
-                }
-
-                Spacer()
-
-                Button {
-                    debugLog("Wave play button pressed")
-                    if let firstTrack = dataManager.tracks.randomElement() {
-                        audioPlayer.playTrack(firstTrack, in: dataManager.tracks, contextName: "home:wave")
-                    } else {
-                        debugLog("Wave play ignored because library is empty")
-                    }
-                } label: {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 56, height: 56)
-                        .overlay(
-                            Image(systemName: "play.fill")
-                                .foregroundColor(.black)
-                                .font(.system(size: 20))
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-
-            WaveformView()
-                .frame(height: 40)
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-    }
-}
-
-struct WaveformView: View {
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<40, id: \.self) { _ in
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.3))
-                    .frame(width: 3, height: CGFloat.random(in: 8...25))
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-struct ListenTogetherCard: View {
-    var body: some View {
-        Button {
-            debugLog("Listen together card pressed")
-        } label: {
-            HStack(spacing: 16) {
-                Image(systemName: "person.2.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(.white)
-                    .frame(width: 60, height: 60)
-                    .background(
-                        Circle()
-                            .fill(Color.white.opacity(0.1))
-                    )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Listen Together")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-
-                    Text("Public rooms placeholder")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.6))
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.white.opacity(0.5))
-            }
-            .padding(20)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white.opacity(0.05))
-            )
-        }
-        .buttonStyle(.plain)
     }
 }
 

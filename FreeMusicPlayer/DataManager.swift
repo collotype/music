@@ -32,8 +32,6 @@ final class DataManager: ObservableObject {
     @Published var settings: AppSettings = AppSettings()
 
     // Pre-computed derived collections to avoid expensive body computations
-    @Published var popularTracks: [Track] = []
-    @Published var recentTracks: [Track] = []
     @Published var likedTracksList: [Track] = []
     @Published var downloadedTracksList: [Track] = []
 
@@ -64,43 +62,9 @@ final class DataManager: ObservableObject {
         !settings.importFolders.isEmpty
     }
 
-    var myWaveSettings: MyWaveSettings {
-        settings.myWaveSettings
-    }
-
     init() {
         // Data loading is deferred to loadData() which runs heavy I/O off the main thread.
         // See loadData() for the async background loading pipeline.
-    }
-
-    func setMyWaveActivity(_ activity: MyWaveSettings.Activity?) {
-        updateAppSettings { settings in
-            settings.myWaveSettings.activity = settings.myWaveSettings.activity == activity ? nil : activity
-        }
-    }
-
-    func setMyWaveVibe(_ vibe: MyWaveSettings.Vibe?) {
-        updateAppSettings { settings in
-            settings.myWaveSettings.vibe = settings.myWaveSettings.vibe == vibe ? nil : vibe
-        }
-    }
-
-    func setMyWaveMood(_ mood: MyWaveSettings.Mood?) {
-        updateAppSettings { settings in
-            settings.myWaveSettings.mood = settings.myWaveSettings.mood == mood ? nil : mood
-        }
-    }
-
-    func setMyWaveLanguage(_ language: MyWaveSettings.Language?) {
-        updateAppSettings { settings in
-            settings.myWaveSettings.language = settings.myWaveSettings.language == language ? nil : language
-        }
-    }
-
-    func resetMyWaveSettings() {
-        updateAppSettings { settings in
-            settings.myWaveSettings = .default
-        }
     }
 
     func setShufflePreference(_ isEnabled: Bool) {
@@ -124,12 +88,6 @@ final class DataManager: ObservableObject {
     func setCacheEnabledPreference(_ isEnabled: Bool) {
         updateAppSettings { settings in
             settings.cacheEnabled = isEnabled
-        }
-    }
-
-    func setAudioQualityPreference(_ quality: AppSettings.AudioQuality) {
-        updateAppSettings { settings in
-            settings.quality = quality
         }
     }
 
@@ -183,7 +141,6 @@ final class DataManager: ObservableObject {
         writeJSONIfChanged(favoriteArtists, to: favoriteArtistsFileURL)
         writeJSONIfChanged(savedAlbums, to: savedAlbumsFileURL)
         writeJSONIfChanged(settings, to: settingsFileURL)
-        NotificationCenter.default.post(name: .myWaveSignalsDidChange, object: nil)
     }
 
     /// Debounced save — coalesces rapid successive calls into a single disk write.
@@ -218,55 +175,13 @@ final class DataManager: ObservableObject {
             self.writeJSONIfChanged(currentArtists, to: self.favoriteArtistsFileURL)
             self.writeJSONIfChanged(currentAlbums, to: self.savedAlbumsFileURL)
             self.writeJSONIfChanged(currentSettings, to: self.settingsFileURL)
-
-            await MainActor.run {
-                NotificationCenter.default.post(name: .myWaveSignalsDidChange, object: nil)
-            }
         }
     }
 
     /// Refreshes pre-computed derived collections so Views don't compute them in body.
     private func refreshDerivedCollections() {
-        popularTracks = Array(
-            tracks
-                .filter { $0.playCount > 0 }
-                .sorted(by: popularTrackSort)
-                .prefix(5)
-        )
-
-        recentTracks = Array(
-            tracks
-                .filter { $0.lastPlayed != nil }
-                .sorted(by: recentTrackSort)
-                .prefix(10)
-        )
-
         likedTracksList = tracks.filter { $0.isLiked && $0.isDownloaded }
         downloadedTracksList = tracks.filter { $0.isDownloaded }
-    }
-
-    private func popularTrackSort(_ left: Track, _ right: Track) -> Bool {
-        if left.playCount != right.playCount {
-            return left.playCount > right.playCount
-        }
-        let leftLastPlayed = left.lastPlayed ?? .distantPast
-        let rightLastPlayed = right.lastPlayed ?? .distantPast
-        if leftLastPlayed != rightLastPlayed {
-            return leftLastPlayed > rightLastPlayed
-        }
-        return left.addedAt > right.addedAt
-    }
-
-    private func recentTrackSort(_ left: Track, _ right: Track) -> Bool {
-        let leftLastPlayed = left.lastPlayed ?? .distantPast
-        let rightLastPlayed = right.lastPlayed ?? .distantPast
-        if leftLastPlayed != rightLastPlayed {
-            return leftLastPlayed > rightLastPlayed
-        }
-        if left.playCount != right.playCount {
-            return left.playCount > right.playCount
-        }
-        return left.addedAt > right.addedAt
     }
 
     @discardableResult
@@ -924,14 +839,6 @@ final class DataManager: ObservableObject {
         )
 
         let savedTrack = addTrack(track)
-        Task(priority: .utility) {
-            await ListeningHistoryStore.shared.record(
-                kind: .libraryAdd,
-                track: TrackTasteSnapshot(track: savedTrack),
-                sourceContext: "library:add",
-                notify: false
-            )
-        }
         scheduleLyricsPersistenceIfNeeded(for: savedTrack)
         return savedTrack
     }
@@ -1090,14 +997,6 @@ final class DataManager: ObservableObject {
 
         tracks[index].playCount += 1
         tracks[index].lastPlayed = Date()
-        tracks[index].lastPlayedAt = Date()
-        scheduleSave()
-    }
-
-    func markTrackSkipped(_ track: Track) {
-        guard let index = tracks.firstIndex(where: { $0.id == track.id }) else { return }
-
-        tracks[index].skipCount += 1
         tracks[index].lastPlayedAt = Date()
         scheduleSave()
     }
@@ -2086,11 +1985,9 @@ struct AppSettings: Codable, Equatable {
     var autoplay: Bool = true
     var shuffle: Bool = false
     var repeatMode: RepeatMode = .off
-    var quality: AudioQuality = .high
     var showLyrics: Bool = true
     var cacheEnabled: Bool = true
     var importFolders: [ImportedMusicFolder] = []
-    var myWaveSettings: MyWaveSettings = .default
 
     enum AppTheme: String, Codable, CaseIterable {
         case light
@@ -2104,24 +2001,15 @@ struct AppSettings: Codable, Equatable {
         case one
     }
 
-    enum AudioQuality: String, Codable, CaseIterable {
-        case low
-        case medium
-        case high
-        case lossless
-    }
-
     enum CodingKeys: String, CodingKey {
         case theme
         case accentColor
         case autoplay
         case shuffle
         case repeatMode
-        case quality
         case showLyrics
         case cacheEnabled
         case importFolders
-        case myWaveSettings
     }
 
     init() {}
@@ -2133,11 +2021,9 @@ struct AppSettings: Codable, Equatable {
         autoplay = try container.decodeIfPresent(Bool.self, forKey: .autoplay) ?? true
         shuffle = try container.decodeIfPresent(Bool.self, forKey: .shuffle) ?? false
         repeatMode = try container.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) ?? .off
-        quality = try container.decodeIfPresent(AudioQuality.self, forKey: .quality) ?? .high
         showLyrics = try container.decodeIfPresent(Bool.self, forKey: .showLyrics) ?? true
         cacheEnabled = try container.decodeIfPresent(Bool.self, forKey: .cacheEnabled) ?? true
         importFolders = try container.decodeIfPresent([ImportedMusicFolder].self, forKey: .importFolders) ?? []
-        myWaveSettings = try container.decodeIfPresent(MyWaveSettings.self, forKey: .myWaveSettings) ?? .default
     }
 
     func encode(to encoder: Encoder) throws {
@@ -2147,11 +2033,9 @@ struct AppSettings: Codable, Equatable {
         try container.encode(autoplay, forKey: .autoplay)
         try container.encode(shuffle, forKey: .shuffle)
         try container.encode(repeatMode, forKey: .repeatMode)
-        try container.encode(quality, forKey: .quality)
         try container.encode(showLyrics, forKey: .showLyrics)
         try container.encode(cacheEnabled, forKey: .cacheEnabled)
         try container.encode(importFolders, forKey: .importFolders)
-        try container.encode(myWaveSettings, forKey: .myWaveSettings)
     }
 
     static func == (lhs: AppSettings, rhs: AppSettings) -> Bool {
@@ -2160,11 +2044,9 @@ struct AppSettings: Codable, Equatable {
             && lhs.autoplay == rhs.autoplay
             && lhs.shuffle == rhs.shuffle
             && lhs.repeatMode == rhs.repeatMode
-            && lhs.quality == rhs.quality
             && lhs.showLyrics == rhs.showLyrics
             && lhs.cacheEnabled == rhs.cacheEnabled
             && lhs.importFolders == rhs.importFolders
-            && lhs.myWaveSettings == rhs.myWaveSettings
     }
 }
 

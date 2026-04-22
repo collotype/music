@@ -23,13 +23,7 @@
 		A100000E /* AppFileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
 		A100000F /* OnlineMusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
 		A1000010 /* OnlineArtistDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012; };
-		A1000011 /* MyWaveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000013; };
-		A1000012 /* ListeningHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000014; };
 		A1000013 /* OnlineTrackActionHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000015; };
-		A1000014 /* MyWaveRecommendationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000016; };
-		A1000015 /* MyWaveViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000017; };
-		A1000016 /* MyWaveSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000018; };
-		A1001010 /* MyWaveRecommendationEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001010; };
 		A1001011 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2001012; };
 /* End PBXBuildFile section */
 
@@ -62,13 +56,7 @@
 		A2000010 /* AppFileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFileManager.swift; sourceTree = "<group>"; };
 		A2000011 /* OnlineMusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineMusicService.swift; sourceTree = "<group>"; };
 		A2000012 /* OnlineArtistDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineArtistDetailView.swift; sourceTree = "<group>"; };
-		A2000013 /* MyWaveModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveModels.swift; sourceTree = "<group>"; };
-		A2000014 /* ListeningHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ListeningHistoryStore.swift; sourceTree = "<group>"; };
 		A2000015 /* OnlineTrackActionHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnlineTrackActionHelper.swift; sourceTree = "<group>"; };
-		A2000016 /* MyWaveRecommendationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveRecommendationService.swift; sourceTree = "<group>"; };
-		A2000017 /* MyWaveViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveViewModel.swift; sourceTree = "<group>"; };
-		A2000018 /* MyWaveSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveSettingsView.swift; sourceTree = "<group>"; };
-		A2001010 /* MyWaveRecommendationEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MyWaveRecommendationEngineTests.swift; sourceTree = "<group>"; };
 		A2001011 /* FreeMusicPlayerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FreeMusicPlayerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2001012 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -121,12 +109,7 @@
 				A2000010 /* AppFileManager.swift */,
 				A2000011 /* OnlineMusicService.swift */,
 				A2000012 /* OnlineArtistDetailView.swift */,
-				A2000013 /* MyWaveModels.swift */,
-				A2000014 /* ListeningHistoryStore.swift */,
 				A2000015 /* OnlineTrackActionHelper.swift */,
-				A2000016 /* MyWaveRecommendationService.swift */,
-				A2000017 /* MyWaveViewModel.swift */,
-				A2000018 /* MyWaveSettingsView.swift */,
 			);
 			path = FreeMusicPlayer;
 			sourceTree = "<group>";
@@ -134,7 +117,6 @@
 		A4000004 /* FreeMusicPlayerTests */ = {
 			isa = PBXGroup;
 			children = (
-				A2001010 /* MyWaveRecommendationEngineTests.swift */,
 			);
 			path = FreeMusicPlayerTests;
 			sourceTree = "<group>";
@@ -271,12 +253,7 @@
 				A100000E /* AppFileManager.swift in Sources */,
 				A100000F /* OnlineMusicService.swift in Sources */,
 				A1000010 /* OnlineArtistDetailView.swift in Sources */,
-				A1000011 /* MyWaveModels.swift in Sources */,
-				A1000012 /* ListeningHistoryStore.swift in Sources */,
 				A1000013 /* OnlineTrackActionHelper.swift in Sources */,
-				A1000014 /* MyWaveRecommendationService.swift in Sources */,
-				A1000015 /* MyWaveViewModel.swift in Sources */,
-				A1000016 /* MyWaveSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -284,7 +261,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A1001010 /* MyWaveRecommendationEngineTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
