@@ -536,6 +536,7 @@ final class OnlineMusicService {
         #"client_id:"([A-Za-z0-9]{8,})""#,
         #"client_id\s*:\s*"([A-Za-z0-9]{8,})""#,
         #"client_id\s*=\s*"([A-Za-z0-9]{8,})""#,
+        #"\"clientId\":\"([A-Za-z0-9]{8,})\""#,
     ]
     private let iso8601DateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -961,23 +962,9 @@ final class OnlineMusicService {
     }
 
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {
-        let tracks = try await soundCloudClient.searchOnlineTracks(query: query)
-        let results = makeSoundCloudSearchResults(
-            from: tracks,
-            directAlbumMatches: [],
-            query: query
-        )
-
-        logMappedResultCounts(provider: .soundcloud, results: results)
-        debugLog(
-            "Provider finish: SoundCloud with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
-        )
-
-        guard !results.isEmpty else {
-            throw OnlineMusicServiceError.noResults("No SoundCloud results were found for \"\(query)\".")
+        try await withSoundCloudClientIDRetry(operationName: "SoundCloud search") { clientID in
+            try await self.executeSoundCloudSearch(query: query, clientID: clientID)
         }
-
-        return results
     }
 
     private func executeSoundCloudSearch(query: String, clientID: String) async throws -> OnlineSearchResults {
