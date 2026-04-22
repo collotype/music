@@ -13,12 +13,6 @@ struct SettingsView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var showClearConfirm = false
-    @State private var showingMyWaveSettings = false
-    @State private var actionInfo: SettingsActionInfo?
-
-    private var spotifyConfigured: Bool {
-        OnlineMusicService.shared.isSpotifyConfigured
-    }
 
     private var appVersionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
@@ -28,11 +22,6 @@ struct SettingsView: View {
         }
 
         return version
-    }
-
-    private var myWaveSummary: String {
-        let labels = dataManager.myWaveSettings.selectedLabels
-        return labels.isEmpty ? "Default profile from your listening activity." : labels.joined(separator: " / ")
     }
 
     var body: some View {
@@ -72,100 +61,11 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 8)
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        settingsLabel(
-                            title: "Audio quality",
-                            subtitle: "Saved preference for online playback and downloads."
-                        )
-
-                        Picker("Audio quality", selection: audioQualityBinding) {
-                            ForEach(AppSettings.AudioQuality.allCases, id: \.self) { quality in
-                                Text(audioQualityTitle(quality)).tag(quality)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(.white)
-                    }
-                    .padding(.vertical, 8)
-
                     settingsValueRow(
                         title: "Playback speed",
                         subtitle: "Current player speed",
                         value: String(format: "%.2gx", Double(audioPlayer.playbackSpeed))
                     )
-                }
-
-                settingsSection(title: "Discovery", icon: "waveform.path.ecg") {
-                    Button {
-                        debugLog("Open My Wave settings from Settings")
-                        showingMyWaveSettings = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "sparkles.rectangle.stack")
-                                .foregroundColor(.white)
-                                .frame(width: 30)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("My Wave")
-                                    .foregroundColor(.white)
-                                Text(myWaveSummary)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.gray)
-                                    .lineLimit(2)
-                            }
-
-                            Spacer()
-
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                settingsSection(title: "Services", icon: "cloud.fill") {
-                    settingsValueRow(
-                        title: "SoundCloud",
-                        subtitle: "Online search and playback are available.",
-                        value: "Enabled",
-                        valueColor: .green
-                    )
-
-                    Button {
-                        debugLog("Spotify status row pressed")
-                        actionInfo = SettingsActionInfo(
-                            title: "Spotify",
-                            message: spotifyConfigured
-                                ? "Spotify credentials are configured. Search support exists in the service layer."
-                                : "Spotify service code exists, but credentials are not configured for this build yet."
-                        )
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "sparkles")
-                                .foregroundColor(.white)
-                                .frame(width: 30)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Spotify")
-                                    .foregroundColor(.white)
-                                Text(spotifyConfigured ? "Configured for this build." : "Not configured for this build.")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.gray)
-                            }
-
-                            Spacer()
-
-                            Text(spotifyConfigured ? "Ready" : "Unavailable")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(spotifyConfigured ? .green : .orange)
-
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
                 }
 
                 settingsSection(title: "Library", icon: "books.vertical.fill") {
@@ -269,12 +169,6 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .accentColor(.white)
-        .sheet(isPresented: $showingMyWaveSettings) {
-            MyWaveSettingsView()
-                .environmentObject(dataManager)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-        }
         .confirmationDialog("Clear all local data?", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("Clear", role: .destructive) {
                 debugLog("Clear cache confirmed")
@@ -284,13 +178,6 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes imported tracks, playlists, favorite artists, and saved settings.")
-        }
-        .alert(item: $actionInfo) { info in
-            Alert(
-                title: Text(info.title),
-                message: Text(info.message),
-                dismissButton: .default(Text("OK"))
-            )
         }
     }
 
@@ -328,15 +215,6 @@ struct SettingsView: View {
             get: { dataManager.settings.cacheEnabled },
             set: { newValue in
                 dataManager.setCacheEnabledPreference(newValue)
-            }
-        )
-    }
-
-    private var audioQualityBinding: Binding<AppSettings.AudioQuality> {
-        Binding(
-            get: { dataManager.settings.quality },
-            set: { newValue in
-                dataManager.setAudioQualityPreference(newValue)
             }
         )
     }
@@ -400,25 +278,6 @@ struct SettingsView: View {
             return "One"
         }
     }
-
-    private func audioQualityTitle(_ quality: AppSettings.AudioQuality) -> String {
-        switch quality {
-        case .low:
-            return "Low"
-        case .medium:
-            return "Medium"
-        case .high:
-            return "High"
-        case .lossless:
-            return "Lossless"
-        }
-    }
-}
-
-struct SettingsActionInfo: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
 }
 
 #Preview {

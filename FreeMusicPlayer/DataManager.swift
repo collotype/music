@@ -161,7 +161,6 @@ final class DataManager: ObservableObject {
             // Publish results back on main thread
             await MainActor.run {
                 self.tracks = filteredTracks
-                self.refreshStoredLocalMetadataIfNeeded()
                 self.synchronizeUnifiedTrackLibraryState()
                 self.refreshDerivedCollections()
                 self.isLoadingData = false
@@ -2071,79 +2070,6 @@ final class DataManager: ObservableObject {
         let storedPath = AppFileManager.shared.relativePath(for: artworkURL) ?? artworkURL.path
         debugLog("Artwork stored for imported track at \(storedPath)")
         return storedPath
-    }
-
-    private func refreshStoredLocalMetadataIfNeeded() {
-        guard !tracks.isEmpty else { return }
-
-        var didUpdateAnyTrack = false
-
-        for index in tracks.indices {
-            guard shouldRefreshStoredMetadata(for: tracks[index]),
-                  let fileURL = tracks[index].fileURL else {
-                continue
-            }
-
-            let resolvedURL = AppFileManager.shared.resolveStoredFileURL(for: fileURL)
-            guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
-                continue
-            }
-
-            do {
-                let probe = try probeImportedTrack(at: resolvedURL)
-                let artworkPath = try storeArtworkIfAvailable(
-                    data: probe.artworkData,
-                    preferredName: tracks[index].importOriginID ?? tracks[index].id
-                )
-
-                tracks[index].title = probe.title
-                tracks[index].artist = probe.artist
-                tracks[index].album = probe.album
-                if let genre = probe.genre {
-                    tracks[index].genres = [genre]
-                }
-                tracks[index].duration = probe.duration
-
-                if let artworkPath {
-                    tracks[index].coverArtURL = artworkPath
-                }
-
-                didUpdateAnyTrack = true
-                debugLog("Refreshed stored metadata for \(tracks[index].displayTitle)")
-            } catch {
-                debugLog("Stored metadata refresh skipped for \(tracks[index].displayTitle): \(error.localizedDescription)")
-            }
-        }
-
-        if didUpdateAnyTrack {
-            saveData()
-        }
-    }
-
-    private func shouldRefreshStoredMetadata(for track: Track) -> Bool {
-        guard track.source == .local,
-              track.isDownloaded,
-              track.fileURL != nil else {
-            return false
-        }
-
-        if track.coverArtURL == nil {
-            return true
-        }
-
-        if let coverArtURL = track.coverArtURL,
-           URL(string: coverArtURL)?.scheme == nil,
-           !AppFileManager.shared.fileExists(at: coverArtURL) {
-            return true
-        }
-
-        if track.genres.isEmpty {
-            return true
-        }
-
-        return track.duration <= 0 ||
-            track.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            track.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func updateAppSettings(_ mutation: (inout AppSettings) -> Void) {
