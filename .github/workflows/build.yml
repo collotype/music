@@ -2,7 +2,9 @@ name: Build Unsigned IPA
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - chore/remove-wave-and-shared-listening
   workflow_dispatch:
 
 jobs:
