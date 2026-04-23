@@ -531,11 +531,17 @@ final class OnlineMusicService {
     }
 
     private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-    private let soundCloudAssetPattern = #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#
+    private let soundCloudAssetPatterns = [
+        #"https://a-v2\.sndcdn\.com/assets/[^"']+\.js"#,
+        #"https://m\.sndcdn\.com/[^"']+\.js"#,
+        #"/assets/[^"']+\.js"#,
+        #"/_next/static/[^"']+\.js"#,
+    ]
     private let soundCloudClientIDPatterns = [
         #"client_id:"([A-Za-z0-9]{8,})""#,
         #"client_id\s*:\s*"([A-Za-z0-9]{8,})""#,
         #"client_id\s*=\s*"([A-Za-z0-9]{8,})""#,
+        #"clientId"\s*:\s*"([A-Za-z0-9]{8,})""#,
         #"\"clientId\":\"([A-Za-z0-9]{8,})\""#,
     ]
     private let iso8601DateFormatter: ISO8601DateFormatter = {
@@ -2568,8 +2574,9 @@ final class OnlineMusicService {
         }
 
         let assetMatches = orderedUniqueValues(
-            extractAllMatches(in: homepageHTML, pattern: soundCloudAssetPattern) +
-            extractAllMatches(in: homepageHTML, pattern: #"/assets/[^"']+\.js"#)
+            soundCloudAssetPatterns.flatMap { pattern in
+                extractAllMatches(in: homepageHTML, pattern: pattern)
+            }
         )
 
         let assetURLs = assetMatches.compactMap { assetMatch -> URL? in

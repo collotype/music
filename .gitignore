@@ -92,6 +92,13 @@ build/
 DerivedData/
 *.app
 *.dSYM/
+Payload/
+output/
+build_output.log
+build_exit_code.txt
+run_page.html
+build_log_artifact.zip
+build_logs.zip
 
 ## Node
 node_modules/
