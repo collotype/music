@@ -131,11 +131,28 @@ final class AppFileManager {
         let fileExtension = sourceURL.pathExtension.isEmpty ? "m4a" : sourceURL.pathExtension
         let destinationURL = uniqueLibraryURL(baseName: preferredName, fileExtension: fileExtension)
 
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try fileManager.removeItem(at: destinationURL)
+        do {
+            try fileManager.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        } catch {
+            logFileManagerFailure(
+                operation: "Library audio copy",
+                error: error,
+                sourceURL: sourceURL,
+                destinationURL: destinationURL,
+                fileSize: fileSize(at: sourceURL)
+            )
+            throw error
         }
 
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
         debugLog("Copied track into library storage: \(destinationURL.path)")
         return destinationURL
     }
@@ -323,6 +340,29 @@ final class AppFileManager {
             .lowercased()
 
         return trimmedValue.isEmpty ? "jpg" : trimmedValue
+    }
+
+    private func logFileManagerFailure(
+        operation: String,
+        error: Error,
+        sourceURL: URL,
+        destinationURL: URL,
+        fileSize: Int64?
+    ) {
+        let nsError = error as NSError
+        let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        let underlyingDescription = underlyingError.map {
+            "domain=\($0.domain), code=\($0.code), description=\($0.localizedDescription)"
+        } ?? "none"
+
+        debugLog(
+            "\(operation) failed: source=\(sourceURL.absoluteString), destination=\(destinationURL.absoluteString), fileSize=\(fileSize.map(String.init) ?? "unknown"), domain=\(nsError.domain), code=\(nsError.code), description=\(nsError.localizedDescription), underlying=\(underlyingDescription)"
+        )
+    }
+
+    private func fileSize(at url: URL) -> Int64? {
+        let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.int64Value
     }
 
     private func isPlayableAudioByProbe(_ url: URL) -> Bool {

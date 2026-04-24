@@ -875,11 +875,29 @@ final class OnlineMusicService {
                     URLCache.shared.removeCachedResponse(for: request)
                 }
 
-                let temporaryDownloadURL: URL
+                let downloadedFileURL: URL
                 let response: URLResponse
 
                 do {
-                    (temporaryDownloadURL, response) = try await self.downloadViaTask(request: request)
+                    let fallbackFileExtension = self.preferredFileExtension(
+                        mimeType: chosenCandidate.mimeType,
+                        resolvedURL: finalURL
+                    )
+                    self.removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fallbackFileExtension])
+
+                    (downloadedFileURL, response) = try await self.downloadViaTask(
+                        request: request,
+                        remoteSourceURL: finalURL
+                    ) { response in
+                        let fileExtension = self.preferredFileExtension(
+                            mimeType: response.mimeType ?? chosenCandidate.mimeType,
+                            resolvedURL: finalURL
+                        )
+                        return AppFileManager.shared.temporaryAudioURL(for: result.id, fileExtension: fileExtension)
+                    }
+                } catch let error as OnlineMusicServiceError {
+                    self.debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
+                    throw error
                 } catch {
                     self.debugLog("Download error for \(result.providerTrackURN): \(error.localizedDescription)")
                     throw OnlineMusicServiceError.networkFailure(
@@ -889,6 +907,7 @@ final class OnlineMusicService {
 
                 if let httpResponse = response as? HTTPURLResponse,
                    !(200...299).contains(httpResponse.statusCode) {
+                    self.removeTemporaryAudioFiles(for: result.id, additionalExtensions: [downloadedFileURL.pathExtension])
                     throw OnlineMusicServiceError.networkFailure(
                         "Audio download failed because SoundCloud returned HTTP \(httpResponse.statusCode)."
                     )
@@ -898,16 +917,7 @@ final class OnlineMusicService {
                     mimeType: response.mimeType ?? chosenCandidate.mimeType,
                     resolvedURL: finalURL
                 )
-                let destinationURL = AppFileManager.shared.temporaryAudioURL(for: result.id, fileExtension: fileExtension)
-
-                do {
-                    self.removeTemporaryAudioFiles(for: result.id, additionalExtensions: [fileExtension])
-                    try self.fileManager.moveItem(at: temporaryDownloadURL, to: destinationURL)
-                } catch {
-                    throw OnlineMusicServiceError.tempFileWriteFailure(
-                        "The downloaded SoundCloud audio could not be stored in temporary app storage."
-                    )
-                }
+                let destinationURL = downloadedFileURL
 
                 let validation = downloadedAudioValidationResult(
                     from: destinationURL,
@@ -2456,7 +2466,11 @@ final class OnlineMusicService {
         return ordered
     }
 
-    private func downloadViaTask(request: URLRequest) async throws -> (URL, URLResponse) {
+    private func downloadViaTask(
+        request: URLRequest,
+        remoteSourceURL: URL,
+        destinationURLForResponse: @escaping (URLResponse) -> URL
+    ) async throws -> (URL, URLResponse) {
         try await withCheckedThrowingContinuation { continuation in
             let task = session.downloadTask(with: request) { localURL, response, error in
                 if let error {
@@ -2471,10 +2485,74 @@ final class OnlineMusicService {
                     continuation.resume(throwing: URLError(.badServerResponse))
                     return
                 }
-                continuation.resume(returning: (localURL, response))
+
+                let destinationURL = destinationURLForResponse(response)
+                let sourceFileSize = self.fileSize(at: localURL)
+
+                do {
+                    try self.fileManager.createDirectory(
+                        at: destinationURL.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    if self.fileManager.fileExists(atPath: destinationURL.path) {
+                        try self.fileManager.removeItem(at: destinationURL)
+                    }
+                    try self.fileManager.moveItem(at: localURL, to: destinationURL)
+                    self.debugLog(
+                        "Stored SoundCloud download in app temp storage: remoteSource=\(remoteSourceURL.absoluteString), source=\(localURL.absoluteString), destination=\(destinationURL.absoluteString), fileSize=\(self.fileSizeDescription(at: destinationURL, fallback: sourceFileSize))"
+                    )
+                    continuation.resume(returning: (destinationURL, response))
+                } catch {
+                    self.logFileManagerFailure(
+                        operation: "SoundCloud temp audio move",
+                        error: error,
+                        remoteSourceURL: remoteSourceURL,
+                        sourceURL: localURL,
+                        destinationURL: destinationURL,
+                        fileSize: sourceFileSize
+                    )
+                    continuation.resume(
+                        throwing: OnlineMusicServiceError.tempFileWriteFailure(
+                            "The downloaded SoundCloud audio could not be stored in temporary app storage."
+                        )
+                    )
+                }
             }
             task.resume()
         }
+    }
+
+    private func logFileManagerFailure(
+        operation: String,
+        error: Error,
+        remoteSourceURL: URL?,
+        sourceURL: URL,
+        destinationURL: URL,
+        fileSize: Int64?
+    ) {
+        let nsError = error as NSError
+        let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        let underlyingDescription = underlyingError.map {
+            "domain=\($0.domain), code=\($0.code), description=\($0.localizedDescription)"
+        } ?? "none"
+        let remoteSource = remoteSourceURL?.absoluteString ?? "n/a"
+
+        debugLog(
+            "\(operation) failed: remoteSource=\(remoteSource), source=\(sourceURL.absoluteString), destination=\(destinationURL.absoluteString), fileSize=\(fileSize.map(String.init) ?? "unknown"), domain=\(nsError.domain), code=\(nsError.code), description=\(nsError.localizedDescription), underlying=\(underlyingDescription)"
+        )
+    }
+
+    private func fileSize(at url: URL) -> Int64? {
+        let attributes = try? fileManager.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.int64Value
+    }
+
+    private func fileSizeDescription(at url: URL, fallback: Int64?) -> String {
+        if let fileSize = fileSize(at: url) ?? fallback {
+            return String(fileSize)
+        }
+
+        return "unknown"
     }
 
     private func resolveSoundCloudStreamURL(
