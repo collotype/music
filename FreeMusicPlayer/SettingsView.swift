@@ -13,6 +13,10 @@ struct SettingsView: View {
     @Environment(\.openURL) private var openURL
 
     @State private var showClearConfirm = false
+    @State private var vkAccessTokenInput = ""
+    @State private var vkUserAgentInput = OnlineMusicService.shared.defaultVKMobileUserAgent
+    @State private var vkCredentialSnapshot = OnlineMusicService.shared.vkCredentialSnapshot
+    @State private var vkCredentialMessage: String?
 
     private var appVersionLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
@@ -125,6 +129,71 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
+                settingsSection(title: "VK Music", icon: "music.note") {
+                    settingsValueRow(
+                        title: "VK status",
+                        subtitle: "Audio search token",
+                        value: vkCredentialSnapshot.statusText,
+                        valueColor: vkCredentialSnapshot.hasMobileAudioToken ? .green : .orange
+                    )
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingsLabel(
+                            title: "Mobile audio token",
+                            subtitle: "Paste a VK audio-capable mobile token for testing."
+                        )
+
+                        SecureField("Token", text: $vkAccessTokenInput)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .foregroundColor(.white)
+                    }
+                    .padding(.vertical, 8)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        settingsLabel(
+                            title: "User-Agent",
+                            subtitle: "Stored with the token in Keychain."
+                        )
+
+                        TextField("User-Agent", text: $vkUserAgentInput)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .foregroundColor(.white)
+                    }
+                    .padding(.vertical, 8)
+
+                    if let vkCredentialMessage {
+                        Text(vkCredentialMessage)
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray)
+                            .padding(.vertical, 4)
+                    }
+
+                    Button {
+                        saveVKCredentials()
+                    } label: {
+                        settingsActionRow(
+                            icon: "key.fill",
+                            title: "Save VK token",
+                            subtitle: "Credentials are saved to Keychain."
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(role: .destructive) {
+                        clearVKCredentials()
+                    } label: {
+                        settingsActionRow(
+                            icon: "trash",
+                            title: "Clear VK token",
+                            subtitle: "Remove saved VK credentials from Keychain.",
+                            iconColor: .red
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 settingsSection(title: "About", icon: "info.circle.fill") {
                     settingsValueRow(
                         title: "Version",
@@ -169,6 +238,9 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.large)
         .accentColor(.white)
+        .onAppear {
+            refreshVKCredentialState()
+        }
         .confirmationDialog("Clear all local data?", isPresented: $showClearConfirm, titleVisibility: .visible) {
             Button("Clear", role: .destructive) {
                 debugLog("Clear cache confirmed")
@@ -266,6 +338,57 @@ struct SettingsView: View {
                 .foregroundColor(valueColor)
         }
         .padding(.vertical, 8)
+    }
+
+    private func settingsActionRow(
+        icon: String,
+        title: String,
+        subtitle: String,
+        iconColor: Color = .white
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundColor(iconColor)
+                .frame(width: 30)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .foregroundColor(.white)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func saveVKCredentials() {
+        do {
+            try OnlineMusicService.shared.saveVKMobileAudioCredentials(
+                accessToken: vkAccessTokenInput,
+                userAgent: vkUserAgentInput
+            )
+            vkAccessTokenInput = ""
+            vkCredentialMessage = "VK mobile audio token saved."
+            refreshVKCredentialState()
+        } catch {
+            vkCredentialMessage = error.localizedDescription
+        }
+    }
+
+    private func clearVKCredentials() {
+        OnlineMusicService.shared.clearVKMobileAudioCredentials()
+        vkAccessTokenInput = ""
+        vkUserAgentInput = OnlineMusicService.shared.defaultVKMobileUserAgent
+        vkCredentialMessage = "VK credentials removed."
+        refreshVKCredentialState()
+    }
+
+    private func refreshVKCredentialState() {
+        vkCredentialSnapshot = OnlineMusicService.shared.vkCredentialSnapshot
+        vkUserAgentInput = vkCredentialSnapshot.userAgent ?? OnlineMusicService.shared.defaultVKMobileUserAgent
     }
 
     private func repeatModeTitle(_ mode: AppSettings.RepeatMode) -> String {

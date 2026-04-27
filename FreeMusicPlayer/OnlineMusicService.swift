@@ -600,6 +600,25 @@ final class OnlineMusicService {
         vkMusicService.isConfigured
     }
 
+    var vkCredentialSnapshot: VKCredentialSnapshot {
+        vkMusicService.credentialSnapshot
+    }
+
+    var defaultVKMobileUserAgent: String {
+        VKMusicService.defaultMobileUserAgent
+    }
+
+    func saveVKMobileAudioCredentials(accessToken: String, userAgent: String) throws {
+        try vkMusicService.saveMobileAudioCredentials(
+            accessToken: accessToken,
+            userAgent: userAgent
+        )
+    }
+
+    func clearVKMobileAudioCredentials() {
+        vkMusicService.clearMobileAudioCredentials()
+    }
+
     func search(_ query: String, provider: OnlineTrackProvider) async throws -> OnlineSearchResults {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Security
 
 struct VKTrack: Decodable, Equatable, Sendable {
     let id: Int?
@@ -74,18 +75,38 @@ struct VKAudioThumb: Decodable, Equatable, Sendable {
     }
 }
 
+struct VKCredentialSnapshot: Equatable, Sendable {
+    let hasMobileAudioToken: Bool
+    let hasBundledToken: Bool
+    let userAgent: String?
+
+    var statusText: String {
+        if hasMobileAudioToken {
+            return "Mobile audio token saved"
+        }
+
+        if hasBundledToken {
+            return "VK music requires mobile audio token"
+        }
+
+        return "Mobile audio token missing"
+    }
+}
+
 final class VKMusicService {
     private let fileManager = FileManager.default
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let logger: @Sendable (String) -> Void
+    private let credentialStore = VKCredentialKeychainStore()
 
     private let searchURL = URL(string: "https://api.vk.com/method/audio.search")!
     private let vkHomepageURL = URL(string: "https://vk.com/")!
     private let defaultAPIVersion = "5.131"
     private let searchLimit = 20
-    private let mobileUserAgent = "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)"
+    static let defaultMobileUserAgent = "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)"
     private let unsupportedMobileTokenFlowMessage = "VK music search requires a supported mobile-token flow."
+    private let mobileAudioTokenRequiredMessage = "VK music requires mobile audio token."
 
     init(
         session: URLSession,
@@ -96,7 +117,34 @@ final class VKMusicService {
     }
 
     var isConfigured: Bool {
-        configuration != nil
+        credentialStore.credentials() != nil
+    }
+
+    var credentialSnapshot: VKCredentialSnapshot {
+        let credentials = credentialStore.credentials()
+        return VKCredentialSnapshot(
+            hasMobileAudioToken: credentials != nil,
+            hasBundledToken: bundledAccessToken() != nil,
+            userAgent: credentials?.userAgent
+        )
+    }
+
+    func saveMobileAudioCredentials(accessToken: String, userAgent: String) throws {
+        guard let accessToken = sanitizedVKAccessToken(accessToken) else {
+            throw OnlineMusicServiceError.configurationMissing("Enter a VK mobile audio token first.")
+        }
+
+        let resolvedUserAgent = cleanedText(userAgent) ?? Self.defaultMobileUserAgent
+        try credentialStore.save(
+            credentials: VKStoredCredentials(
+                accessToken: accessToken,
+                userAgent: resolvedUserAgent
+            )
+        )
+    }
+
+    func clearMobileAudioCredentials() {
+        credentialStore.clear()
     }
 
     func search(query: String) async throws -> [Track] {
@@ -113,6 +161,10 @@ final class VKMusicService {
         }
 
         let configuration = try configurationOrThrow()
+        guard configuration.source == .keychainMobile else {
+            throw OnlineMusicServiceError.unsupportedSource(mobileAudioTokenRequiredMessage)
+        }
+
         let resolvedCount = min(max(count ?? searchLimit, 1), 200)
         let resolvedOffset = max(offset, 0)
 
@@ -328,7 +380,7 @@ final class VKMusicService {
     private func fetchVKData(from url: URL) async throws -> Data {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(mobileUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(configuration?.userAgent ?? Self.defaultMobileUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         request.setValue("ru-RU,ru;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(vkHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
@@ -376,7 +428,7 @@ final class VKMusicService {
 
         var request = URLRequest(url: remoteURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(mobileUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(configuration?.userAgent ?? Self.defaultMobileUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("ru-RU,ru;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(vkHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
@@ -430,29 +482,46 @@ final class VKMusicService {
     }
 
     private var configuration: VKConfiguration? {
-        // Temporary bundled token. Replace with OAuth sign-in and Keychain storage before release.
-        let rawAccessToken = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.accessToken) as? String
-        let rawAPIVersion = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.apiVersion) as? String
+        if let storedCredentials = credentialStore.credentials() {
+            return VKConfiguration(
+                accessToken: storedCredentials.accessToken,
+                apiVersion: configuredAPIVersion(),
+                userAgent: storedCredentials.userAgent,
+                source: .keychainMobile
+            )
+        }
 
-        guard let accessToken = sanitizedVKAccessToken(rawAccessToken) else {
+        guard let bundledAccessToken = bundledAccessToken() else {
             return nil
         }
 
         return VKConfiguration(
-            accessToken: accessToken,
-            apiVersion: sanitizedVKAPIVersion(rawAPIVersion) ?? defaultAPIVersion
+            accessToken: bundledAccessToken,
+            apiVersion: configuredAPIVersion(),
+            userAgent: Self.defaultMobileUserAgent,
+            source: .bundledToken
         )
+    }
+
+    private func bundledAccessToken() -> String? {
+        let rawAccessToken = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.accessToken) as? String
+        return sanitizedVKAccessToken(rawAccessToken)
+    }
+
+    private func configuredAPIVersion() -> String {
+        let rawAPIVersion = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.apiVersion) as? String
+        return sanitizedVKAPIVersion(rawAPIVersion) ?? defaultAPIVersion
     }
 
     private func configurationOrThrow() throws -> VKConfiguration {
         guard let configuration else {
-            logger("VKAccessToken loaded: missing")
+            logger("VK mobile audio token loaded: missing")
             throw OnlineMusicServiceError.configurationMissing(
-                "VK search requires the Info.plist key VKAccessToken with a token that can call audio.search."
+                "VK music requires mobile audio token."
             )
         }
 
-        logger("VKAccessToken loaded: \(maskedToken(configuration.accessToken))")
+        logger("VK mobile audio token loaded: \(configuration.source == .keychainMobile ? "keychain" : "bundled-token-ignored")")
         logger("VK API version: \(configuration.apiVersion)")
         return configuration
     }
@@ -686,10 +755,6 @@ final class VKMusicService {
         return components.url?.absoluteString ?? url.absoluteString
     }
 
-    private func maskedToken(_ token: String) -> String {
-        guard token.count > 8 else { return token }
-        return "\(token.prefix(4))...\(token.suffix(4))"
-    }
 }
 
 private enum VKInfoPlistKeys {
@@ -700,6 +765,89 @@ private enum VKInfoPlistKeys {
 private struct VKConfiguration {
     let accessToken: String
     let apiVersion: String
+    let userAgent: String
+    let source: VKCredentialSource
+}
+
+private enum VKCredentialSource {
+    case keychainMobile
+    case bundledToken
+}
+
+private struct VKStoredCredentials {
+    let accessToken: String
+    let userAgent: String
+}
+
+private final class VKCredentialKeychainStore {
+    private let service = "FreeMusicPlayer.VKMusicService"
+    private let accessTokenAccount = "VKMobileAudioAccessToken"
+    private let userAgentAccount = "VKMobileAudioUserAgent"
+
+    func credentials() -> VKStoredCredentials? {
+        guard let accessToken = string(for: accessTokenAccount),
+              let userAgent = string(for: userAgentAccount) else {
+            return nil
+        }
+
+        return VKStoredCredentials(accessToken: accessToken, userAgent: userAgent)
+    }
+
+    func save(credentials: VKStoredCredentials) throws {
+        try setString(credentials.accessToken, for: accessTokenAccount)
+        try setString(credentials.userAgent, for: userAgentAccount)
+    }
+
+    func clear() {
+        deleteString(for: accessTokenAccount)
+        deleteString(for: userAgentAccount)
+    }
+
+    private func string(for account: String) -> String? {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8),
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        return value
+    }
+
+    private func setString(_ value: String, for account: String) throws {
+        guard let data = value.data(using: .utf8) else {
+            throw OnlineMusicServiceError.configurationMissing("VK credentials could not be encoded.")
+        }
+
+        deleteString(for: account)
+
+        var query = baseQuery(account: account)
+        query[kSecValueData as String] = data
+        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw OnlineMusicServiceError.configurationMissing("VK credentials could not be saved to Keychain.")
+        }
+    }
+
+    private func deleteString(for account: String) {
+        SecItemDelete(baseQuery(account: account) as CFDictionary)
+    }
+
+    private func baseQuery(account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+    }
 }
 
 private struct VKAudioSearchEnvelope: Decodable {
