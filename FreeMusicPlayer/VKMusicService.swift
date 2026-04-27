@@ -84,7 +84,8 @@ final class VKMusicService {
     private let vkHomepageURL = URL(string: "https://vk.com/")!
     private let defaultAPIVersion = "5.131"
     private let searchLimit = 20
-    private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    private let mobileUserAgent = "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)"
+    private let unsupportedMobileTokenFlowMessage = "VK music search requires a supported mobile-token flow."
 
     init(
         session: URLSession,
@@ -116,10 +117,17 @@ final class VKMusicService {
         let resolvedOffset = max(offset, 0)
 
         var components = URLComponents(url: searchURL, resolvingAgainstBaseURL: false)
+        // Matches vkpymusic's audio.search request shape. The token itself still has to
+        // come from a supported mobile-client flow; a generic public API token is rejected.
         components?.queryItems = [
             URLQueryItem(name: "q", value: cleanedQuery),
             URLQueryItem(name: "count", value: String(resolvedCount)),
             URLQueryItem(name: "offset", value: String(resolvedOffset)),
+            URLQueryItem(name: "sort", value: "0"),
+            URLQueryItem(name: "autocomplete", value: "1"),
+            URLQueryItem(name: "https", value: "1"),
+            URLQueryItem(name: "lang", value: "ru"),
+            URLQueryItem(name: "extended", value: "1"),
             URLQueryItem(name: "access_token", value: configuration.accessToken),
             URLQueryItem(name: "v", value: configuration.apiVersion)
         ]
@@ -320,9 +328,9 @@ final class VKMusicService {
     private func fetchVKData(from url: URL) async throws -> Data {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(mobileUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("ru-RU,ru;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(vkHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
 
         let data: Data
@@ -368,9 +376,9 @@ final class VKMusicService {
 
         var request = URLRequest(url: remoteURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(mobileUserAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("ru-RU,ru;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(vkHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
 
         let temporaryURL: URL
@@ -480,6 +488,10 @@ final class VKMusicService {
 
         if apiError.errorCode == 5 {
             return .authenticationRequired("VK access token was rejected. Update VKAccessToken and try again.")
+        }
+
+        if apiError.errorCode == 3 {
+            return .unsupportedSource(unsupportedMobileTokenFlowMessage)
         }
 
         return .networkFailure("VK returned API error \(apiError.errorCode): \(providerMessage)")
