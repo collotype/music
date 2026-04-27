@@ -16,6 +16,7 @@ import UIKit
 enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Identifiable, Sendable {
     case soundcloud = "soundcloud"
     case spotify = "spotify"
+    case vk = "vk"
 
     var id: String { rawValue }
 
@@ -25,6 +26,8 @@ enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Id
             return "SoundCloud"
         case .spotify:
             return "Spotify"
+        case .vk:
+            return "VK"
         }
     }
 
@@ -34,6 +37,8 @@ enum OnlineTrackProvider: String, Codable, Equatable, Hashable, CaseIterable, Id
             return .soundcloud
         case .spotify:
             return .spotify
+        case .vk:
+            return .vk
         }
     }
 }
@@ -139,6 +144,8 @@ struct OnlineTrackResult: Identifiable, Codable, Equatable, Sendable {
             return !playbackStreams.isEmpty
         case .spotify:
             return false
+        case .vk:
+            return hasDirectHTTPAudioURL
         }
     }
 
@@ -148,6 +155,8 @@ struct OnlineTrackResult: Identifiable, Codable, Equatable, Sendable {
             return playbackStreams.contains { $0.kind == .progressiveMP3 }
         case .spotify:
             return false
+        case .vk:
+            return hasDirectHTTPAudioURL
         }
     }
 
@@ -177,6 +186,8 @@ struct OnlineTrackResult: Identifiable, Codable, Equatable, Sendable {
             return "Playback is not available for this SoundCloud track right now."
         case .spotify:
             return "Spotify results are metadata-only here. Open the track in Spotify instead."
+        case .vk:
+            return "Playback is not available for this VK track right now."
         }
     }
 
@@ -186,7 +197,19 @@ struct OnlineTrackResult: Identifiable, Codable, Equatable, Sendable {
             return "This SoundCloud track cannot be added to your library right now."
         case .spotify:
             return "Spotify tracks cannot be added to your library from this app."
+        case .vk:
+            return "This VK track cannot be added to your library right now."
         }
+    }
+
+    private var hasDirectHTTPAudioURL: Bool {
+        guard let directAudioURL,
+              let parsedURL = URL(string: directAudioURL),
+              let scheme = parsedURL.scheme?.lowercased() else {
+            return false
+        }
+
+        return scheme == "http" || scheme == "https"
     }
 
     private func cleanedDisplayText(_ value: String?) -> String? {
@@ -489,6 +512,12 @@ final class OnlineMusicService {
     private let soundCloudRuntimeState = SoundCloudRuntimeState()
     private let spotifyRuntimeState = SpotifyRuntimeState()
     private let resolvedPlaybackStreamCache = ResolvedPlaybackStreamCache()
+    private lazy var vkMusicService = VKMusicService(
+        session: session,
+        logger: { [weak self] message in
+            self?.debugLog(message)
+        }
+    )
     private lazy var soundCloudClient = SoundCloudClient(
         session: session,
         logger: { [weak self] message in
@@ -567,6 +596,10 @@ final class OnlineMusicService {
         spotifyConfigurationStatus.isEnabled
     }
 
+    var isVKConfigured: Bool {
+        vkMusicService.isConfigured
+    }
+
     func search(_ query: String, provider: OnlineTrackProvider) async throws -> OnlineSearchResults {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
@@ -581,6 +614,8 @@ final class OnlineMusicService {
             return try await searchViaSoundCloud(query: trimmedQuery)
         case .spotify:
             return try await searchViaSpotify(query: trimmedQuery)
+        case .vk:
+            return try await searchViaVK(query: trimmedQuery)
         }
     }
 
@@ -725,7 +760,12 @@ final class OnlineMusicService {
     }
 
     func resolvePlaybackStream(for result: OnlineTrackResult) async throws -> ResolvedAudioStream {
-        guard result.provider == .soundcloud else {
+        switch result.provider {
+        case .soundcloud:
+            break
+        case .vk:
+            return try await vkMusicService.resolvePlaybackStream(for: result)
+        case .spotify:
             throw OnlineMusicServiceError.unsupportedSource(result.playbackUnavailableMessage)
         }
 
@@ -786,7 +826,12 @@ final class OnlineMusicService {
     }
 
     func downloadAudio(for result: OnlineTrackResult) async throws -> URL {
-        guard result.provider == .soundcloud else {
+        switch result.provider {
+        case .soundcloud:
+            break
+        case .vk:
+            return try await vkMusicService.download(result: result)
+        case .spotify:
             throw OnlineMusicServiceError.unsupportedSource(result.offlineDownloadUnavailableMessage)
         }
 
@@ -951,6 +996,10 @@ final class OnlineMusicService {
     }
 
     func resolveTrackResult(for track: Track) async throws -> OnlineTrackResult {
+        if track.source == .vk {
+            return try vkMusicService.onlineTrackResult(from: track)
+        }
+
         guard track.source == .soundcloud else {
             throw OnlineMusicServiceError.unsupportedSource(
                 "This track cannot be added to your library from the player."
@@ -975,6 +1024,30 @@ final class OnlineMusicService {
         }
 
         return result
+    }
+
+    private func searchViaVK(query: String) async throws -> OnlineSearchResults {
+        debugLog("Provider start: VK for query \(query)")
+
+        let results = OnlineSearchResults(
+            tracks: deduplicatedTrackResults(
+                try await vkMusicService.searchResults(query: query)
+            ),
+            artists: [],
+            albums: [],
+            playlists: []
+        )
+
+        logMappedResultCounts(provider: .vk, results: results)
+        debugLog(
+            "Provider finish: VK with tracks=\(results.tracks.count), artists=\(results.artists.count), albums=\(results.albums.count), playlists=\(results.playlists.count)"
+        )
+
+        guard !results.isEmpty else {
+            throw OnlineMusicServiceError.noResults("No VK tracks were found for \"\(query)\".")
+        }
+
+        return results
     }
 
     private func searchViaSoundCloud(query: String) async throws -> OnlineSearchResults {

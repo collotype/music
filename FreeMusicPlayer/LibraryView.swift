@@ -1385,7 +1385,7 @@ struct TrackArtworkView: View {
             return "apple.logo"
         case .youtube:
             return "play.circle.fill"
-        case .soundcloud, .spotify:
+        case .soundcloud, .spotify, .vk:
             return "music.note"
         case .local:
             return "music.note"
@@ -1398,7 +1398,7 @@ struct TrackArtworkView: View {
             return .white.opacity(0.9)
         case .youtube:
             return .red
-        case .soundcloud, .spotify:
+        case .soundcloud, .spotify, .vk:
             return .white
         case .local:
             return .white.opacity(0.85)

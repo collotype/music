@@ -45,6 +45,10 @@
 	<string>18b230e3ea3a4b4db816d971e979c598</string>
 	<key>SpotifyRedirectURI</key>
 	<string>freemusic://spotify-callback</string>
+	<key>VKAccessToken</key>
+	<string></string>
+	<key>VKAPIVersion</key>
+	<string>5.131</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

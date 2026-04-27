@@ -364,7 +364,7 @@ struct PlayerView: View {
             return true
         }
 
-        return currentTrack.source == .soundcloud && currentTrack.sourceID != nil
+        return (currentTrack.source == .soundcloud || currentTrack.source == .vk) && currentTrack.sourceID != nil
     }
 
     private var canToggleFavoriteForCurrentTrack: Bool {
@@ -374,7 +374,7 @@ struct PlayerView: View {
             return true
         }
 
-        return currentTrack.source == .soundcloud && currentTrack.sourceID != nil
+        return (currentTrack.source == .soundcloud || currentTrack.source == .vk) && currentTrack.sourceID != nil
     }
 
     private var downloadButtonSystemImage: String {

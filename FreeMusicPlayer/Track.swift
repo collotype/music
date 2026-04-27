@@ -15,6 +15,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         case appleMusicPreview
         case soundcloud
         case spotify
+        case vk
     }
 
     enum StorageLocation: String, Codable, Sendable {
@@ -249,6 +250,8 @@ extension Track.TrackSource {
             return .soundcloud
         case .spotify:
             return .spotify
+        case .vk:
+            return .vk
         case .local, .youtube, .appleMusicPreview:
             return nil
         }
@@ -256,12 +259,14 @@ extension Track.TrackSource {
 }
 
 extension OnlineTrackProvider {
-    var iconAssetName: String {
+    var iconAssetName: String? {
         switch self {
         case .soundcloud:
             return "SoundCloudProviderIcon"
         case .spotify:
             return "SpotifyProviderIcon"
+        case .vk:
+            return nil
         }
     }
 
@@ -271,6 +276,8 @@ extension OnlineTrackProvider {
             return Color(red: 1.0, green: 0.43, blue: 0.0)
         case .spotify:
             return Color(red: 0.12, green: 0.82, blue: 0.38)
+        case .vk:
+            return Color(red: 0.0, green: 0.47, blue: 0.84)
         }
     }
 
@@ -280,6 +287,19 @@ extension OnlineTrackProvider {
             return Color(red: 0.43, green: 0.12, blue: 0.02)
         case .spotify:
             return Color(red: 0.04, green: 0.19, blue: 0.09)
+        case .vk:
+            return Color(red: 0.02, green: 0.12, blue: 0.22)
+        }
+    }
+
+    var iconFallbackText: String {
+        switch self {
+        case .soundcloud:
+            return "SC"
+        case .spotify:
+            return "SP"
+        case .vk:
+            return "VK"
         }
     }
 }
@@ -289,12 +309,24 @@ struct ProviderIconView: View {
     let size: CGFloat
 
     var body: some View {
-        Image(provider.iconAssetName)
-            .resizable()
-            .interpolation(.high)
-            .scaledToFit()
-            .frame(width: size, height: size)
-            .accessibilityHidden(true)
+        Group {
+            if let iconAssetName = provider.iconAssetName {
+                Image(iconAssetName)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Text(provider.iconFallbackText)
+                    .font(.system(size: max(size * 0.38, 8), weight: .heavy))
+                    .foregroundColor(.white)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(provider.accentColor))
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 

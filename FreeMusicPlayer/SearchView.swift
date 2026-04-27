@@ -29,6 +29,7 @@ struct SearchView: View {
         if OnlineMusicService.shared.isSpotifyConfigured {
             providers.append(.spotify)
         }
+        providers.append(.vk)
         return providers
     }
 
@@ -700,6 +701,8 @@ struct SearchView: View {
             return supportedOnlineProviders.contains(.soundcloud)
         case .spotify:
             return supportedOnlineProviders.contains(.spotify)
+        case .vk:
+            return OnlineMusicService.shared.isVKConfigured
         }
     }
 
