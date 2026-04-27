@@ -83,7 +83,7 @@ final class VKMusicService {
     private let searchURL = URL(string: "https://api.vk.com/method/audio.search")!
     private let vkHomepageURL = URL(string: "https://vk.com/")!
     private let defaultAPIVersion = "5.131"
-    private let searchLimit = 50
+    private let searchLimit = 20
     private let browserUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
     init(
@@ -422,6 +422,7 @@ final class VKMusicService {
     }
 
     private var configuration: VKConfiguration? {
+        // Temporary bundled token. Replace with OAuth sign-in and Keychain storage before release.
         let rawAccessToken = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.accessToken) as? String
         let rawAPIVersion = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.apiVersion) as? String
 

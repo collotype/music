@@ -46,7 +46,7 @@
 	<key>SpotifyRedirectURI</key>
 	<string>freemusic://spotify-callback</string>
 	<key>VKAccessToken</key>
-	<string></string>
+	<string>vk1.a.Us5dB_Ivktrig0pohjYVm8W7e8rjO3oo5CM_mmqaTpHECKrBIKsIjlYvsUncZBx7fvgTmSTzTnxtaJyHUV-fGQl56MMuIzfBuaf8Ijd2A6Mcojmmn2J23rtM6ZdhcArEzJ92zY928WrlW5OCw8_tldQKK8_AYiASOu6-CTcrlBhbnhOQOLsrOFoIdrah2LXo</string>
 	<key>VKAPIVersion</key>
 	<string>5.131</string>
 	<key>UIApplicationSceneManifest</key>
