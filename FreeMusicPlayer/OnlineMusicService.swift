@@ -474,6 +474,9 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
     case unavailableSources
     case authenticationRequired(String)
     case configurationMissing(String)
+    case vkNotConfigured
+    case vkRequiresMobileToken
+    case vkInvalidCredentials
 
     var errorDescription: String? {
         switch self {
@@ -499,6 +502,12 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
             return message
         case .configurationMissing(let message):
             return message
+        case .vkNotConfigured:
+            return "VK Music ещё не подключён."
+        case .vkRequiresMobileToken:
+            return "Для поиска музыки VK нужен специальный мобильный токен и User-Agent."
+        case .vkInvalidCredentials:
+            return "VK не принял эти данные. Проверьте token и User-Agent."
         }
     }
 }
@@ -617,6 +626,10 @@ final class OnlineMusicService {
 
     func clearVKMobileAudioCredentials() {
         vkMusicService.clearMobileAudioCredentials()
+    }
+
+    func checkVKConnection() async throws {
+        try await vkMusicService.checkVKConnection()
     }
 
     func search(_ query: String, provider: OnlineTrackProvider) async throws -> OnlineSearchResults {

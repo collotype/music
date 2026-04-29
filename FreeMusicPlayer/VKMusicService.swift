@@ -76,21 +76,9 @@ struct VKAudioThumb: Decodable, Equatable, Sendable {
 }
 
 struct VKCredentialSnapshot: Equatable, Sendable {
-    let hasMobileAudioToken: Bool
-    let hasBundledToken: Bool
+    let hasCredentials: Bool
+    let maskedAccessToken: String?
     let userAgent: String?
-
-    var statusText: String {
-        if hasMobileAudioToken {
-            return "Mobile audio token saved"
-        }
-
-        if hasBundledToken {
-            return "VK music requires mobile audio token"
-        }
-
-        return "Mobile audio token missing"
-    }
 }
 
 final class VKMusicService {
@@ -105,8 +93,6 @@ final class VKMusicService {
     private let defaultAPIVersion = "5.131"
     private let searchLimit = 20
     static let defaultMobileUserAgent = "KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)"
-    private let unsupportedMobileTokenFlowMessage = "VK music search requires a supported mobile-token flow."
-    private let mobileAudioTokenRequiredMessage = "VK music requires mobile audio token."
 
     init(
         session: URLSession,
@@ -123,21 +109,25 @@ final class VKMusicService {
     var credentialSnapshot: VKCredentialSnapshot {
         let credentials = credentialStore.credentials()
         return VKCredentialSnapshot(
-            hasMobileAudioToken: credentials != nil,
-            hasBundledToken: bundledAccessToken() != nil,
+            hasCredentials: credentials != nil,
+            maskedAccessToken: credentials.map { maskedAccessToken($0.accessToken) },
             userAgent: credentials?.userAgent
         )
     }
 
     func saveMobileAudioCredentials(accessToken: String, userAgent: String) throws {
-        guard let accessToken = sanitizedVKAccessToken(accessToken) else {
-            throw OnlineMusicServiceError.configurationMissing("Enter a VK mobile audio token first.")
+        let storedCredentials = credentialStore.credentials()
+        guard let resolvedAccessToken = sanitizedVKAccessToken(accessToken) ?? storedCredentials?.accessToken else {
+            throw OnlineMusicServiceError.vkNotConfigured
         }
 
-        let resolvedUserAgent = cleanedText(userAgent) ?? Self.defaultMobileUserAgent
+        guard let resolvedUserAgent = cleanedText(userAgent) else {
+            throw OnlineMusicServiceError.configurationMissing("Введите User-Agent для VK Music.")
+        }
+
         try credentialStore.save(
             credentials: VKStoredCredentials(
-                accessToken: accessToken,
+                accessToken: resolvedAccessToken,
                 userAgent: resolvedUserAgent
             )
         )
@@ -161,9 +151,6 @@ final class VKMusicService {
         }
 
         let configuration = try configurationOrThrow()
-        guard configuration.source == .keychainMobile else {
-            throw OnlineMusicServiceError.unsupportedSource(mobileAudioTokenRequiredMessage)
-        }
 
         let resolvedCount = min(max(count ?? searchLimit, 1), 200)
         let resolvedOffset = max(offset, 0)
@@ -189,14 +176,14 @@ final class VKMusicService {
         }
 
         logger("VK URL: \(redactedURLString(requestURL))")
-        let data = try await fetchVKData(from: requestURL)
+        let data = try await fetchVKData(from: requestURL, userAgent: configuration.userAgent)
 
         let envelope: VKAudioSearchEnvelope
         do {
             envelope = try decoder.decode(VKAudioSearchEnvelope.self, from: data)
         } catch {
             logger("VK decode error: \(error.localizedDescription)")
-            throw OnlineMusicServiceError.extractionFailure("VK search returned malformed JSON.")
+            throw OnlineMusicServiceError.extractionFailure("VK вернул неожиданный ответ. Попробуйте позже.")
         }
 
         if let apiError = envelope.error {
@@ -204,12 +191,16 @@ final class VKMusicService {
         }
 
         guard let response = envelope.response else {
-            throw OnlineMusicServiceError.extractionFailure("VK search returned no response payload.")
+            throw OnlineMusicServiceError.extractionFailure("VK вернул пустой ответ. Попробуйте позже.")
         }
 
         return deduplicatedTrackResults(
             response.items.compactMap { makeOnlineTrackResult(from: $0) }
         )
+    }
+
+    func checkVKConnection() async throws {
+        _ = try await searchResults(query: "music", count: 1)
     }
 
     func download(track: Track) async throws -> URL {
@@ -377,10 +368,10 @@ final class VKMusicService {
         )
     }
 
-    private func fetchVKData(from url: URL) async throws -> Data {
+    private func fetchVKData(from url: URL, userAgent: String) async throws -> Data {
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(configuration?.userAgent ?? Self.defaultMobileUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         request.setValue("ru-RU,ru;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(vkHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
@@ -392,17 +383,17 @@ final class VKMusicService {
             (data, response) = try await session.data(for: request)
         } catch {
             logger("VK request error: \(error.localizedDescription)")
-            throw OnlineMusicServiceError.networkFailure("The VK request could not be completed.")
+            throw OnlineMusicServiceError.networkFailure("Не удалось подключиться к VK. Проверьте интернет.")
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw OnlineMusicServiceError.networkFailure("VK returned an invalid response.")
+            throw OnlineMusicServiceError.networkFailure("Не удалось подключиться к VK. Проверьте интернет.")
         }
 
         logger("VK status: \(httpResponse.statusCode)")
 
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw OnlineMusicServiceError.networkFailure("VK returned HTTP \(httpResponse.statusCode).")
+            throw OnlineMusicServiceError.networkFailure("Не удалось подключиться к VK. Проверьте интернет.")
         }
 
         return data
@@ -414,6 +405,8 @@ final class VKMusicService {
         expectedDuration: TimeInterval,
         fallbackFileExtension: String?
     ) async throws -> URL {
+        let userAgent = try configurationOrThrow().userAgent
+
         if expectedDuration > 7200 {
             throw OnlineMusicServiceError.unsupportedSource(
                 "This track is too long to download. Tracks over 2 hours are not supported."
@@ -428,7 +421,7 @@ final class VKMusicService {
 
         var request = URLRequest(url: remoteURL)
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.setValue(configuration?.userAgent ?? Self.defaultMobileUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("audio/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("ru-RU,ru;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         request.setValue(vkHomepageURL.absoluteString, forHTTPHeaderField: "Referer")
@@ -486,26 +479,11 @@ final class VKMusicService {
             return VKConfiguration(
                 accessToken: storedCredentials.accessToken,
                 apiVersion: configuredAPIVersion(),
-                userAgent: storedCredentials.userAgent,
-                source: .keychainMobile
+                userAgent: storedCredentials.userAgent
             )
         }
 
-        guard let bundledAccessToken = bundledAccessToken() else {
-            return nil
-        }
-
-        return VKConfiguration(
-            accessToken: bundledAccessToken,
-            apiVersion: configuredAPIVersion(),
-            userAgent: Self.defaultMobileUserAgent,
-            source: .bundledToken
-        )
-    }
-
-    private func bundledAccessToken() -> String? {
-        let rawAccessToken = Bundle.main.object(forInfoDictionaryKey: VKInfoPlistKeys.accessToken) as? String
-        return sanitizedVKAccessToken(rawAccessToken)
+        return nil
     }
 
     private func configuredAPIVersion() -> String {
@@ -516,12 +494,10 @@ final class VKMusicService {
     private func configurationOrThrow() throws -> VKConfiguration {
         guard let configuration else {
             logger("VK mobile audio token loaded: missing")
-            throw OnlineMusicServiceError.configurationMissing(
-                "VK music requires mobile audio token."
-            )
+            throw OnlineMusicServiceError.vkNotConfigured
         }
 
-        logger("VK mobile audio token loaded: \(configuration.source == .keychainMobile ? "keychain" : "bundled-token-ignored")")
+        logger("VK mobile audio token loaded: keychain")
         logger("VK API version: \(configuration.apiVersion)")
         return configuration
     }
@@ -556,14 +532,19 @@ final class VKMusicService {
         let providerMessage = cleanedText(apiError.errorMsg) ?? "VK returned API error \(apiError.errorCode)."
 
         if apiError.errorCode == 5 {
-            return .authenticationRequired("VK access token was rejected. Update VKAccessToken and try again.")
+            return .vkInvalidCredentials
         }
 
         if apiError.errorCode == 3 {
-            return .unsupportedSource(unsupportedMobileTokenFlowMessage)
+            return .vkRequiresMobileToken
         }
 
-        return .networkFailure("VK returned API error \(apiError.errorCode): \(providerMessage)")
+        if providerMessage.localizedCaseInsensitiveContains("access_token") ||
+            providerMessage.localizedCaseInsensitiveContains("token") {
+            return .vkInvalidCredentials
+        }
+
+        return .networkFailure("Не удалось подключиться к VK. Проверьте интернет.")
     }
 
     private func bestArtworkURL(from thumb: VKAudioThumb?) -> String? {
@@ -755,10 +736,17 @@ final class VKMusicService {
         return components.url?.absoluteString ?? url.absoluteString
     }
 
+    private func maskedAccessToken(_ accessToken: String) -> String {
+        guard accessToken.count > 14 else {
+            return "***"
+        }
+
+        return "\(accessToken.prefix(11))...\(accessToken.suffix(3))"
+    }
+
 }
 
 private enum VKInfoPlistKeys {
-    static let accessToken = "VKAccessToken"
     static let apiVersion = "VKAPIVersion"
 }
 
@@ -766,12 +754,6 @@ private struct VKConfiguration {
     let accessToken: String
     let apiVersion: String
     let userAgent: String
-    let source: VKCredentialSource
-}
-
-private enum VKCredentialSource {
-    case keychainMobile
-    case bundledToken
 }
 
 private struct VKStoredCredentials {

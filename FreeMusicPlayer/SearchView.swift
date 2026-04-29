@@ -21,6 +21,7 @@ struct SearchView: View {
     @State private var onlineResults: OnlineSearchResults = .empty
     @State private var isSearchingOnline: Bool = false
     @State private var onlineStatusMessage: String?
+    @State private var shouldShowVKSettingsAction: Bool = false
     @State private var searchTask: Task<Void, Never>?
     @State private var selectedCategory: SearchCategory = .tracks
 
@@ -113,6 +114,7 @@ struct SearchView: View {
             guard let newValue,
                   audioPlayer.currentTrack?.source != .local else { return }
             onlineStatusMessage = newValue
+            shouldShowVKSettingsAction = false
         }
         .onAppear {
             ensureSupportedProviderSelection()
@@ -149,6 +151,7 @@ struct SearchView: View {
                             localResults = []
                             onlineResults = .empty
                             onlineStatusMessage = nil
+                            shouldShowVKSettingsAction = false
                             isSearchingOnline = false
                         } label: {
                             Image(systemName: "xmark.circle.fill")
@@ -511,6 +514,7 @@ struct SearchView: View {
             localResults = []
             onlineResults = .empty
             onlineStatusMessage = nil
+            shouldShowVKSettingsAction = false
             isSearchingOnline = false
             return
         }
@@ -522,6 +526,7 @@ struct SearchView: View {
         logResultCounts(for: trimmedQuery)
         onlineResults = .empty
         onlineStatusMessage = nil
+        shouldShowVKSettingsAction = false
 
         guard shouldSearchOnline else {
             isSearchingOnline = false
@@ -529,6 +534,13 @@ struct SearchView: View {
         }
 
         let provider = selectedProvider
+        if provider == .vk && !OnlineMusicService.shared.isVKConfigured {
+            isSearchingOnline = false
+            onlineStatusMessage = "VK Music не подключён. Откройте Настройки → VK Music, чтобы подключить поиск."
+            shouldShowVKSettingsAction = true
+            return
+        }
+
         isSearchingOnline = true
         debugLog("Provider search start: \(provider.displayName) for \(trimmedQuery)")
 
@@ -562,13 +574,20 @@ struct SearchView: View {
                     switch onlineError {
                     case .noResults(_):
                         onlineStatusMessage = nil
+                        shouldShowVKSettingsAction = false
                         debugLog("Provider search end: \(provider.displayName) with 0 results")
                     case .timedOut(let message):
                         onlineStatusMessage = message
+                        shouldShowVKSettingsAction = false
                     case .configurationMissing(let message):
                         onlineStatusMessage = message
+                        shouldShowVKSettingsAction = false
+                    case .vkNotConfigured:
+                        onlineStatusMessage = "VK Music не подключён. Откройте Настройки → VK Music, чтобы подключить поиск."
+                        shouldShowVKSettingsAction = true
                     default:
                         onlineStatusMessage = onlineError.localizedDescription
+                        shouldShowVKSettingsAction = false
                     }
                 }
             } catch {
@@ -580,6 +599,7 @@ struct SearchView: View {
                     onlineResults = .empty
                     isSearchingOnline = false
                     onlineStatusMessage = error.localizedDescription
+                    shouldShowVKSettingsAction = false
                 }
             }
         }
@@ -635,6 +655,7 @@ struct SearchView: View {
         debugLog("Provider \(provider.displayName) enabled: \(isProviderAvailable(provider) ? "yes" : "no")")
         selectedProviderRawValue = provider.rawValue
         onlineStatusMessage = nil
+        shouldShowVKSettingsAction = false
 
         guard !trimmedSearchText.isEmpty else { return }
         performSearch(searchText, shouldSearchOnline: true)
@@ -643,11 +664,22 @@ struct SearchView: View {
     @ViewBuilder
     private func onlineStatusRow(for category: SearchCategory) -> some View {
         if let onlineStatusMessage {
-            SearchStatusRow(
-                icon: "wifi.exclamationmark",
-                title: unavailableOnlineTitle,
-                subtitle: onlineStatusMessage
-            )
+            if shouldShowVKSettingsAction {
+                SearchStatusRow(
+                    icon: "wifi.exclamationmark",
+                    title: "VK Music не подключён",
+                    subtitle: onlineStatusMessage,
+                    actionTitle: "Открыть настройки"
+                ) {
+                    router.navigate(to: .settings)
+                }
+            } else {
+                SearchStatusRow(
+                    icon: "wifi.exclamationmark",
+                    title: unavailableOnlineTitle,
+                    subtitle: onlineStatusMessage
+                )
+            }
         } else {
             SearchStatusRow(
                 icon: "note.slash",
