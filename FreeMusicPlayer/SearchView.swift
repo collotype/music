@@ -536,7 +536,7 @@ struct SearchView: View {
         let provider = selectedProvider
         if provider == .vk && !OnlineMusicService.shared.isVKConfigured {
             isSearchingOnline = false
-            onlineStatusMessage = "VK Music не подключён. Откройте Настройки → VK Music, чтобы подключить поиск."
+            onlineStatusMessage = "VK Music не подключён. Войдите в VK в настройках."
             shouldShowVKSettingsAction = true
             return
         }
@@ -583,7 +583,13 @@ struct SearchView: View {
                         onlineStatusMessage = message
                         shouldShowVKSettingsAction = false
                     case .vkNotConfigured:
-                        onlineStatusMessage = "VK Music не подключён. Откройте Настройки → VK Music, чтобы подключить поиск."
+                        onlineStatusMessage = "VK Music не подключён. Войдите в VK в настройках."
+                        shouldShowVKSettingsAction = true
+                    case .vkMusicAccessUnavailable, .vkRequiresMobileToken:
+                        onlineStatusMessage = "VK подключён, но текущий токен не поддерживает поиск музыки."
+                        shouldShowVKSettingsAction = true
+                    case .vkTokenExpired:
+                        onlineStatusMessage = "Сессия VK истекла. Войдите в VK заново в настройках."
                         shouldShowVKSettingsAction = true
                     default:
                         onlineStatusMessage = onlineError.localizedDescription
@@ -667,7 +673,7 @@ struct SearchView: View {
             if shouldShowVKSettingsAction {
                 SearchStatusRow(
                     icon: "wifi.exclamationmark",
-                    title: "VK Music не подключён",
+                    title: vkUnavailableStatusTitle,
                     subtitle: onlineStatusMessage,
                     actionTitle: "Открыть настройки"
                 ) {
@@ -727,6 +733,14 @@ struct SearchView: View {
         return "\(selectedProvider.displayName) search unavailable"
     }
 
+    private var vkUnavailableStatusTitle: String {
+        if onlineStatusMessage?.contains("текущий токен") == true {
+            return "Нужен VK Music доступ"
+        }
+
+        return "VK Music не подключён"
+    }
+
     private func isProviderAvailable(_ provider: OnlineTrackProvider) -> Bool {
         switch provider {
         case .soundcloud:
@@ -734,7 +748,8 @@ struct SearchView: View {
         case .spotify:
             return supportedOnlineProviders.contains(.spotify)
         case .vk:
-            return OnlineMusicService.shared.isVKConfigured
+            let status = OnlineMusicService.shared.vkConnectionStatus
+            return status != .notConfigured && status != .expired
         }
     }
 

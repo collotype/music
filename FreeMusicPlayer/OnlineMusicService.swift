@@ -477,6 +477,8 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
     case vkNotConfigured
     case vkRequiresMobileToken
     case vkInvalidCredentials
+    case vkMusicAccessUnavailable
+    case vkTokenExpired
 
     var errorDescription: String? {
         switch self {
@@ -508,6 +510,10 @@ enum OnlineMusicServiceError: LocalizedError, Equatable {
             return "Для поиска музыки VK нужен специальный мобильный токен и User-Agent."
         case .vkInvalidCredentials:
             return "VK не принял эти данные. Проверьте token и User-Agent."
+        case .vkMusicAccessUnavailable:
+            return "VK подключён, но текущий токен не поддерживает поиск музыки."
+        case .vkTokenExpired:
+            return "Сессия VK истекла. Войдите в VK ещё раз."
         }
     }
 }
@@ -521,11 +527,17 @@ final class OnlineMusicService {
     private let soundCloudRuntimeState = SoundCloudRuntimeState()
     private let spotifyRuntimeState = SpotifyRuntimeState()
     private let resolvedPlaybackStreamCache = ResolvedPlaybackStreamCache()
+    private let vkCredentialsStore = VKCredentialsStore()
     private lazy var vkMusicService = VKMusicService(
         session: session,
+        credentialsStore: vkCredentialsStore,
         logger: { [weak self] message in
             self?.debugLog(message)
         }
+    )
+    private lazy var vkAuthService = VKAuthService(
+        session: session,
+        credentialsStore: vkCredentialsStore
     )
     private lazy var soundCloudClient = SoundCloudClient(
         session: session,
@@ -613,23 +625,58 @@ final class OnlineMusicService {
         vkMusicService.credentialSnapshot
     }
 
+    var vkConnectionStatus: VKConnectionStatus {
+        let snapshot = vkCredentialSnapshot
+        if !snapshot.hasCredentials {
+            return .notConfigured
+        }
+        if snapshot.isExpired {
+            return .expired
+        }
+        return snapshot.source == .oauth ? .loggedIn : .validBasicToken
+    }
+
+    var vkAuthConfiguration: VKAuthConfiguration? {
+        vkAuthService.configuration
+    }
+
     var defaultVKMobileUserAgent: String {
         VKMusicService.defaultMobileUserAgent
     }
 
     func saveVKMobileAudioCredentials(accessToken: String, userAgent: String) throws {
-        try vkMusicService.saveMobileAudioCredentials(
+        try vkAuthService.saveManualCredentials(
             accessToken: accessToken,
             userAgent: userAgent
         )
     }
 
     func clearVKMobileAudioCredentials() {
-        vkMusicService.clearMobileAudioCredentials()
+        vkAuthService.clearCredentials()
     }
 
-    func checkVKConnection() async throws {
-        try await vkMusicService.checkVKConnection()
+    @MainActor
+    func authorizeVK() async throws -> VKConnectionStatus {
+        _ = try await vkAuthService.authorize()
+        let basicStatus = await vkAuthService.checkBasicToken()
+        guard basicStatus == .validBasicToken else {
+            return basicStatus
+        }
+
+        return await vkMusicService.checkVKMusicAccess()
+    }
+
+    func checkVKConnection() async -> VKConnectionStatus {
+        let basicStatus = await vkAuthService.checkBasicToken()
+        guard basicStatus == .validBasicToken else {
+            return basicStatus
+        }
+
+        return await vkMusicService.checkVKMusicAccess()
+    }
+
+    func checkVKMusicAccess() async -> VKConnectionStatus {
+        await vkMusicService.checkVKMusicAccess()
     }
 
     func search(_ query: String, provider: OnlineTrackProvider) async throws -> OnlineSearchResults {

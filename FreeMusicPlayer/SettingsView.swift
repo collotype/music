@@ -7,49 +7,17 @@
 
 import SwiftUI
 
-private enum VKConnectionStatus: Equatable {
-    case notConnected
-    case connected
-    case needsSetup
-    case connectionError
-
-    var title: String {
-        switch self {
-        case .notConnected:
-            return "Не подключено"
-        case .connected:
-            return "Подключено"
-        case .needsSetup:
-            return "Нужна настройка"
-        case .connectionError:
-            return "Ошибка подключения"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .notConnected:
-            return .gray
-        case .connected:
-            return .green
-        case .needsSetup:
-            return .orange
-        case .connectionError:
-            return .red
-        }
-    }
-}
-
 struct SettingsView: View {
     @EnvironmentObject var dataManager: DataManager
     @EnvironmentObject var audioPlayer: AudioPlayer
     @Environment(\.openURL) private var openURL
 
     @State private var showClearConfirm = false
-    @State private var showVKSetup = false
+    @State private var showVKManualSetup = false
+    @State private var isAuthorizingVK = false
     @State private var isCheckingVKConnection = false
     @State private var vkCredentialSnapshot = OnlineMusicService.shared.vkCredentialSnapshot
-    @State private var vkConnectionStatus: VKConnectionStatus = OnlineMusicService.shared.isVKConfigured ? .needsSetup : .notConnected
+    @State private var vkConnectionStatus = OnlineMusicService.shared.vkConnectionStatus
     @State private var vkCredentialMessage: String?
 
     private var appVersionLabel: String {
@@ -163,72 +131,7 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                settingsSection(title: "VK Music", icon: "music.note") {
-                    settingsValueRow(
-                        title: "Статус подключения",
-                        subtitle: "Поиск VK Music",
-                        value: vkConnectionStatus.title,
-                        valueColor: vkConnectionStatus.color
-                    )
-
-                    Text("Чтобы искать музыку во VK, приложению нужен доступ к VK Music. Сейчас автоматический вход ещё не настроен, поэтому можно добавить access token и User-Agent вручную.")
-                        .font(.system(size: 13))
-                        .foregroundColor(.gray)
-                        .padding(.vertical, 6)
-
-                    if let maskedAccessToken = vkCredentialSnapshot.maskedAccessToken {
-                        settingsValueRow(
-                            title: "Access token",
-                            subtitle: "Сохранён в Keychain",
-                            value: maskedAccessToken,
-                            valueColor: .white.opacity(0.72)
-                        )
-                    }
-
-                    Button {
-                        showVKSetup = true
-                    } label: {
-                        settingsActionRow(
-                            icon: "slider.horizontal.3",
-                            title: "Настроить VK",
-                            subtitle: "Добавить token и User-Agent вручную."
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        checkVKConnection()
-                    } label: {
-                        settingsActionRow(
-                            icon: isCheckingVKConnection ? "hourglass" : "checkmark.seal",
-                            title: "Проверить подключение",
-                            subtitle: "Выполнить лёгкий запрос к VK Music."
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isCheckingVKConnection)
-
-                    if vkCredentialSnapshot.hasCredentials {
-                        Button(role: .destructive) {
-                            clearVKCredentials()
-                        } label: {
-                            settingsActionRow(
-                                icon: "power",
-                                title: "Отключить VK",
-                                subtitle: "Удалить сохранённые данные VK из Keychain.",
-                                iconColor: .red
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if let vkCredentialMessage {
-                        Text(vkCredentialMessage)
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
-                            .padding(.vertical, 4)
-                    }
-                }
+                vkMusicSection
 
                 settingsSection(title: "About", icon: "info.circle.fill") {
                     settingsValueRow(
@@ -277,8 +180,8 @@ struct SettingsView: View {
         .onAppear {
             refreshVKCredentialState()
         }
-        .sheet(isPresented: $showVKSetup) {
-            VKConnectionSetupView { status, message in
+        .sheet(isPresented: $showVKManualSetup) {
+            VKManualCredentialsView { status, message in
                 applyVKConnectionUpdate(status: status, message: message)
             }
         }
@@ -291,6 +194,127 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes imported tracks, playlists, favorite artists, and saved settings.")
+        }
+    }
+
+    private var vkMusicSection: some View {
+        settingsSection(title: "VK Music", icon: "music.note") {
+            settingsValueRow(
+                title: "Статус",
+                subtitle: "Поиск VK Music",
+                value: vkConnectionStatus.title,
+                valueColor: vkStatusColor
+            )
+
+            Text(vkConnectionStatus.detail)
+                .font(.system(size: 13))
+                .foregroundColor(.gray)
+                .padding(.vertical, 6)
+
+            if let displayIdentity = vkCredentialSnapshot.displayIdentity {
+                settingsValueRow(
+                    title: vkCredentialSnapshot.userId == nil ? "Access token" : "Аккаунт VK",
+                    subtitle: vkCredentialSnapshot.source == .manual ? "Advanced credentials в Keychain" : "OAuth credentials в Keychain",
+                    value: displayIdentity,
+                    valueColor: .white.opacity(0.72)
+                )
+            }
+
+            if vkCredentialSnapshot.hasCredentials {
+                Button {
+                    checkVKConnection()
+                } label: {
+                    settingsActionRow(
+                        icon: isCheckingVKConnection ? "hourglass" : "checkmark.seal",
+                        title: "Проверить подключение",
+                        subtitle: "Проверить VK login и доступ к VK Music."
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isCheckingVKConnection || isAuthorizingVK)
+
+                if vkConnectionStatus == .musicAccessUnavailable {
+                    Text("Вход выполнен, но этот токен не даёт доступ к VK Music. Нужен токен, поддерживающий музыкальный API.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.orange)
+                        .padding(.vertical, 4)
+                }
+
+                Button {
+                    showVKManualSetup = true
+                } label: {
+                    settingsActionRow(
+                        icon: "wrench.and.screwdriver",
+                        title: "Добавить данные вручную",
+                        subtitle: "Advanced / Для тестирования."
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button(role: .destructive) {
+                    logoutVK()
+                } label: {
+                    settingsActionRow(
+                        icon: "rectangle.portrait.and.arrow.right",
+                        title: "Выйти из VK",
+                        subtitle: "Удалить VK credentials из Keychain.",
+                        iconColor: .red
+                    )
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    authorizeVK()
+                } label: {
+                    settingsActionRow(
+                        icon: isAuthorizingVK ? "hourglass" : "person.crop.circle.badge.plus",
+                        title: "Войти через VK",
+                        subtitle: "Открыть официальный VK OAuth вход."
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isAuthorizingVK || isCheckingVKConnection)
+
+                Button {
+                    showVKManualSetup = true
+                } label: {
+                    settingsActionRow(
+                        icon: "wrench.and.screwdriver",
+                        title: "Добавить данные вручную",
+                        subtitle: "Advanced / Для тестирования."
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            if OnlineMusicService.shared.vkAuthConfiguration == nil {
+                Text("Для автоматического входа нужно указать VKClientID в Info.plist или build settings.")
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                    .padding(.vertical, 4)
+            }
+
+            if let vkCredentialMessage {
+                Text(vkCredentialMessage)
+                    .font(.system(size: 12))
+                    .foregroundColor(.gray)
+                    .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private var vkStatusColor: Color {
+        switch vkConnectionStatus {
+        case .notConfigured:
+            return .gray
+        case .loggedIn, .validBasicToken:
+            return .orange
+        case .musicAccessAvailable:
+            return .green
+        case .musicAccessUnavailable:
+            return .orange
+        case .invalidCredentials, .expired, .networkError:
+            return .red
         }
     }
 
@@ -377,6 +401,7 @@ struct SettingsView: View {
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(valueColor)
+                .multilineTextAlignment(.trailing)
         }
         .padding(.vertical, 8)
     }
@@ -405,11 +430,35 @@ struct SettingsView: View {
         .padding(.vertical, 10)
     }
 
-    private func clearVKCredentials() {
-        OnlineMusicService.shared.clearVKMobileAudioCredentials()
-        vkCredentialSnapshot = OnlineMusicService.shared.vkCredentialSnapshot
-        vkConnectionStatus = .notConnected
-        vkCredentialMessage = "VK Music отключён. Сохранённые token и User-Agent удалены."
+    private func authorizeVK() {
+        guard !isAuthorizingVK else { return }
+
+        isAuthorizingVK = true
+        vkCredentialMessage = nil
+
+        Task {
+            do {
+                let status = try await OnlineMusicService.shared.authorizeVK()
+                await MainActor.run {
+                    applyVKConnectionUpdate(status: status, message: message(for: status))
+                    isAuthorizingVK = false
+                }
+            } catch let error as OnlineMusicServiceError {
+                await MainActor.run {
+                    refreshVKCredentialState()
+                    vkConnectionStatus = .invalidCredentials
+                    vkCredentialMessage = error.localizedDescription
+                    isAuthorizingVK = false
+                }
+            } catch {
+                await MainActor.run {
+                    refreshVKCredentialState()
+                    vkConnectionStatus = .networkError
+                    vkCredentialMessage = "Не удалось войти в VK. Попробуйте ещё раз."
+                    isAuthorizingVK = false
+                }
+            }
+        }
     }
 
     private func checkVKConnection() {
@@ -419,38 +468,17 @@ struct SettingsView: View {
         vkCredentialMessage = nil
 
         Task {
-            do {
-                try await OnlineMusicService.shared.checkVKConnection()
-                await MainActor.run {
-                    vkCredentialSnapshot = OnlineMusicService.shared.vkCredentialSnapshot
-                    vkConnectionStatus = .connected
-                    vkCredentialMessage = "VK Music подключён. Поиск готов к работе."
-                    isCheckingVKConnection = false
-                }
-            } catch let error as OnlineMusicServiceError {
-                await MainActor.run {
-                    handleVKConnectionError(error)
-                    isCheckingVKConnection = false
-                }
-            } catch {
-                await MainActor.run {
-                    vkConnectionStatus = .connectionError
-                    vkCredentialMessage = "Не удалось подключиться к VK. Проверьте интернет."
-                    isCheckingVKConnection = false
-                }
+            let status = await OnlineMusicService.shared.checkVKConnection()
+            await MainActor.run {
+                applyVKConnectionUpdate(status: status, message: message(for: status))
+                isCheckingVKConnection = false
             }
         }
     }
 
-    private func handleVKConnectionError(_ error: OnlineMusicServiceError) {
-        refreshVKCredentialState()
-        switch error {
-        case .vkNotConfigured:
-            vkConnectionStatus = .notConnected
-        default:
-            vkConnectionStatus = .connectionError
-        }
-        vkCredentialMessage = error.localizedDescription
+    private func logoutVK() {
+        OnlineMusicService.shared.clearVKMobileAudioCredentials()
+        applyVKConnectionUpdate(status: .notConfigured, message: "Вы вышли из VK. Credentials удалены из Keychain.")
     }
 
     private func applyVKConnectionUpdate(status: VKConnectionStatus, message: String?) {
@@ -461,10 +489,19 @@ struct SettingsView: View {
 
     private func refreshVKCredentialState() {
         vkCredentialSnapshot = OnlineMusicService.shared.vkCredentialSnapshot
-        if !vkCredentialSnapshot.hasCredentials {
-            vkConnectionStatus = .notConnected
-        } else if vkConnectionStatus == .notConnected {
-            vkConnectionStatus = .needsSetup
+        vkConnectionStatus = OnlineMusicService.shared.vkConnectionStatus
+    }
+
+    private func message(for status: VKConnectionStatus) -> String {
+        switch status {
+        case .musicAccessAvailable:
+            return "VK login работает, и VK Music search доступен."
+        case .validBasicToken:
+            return "VK login работает. VK Music доступ проверяется отдельно."
+        case .musicAccessUnavailable:
+            return "Ваш VK login работает, но этот токен не поддерживает VK Music search."
+        default:
+            return status.detail
         }
     }
 
@@ -480,7 +517,7 @@ struct SettingsView: View {
     }
 }
 
-private struct VKConnectionSetupView: View {
+private struct VKManualCredentialsView: View {
     @Environment(\.dismiss) private var dismiss
 
     let onCredentialsChanged: (VKConnectionStatus, String?) -> Void
@@ -490,7 +527,6 @@ private struct VKConnectionSetupView: View {
     @State private var snapshot = OnlineMusicService.shared.vkCredentialSnapshot
     @State private var statusMessage: String?
     @State private var isCheckingConnection = false
-    @State private var showLoginUnavailableAlert = false
 
     var body: some View {
         NavigationStack {
@@ -499,21 +535,10 @@ private struct VKConnectionSetupView: View {
 
                 List {
                     Section {
-                        Text("VK Music требует специальный access token и User-Agent. Обычный токен из браузера может не работать.")
+                        Text("Advanced / Для тестирования. VK Music требует специальный access token и User-Agent. Обычный токен из браузера может не работать.")
                             .font(.system(size: 14))
                             .foregroundColor(.gray)
                             .padding(.vertical, 6)
-
-                        Button {
-                            showLoginUnavailableAlert = true
-                        } label: {
-                            setupActionRow(
-                                icon: "person.crop.circle.badge.plus",
-                                title: "Войти через VK",
-                                subtitle: "Автоматический вход появится позже."
-                            )
-                        }
-                        .buttonStyle(.plain)
                     }
 
                     Section {
@@ -548,7 +573,7 @@ private struct VKConnectionSetupView: View {
                         }
                         .padding(.vertical, 8)
 
-                        Text("Если вы не знаете, что сюда вводить, оставьте поля пустыми. Позже здесь появится вход через VK.")
+                        Text("Если вы не знаете, что сюда вводить, оставьте поля пустыми и используйте «Войти через VK» на экране настроек.")
                             .font(.system(size: 12))
                             .foregroundColor(.gray)
                             .padding(.vertical, 6)
@@ -572,7 +597,7 @@ private struct VKConnectionSetupView: View {
                             setupActionRow(
                                 icon: isCheckingConnection ? "hourglass" : "checkmark.seal",
                                 title: "Проверить",
-                                subtitle: "Проверить, принимает ли VK эти данные."
+                                subtitle: "Проверить VK login и VK Music доступ."
                             )
                         }
                         .buttonStyle(.plain)
@@ -603,7 +628,7 @@ private struct VKConnectionSetupView: View {
                 .scrollContentBackground(.hidden)
                 .background(Color.black)
             }
-            .navigationTitle("Подключение VK")
+            .navigationTitle("Данные VK")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -614,11 +639,6 @@ private struct VKConnectionSetupView: View {
             }
             .onAppear {
                 refreshSnapshot()
-            }
-            .alert("Автоматический вход VK пока не настроен.", isPresented: $showLoginUnavailableAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text("Сейчас можно добавить token и User-Agent вручную.")
             }
         }
     }
@@ -652,18 +672,16 @@ private struct VKConnectionSetupView: View {
         let cleanedUserAgent = cleanedText(userAgentInput)
 
         guard cleanedAccessToken != nil || snapshot.hasCredentials else {
-            OnlineMusicService.shared.clearVKMobileAudioCredentials()
-            refreshSnapshot(resetUserAgent: false)
-            let message = "Добавьте access token и User-Agent, чтобы подключить VK Music."
+            let message = "Добавьте access token и User-Agent, чтобы подключить VK Music вручную."
             statusMessage = message
-            onCredentialsChanged(.notConnected, message)
+            onCredentialsChanged(.notConfigured, message)
             return false
         }
 
         guard let cleanedUserAgent else {
-            let message = "Добавьте User-Agent, чтобы подключить VK Music."
+            let message = "Добавьте User-Agent, чтобы подключить VK Music вручную."
             statusMessage = message
-            onCredentialsChanged(snapshot.hasCredentials ? .needsSetup : .notConnected, message)
+            onCredentialsChanged(snapshot.hasCredentials ? .validBasicToken : .notConfigured, message)
             return false
         }
 
@@ -676,23 +694,23 @@ private struct VKConnectionSetupView: View {
             refreshSnapshot(resetUserAgent: true)
 
             if showSuccessMessage {
-                let message = "Данные VK сохранены в Keychain. Нажмите «Проверить», чтобы проверить подключение."
+                let message = "Данные VK сохранены в Keychain. Нажмите «Проверить», чтобы проверить доступ."
                 statusMessage = message
-                onCredentialsChanged(.needsSetup, message)
+                onCredentialsChanged(.validBasicToken, message)
             } else {
-                onCredentialsChanged(.needsSetup, nil)
+                onCredentialsChanged(.validBasicToken, nil)
             }
 
             return true
         } catch let error as OnlineMusicServiceError {
             let message = error.localizedDescription
             statusMessage = message
-            onCredentialsChanged(.connectionError, message)
+            onCredentialsChanged(.invalidCredentials, message)
             return false
         } catch {
             let message = "Не удалось сохранить данные VK."
             statusMessage = message
-            onCredentialsChanged(.connectionError, message)
+            onCredentialsChanged(.networkError, message)
             return false
         }
     }
@@ -705,32 +723,13 @@ private struct VKConnectionSetupView: View {
         statusMessage = nil
 
         Task {
-            do {
-                try await OnlineMusicService.shared.checkVKConnection()
-                await MainActor.run {
-                    refreshSnapshot(resetUserAgent: true)
-                    let message = "VK Music подключён. Поиск готов к работе."
-                    statusMessage = message
-                    onCredentialsChanged(.connected, message)
-                    isCheckingConnection = false
-                }
-            } catch let error as OnlineMusicServiceError {
-                await MainActor.run {
-                    refreshSnapshot(resetUserAgent: true)
-                    let status: VKConnectionStatus = error == .vkNotConfigured ? .notConnected : .connectionError
-                    let message = error.localizedDescription
-                    statusMessage = message
-                    onCredentialsChanged(status, message)
-                    isCheckingConnection = false
-                }
-            } catch {
-                await MainActor.run {
-                    refreshSnapshot(resetUserAgent: true)
-                    let message = "Не удалось подключиться к VK. Проверьте интернет."
-                    statusMessage = message
-                    onCredentialsChanged(.connectionError, message)
-                    isCheckingConnection = false
-                }
+            let status = await OnlineMusicService.shared.checkVKConnection()
+            await MainActor.run {
+                refreshSnapshot(resetUserAgent: true)
+                let message = message(for: status)
+                statusMessage = message
+                onCredentialsChanged(status, message)
+                isCheckingConnection = false
             }
         }
     }
@@ -741,15 +740,26 @@ private struct VKConnectionSetupView: View {
         userAgentInput = ""
         refreshSnapshot(resetUserAgent: false)
 
-        let message = "VK Music отключён. Сохранённые token и User-Agent удалены."
+        let message = "VK credentials удалены из Keychain."
         statusMessage = message
-        onCredentialsChanged(.notConnected, message)
+        onCredentialsChanged(.notConfigured, message)
     }
 
     private func refreshSnapshot(resetUserAgent: Bool = true) {
         snapshot = OnlineMusicService.shared.vkCredentialSnapshot
         if resetUserAgent {
             userAgentInput = snapshot.userAgent ?? ""
+        }
+    }
+
+    private func message(for status: VKConnectionStatus) -> String {
+        switch status {
+        case .musicAccessAvailable:
+            return "VK Music подключён. Поиск готов к работе."
+        case .musicAccessUnavailable:
+            return "Ваш VK login работает, но этот токен не поддерживает VK Music search."
+        default:
+            return status.detail
         }
     }
 

@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Security
 
 struct VKTrack: Decodable, Equatable, Sendable {
     let id: Int?
@@ -75,18 +74,12 @@ struct VKAudioThumb: Decodable, Equatable, Sendable {
     }
 }
 
-struct VKCredentialSnapshot: Equatable, Sendable {
-    let hasCredentials: Bool
-    let maskedAccessToken: String?
-    let userAgent: String?
-}
-
 final class VKMusicService {
     private let fileManager = FileManager.default
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let logger: @Sendable (String) -> Void
-    private let credentialStore = VKCredentialKeychainStore()
+    private let credentialsStore: VKCredentialsStore
 
     private let searchURL = URL(string: "https://api.vk.com/method/audio.search")!
     private let vkHomepageURL = URL(string: "https://vk.com/")!
@@ -96,45 +89,20 @@ final class VKMusicService {
 
     init(
         session: URLSession,
+        credentialsStore: VKCredentialsStore,
         logger: @escaping @Sendable (String) -> Void
     ) {
         self.session = session
+        self.credentialsStore = credentialsStore
         self.logger = logger
     }
 
     var isConfigured: Bool {
-        credentialStore.credentials() != nil
+        credentialsStore.credentials() != nil
     }
 
     var credentialSnapshot: VKCredentialSnapshot {
-        let credentials = credentialStore.credentials()
-        return VKCredentialSnapshot(
-            hasCredentials: credentials != nil,
-            maskedAccessToken: credentials.map { maskedAccessToken($0.accessToken) },
-            userAgent: credentials?.userAgent
-        )
-    }
-
-    func saveMobileAudioCredentials(accessToken: String, userAgent: String) throws {
-        let storedCredentials = credentialStore.credentials()
-        guard let resolvedAccessToken = sanitizedVKAccessToken(accessToken) ?? storedCredentials?.accessToken else {
-            throw OnlineMusicServiceError.vkNotConfigured
-        }
-
-        guard let resolvedUserAgent = cleanedText(userAgent) else {
-            throw OnlineMusicServiceError.configurationMissing("Введите User-Agent для VK Music.")
-        }
-
-        try credentialStore.save(
-            credentials: VKStoredCredentials(
-                accessToken: resolvedAccessToken,
-                userAgent: resolvedUserAgent
-            )
-        )
-    }
-
-    func clearMobileAudioCredentials() {
-        credentialStore.clear()
+        credentialsStore.snapshot()
     }
 
     func search(query: String) async throws -> [Track] {
@@ -201,6 +169,28 @@ final class VKMusicService {
 
     func checkVKConnection() async throws {
         _ = try await searchResults(query: "music", count: 1)
+    }
+
+    func checkVKMusicAccess() async -> VKConnectionStatus {
+        do {
+            _ = try await searchResults(query: "music", count: 1)
+            return .musicAccessAvailable
+        } catch let error as OnlineMusicServiceError {
+            switch error {
+            case .vkNotConfigured:
+                return .notConfigured
+            case .vkInvalidCredentials:
+                return .invalidCredentials
+            case .vkTokenExpired:
+                return .expired
+            case .vkRequiresMobileToken, .vkMusicAccessUnavailable:
+                return .musicAccessUnavailable
+            default:
+                return .networkError
+            }
+        } catch {
+            return .networkError
+        }
     }
 
     func download(track: Track) async throws -> URL {
@@ -475,7 +465,7 @@ final class VKMusicService {
     }
 
     private var configuration: VKConfiguration? {
-        if let storedCredentials = credentialStore.credentials() {
+        if let storedCredentials = credentialsStore.credentials() {
             return VKConfiguration(
                 accessToken: storedCredentials.accessToken,
                 apiVersion: configuredAPIVersion(),
@@ -497,30 +487,14 @@ final class VKMusicService {
             throw OnlineMusicServiceError.vkNotConfigured
         }
 
+        if credentialsStore.credentials()?.isExpired == true {
+            logger("VK token state: expired")
+            throw OnlineMusicServiceError.vkTokenExpired
+        }
+
         logger("VK mobile audio token loaded: keychain")
         logger("VK API version: \(configuration.apiVersion)")
         return configuration
-    }
-
-    private func sanitizedVKAccessToken(_ rawValue: String?) -> String? {
-        guard let cleanedValue = cleanedText(rawValue) else { return nil }
-
-        let normalizedValue = cleanedValue.lowercased()
-        let placeholderMarkers = [
-            "your_vk_access_token",
-            "<your vk access token>",
-            "insert_vk_access_token"
-        ]
-
-        if placeholderMarkers.contains(where: normalizedValue.contains) {
-            return nil
-        }
-
-        if cleanedValue.hasPrefix("$(") && cleanedValue.hasSuffix(")") {
-            return nil
-        }
-
-        return cleanedValue
     }
 
     private func sanitizedVKAPIVersion(_ rawValue: String?) -> String? {
@@ -530,6 +504,7 @@ final class VKMusicService {
 
     private func serviceError(from apiError: VKAPIError) -> OnlineMusicServiceError {
         let providerMessage = cleanedText(apiError.errorMsg) ?? "VK returned API error \(apiError.errorCode)."
+        let normalizedMessage = providerMessage.lowercased()
 
         if apiError.errorCode == 5 {
             return .vkInvalidCredentials
@@ -539,9 +514,16 @@ final class VKMusicService {
             return .vkRequiresMobileToken
         }
 
-        if providerMessage.localizedCaseInsensitiveContains("access_token") ||
-            providerMessage.localizedCaseInsensitiveContains("token") {
+        if normalizedMessage.contains("access_token") ||
+            normalizedMessage.contains("token") {
             return .vkInvalidCredentials
+        }
+
+        if normalizedMessage.contains("unknown method") ||
+            normalizedMessage.contains("access denied") ||
+            normalizedMessage.contains("permission") ||
+            normalizedMessage.contains("audio") {
+            return .vkMusicAccessUnavailable
         }
 
         return .networkFailure("Не удалось подключиться к VK. Проверьте интернет.")
@@ -736,14 +718,6 @@ final class VKMusicService {
         return components.url?.absoluteString ?? url.absoluteString
     }
 
-    private func maskedAccessToken(_ accessToken: String) -> String {
-        guard accessToken.count > 14 else {
-            return "***"
-        }
-
-        return "\(accessToken.prefix(11))...\(accessToken.suffix(3))"
-    }
-
 }
 
 private enum VKInfoPlistKeys {
@@ -754,82 +728,6 @@ private struct VKConfiguration {
     let accessToken: String
     let apiVersion: String
     let userAgent: String
-}
-
-private struct VKStoredCredentials {
-    let accessToken: String
-    let userAgent: String
-}
-
-private final class VKCredentialKeychainStore {
-    private let service = "FreeMusicPlayer.VKMusicService"
-    private let accessTokenAccount = "VKMobileAudioAccessToken"
-    private let userAgentAccount = "VKMobileAudioUserAgent"
-
-    func credentials() -> VKStoredCredentials? {
-        guard let accessToken = string(for: accessTokenAccount),
-              let userAgent = string(for: userAgentAccount) else {
-            return nil
-        }
-
-        return VKStoredCredentials(accessToken: accessToken, userAgent: userAgent)
-    }
-
-    func save(credentials: VKStoredCredentials) throws {
-        try setString(credentials.accessToken, for: accessTokenAccount)
-        try setString(credentials.userAgent, for: userAgentAccount)
-    }
-
-    func clear() {
-        deleteString(for: accessTokenAccount)
-        deleteString(for: userAgentAccount)
-    }
-
-    private func string(for account: String) -> String? {
-        var query = baseQuery(account: account)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8),
-              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-
-        return value
-    }
-
-    private func setString(_ value: String, for account: String) throws {
-        guard let data = value.data(using: .utf8) else {
-            throw OnlineMusicServiceError.configurationMissing("VK credentials could not be encoded.")
-        }
-
-        deleteString(for: account)
-
-        var query = baseQuery(account: account)
-        query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw OnlineMusicServiceError.configurationMissing("VK credentials could not be saved to Keychain.")
-        }
-    }
-
-    private func deleteString(for account: String) {
-        SecItemDelete(baseQuery(account: account) as CFDictionary)
-    }
-
-    private func baseQuery(account: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-    }
 }
 
 private struct VKAudioSearchEnvelope: Decodable {
