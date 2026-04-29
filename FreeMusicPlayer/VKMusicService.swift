@@ -469,7 +469,7 @@ final class VKMusicService {
             return VKConfiguration(
                 accessToken: storedCredentials.accessToken,
                 apiVersion: configuredAPIVersion(),
-                userAgent: storedCredentials.userAgent
+                userAgent: cleanedText(storedCredentials.userAgent) ?? Self.defaultMobileUserAgent
             )
         }
 

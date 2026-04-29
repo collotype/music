@@ -22,7 +22,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.collotype.freemusic.auth-callback</string>
+			<string>com.collotype.freemusic.spotify-callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>freemusic</string>
@@ -45,12 +45,6 @@
 	<string>18b230e3ea3a4b4db816d971e979c598</string>
 	<key>SpotifyRedirectURI</key>
 	<string>freemusic://spotify-callback</string>
-	<key>VKClientID</key>
-	<string>$(VK_CLIENT_ID)</string>
-	<key>VKRedirectURI</key>
-	<string>freemusic://vk-auth</string>
-	<key>VKAuthScope</key>
-	<string>audio,offline</string>
 	<key>VKAPIVersion</key>
 	<string>5.131</string>
 	<key>UIApplicationSceneManifest</key>

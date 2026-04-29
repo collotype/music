@@ -536,7 +536,7 @@ struct SearchView: View {
         let provider = selectedProvider
         if provider == .vk && !OnlineMusicService.shared.isVKConfigured {
             isSearchingOnline = false
-            onlineStatusMessage = "VK Music не подключён. Войдите в VK в настройках."
+            onlineStatusMessage = "VK Music не подключён. Откройте Настройки → VK Music и вставьте access token."
             shouldShowVKSettingsAction = true
             return
         }
@@ -583,10 +583,10 @@ struct SearchView: View {
                         onlineStatusMessage = message
                         shouldShowVKSettingsAction = false
                     case .vkNotConfigured:
-                        onlineStatusMessage = "VK Music не подключён. Войдите в VK в настройках."
+                        onlineStatusMessage = "VK Music не подключён. Откройте Настройки → VK Music и вставьте access token."
                         shouldShowVKSettingsAction = true
                     case .vkMusicAccessUnavailable, .vkRequiresMobileToken:
-                        onlineStatusMessage = "VK подключён, но текущий токен не поддерживает поиск музыки."
+                        onlineStatusMessage = "VK подключён, но текущие данные не дают доступ к поиску музыки. Проверьте VK Music в настройках."
                         shouldShowVKSettingsAction = true
                     case .vkTokenExpired:
                         onlineStatusMessage = "Сессия VK истекла. Войдите в VK заново в настройках."
@@ -734,7 +734,7 @@ struct SearchView: View {
     }
 
     private var vkUnavailableStatusTitle: String {
-        if onlineStatusMessage?.contains("текущий токен") == true {
+        if onlineStatusMessage?.contains("текущие данные") == true {
             return "Нужен VK Music доступ"
         }
 

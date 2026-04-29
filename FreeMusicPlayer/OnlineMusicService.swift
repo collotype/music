@@ -633,15 +633,15 @@ final class OnlineMusicService {
         if snapshot.isExpired {
             return .expired
         }
-        return snapshot.source == .oauth ? .loggedIn : .validBasicToken
+        return .validBasicToken
     }
 
-    var vkAuthConfiguration: VKAuthConfiguration? {
-        vkAuthService.configuration
+    var vkManualAccessTokenURL: URL {
+        vkAuthService.manualAccessTokenURL
     }
 
-    var defaultVKMobileUserAgent: String {
-        VKMusicService.defaultMobileUserAgent
+    var recommendedVKUserAgent: String {
+        VKAuthService.recommendedUserAgent
     }
 
     func saveVKMobileAudioCredentials(accessToken: String, userAgent: String) throws {
@@ -653,17 +653,6 @@ final class OnlineMusicService {
 
     func clearVKMobileAudioCredentials() {
         vkAuthService.clearCredentials()
-    }
-
-    @MainActor
-    func authorizeVK() async throws -> VKConnectionStatus {
-        _ = try await vkAuthService.authorize()
-        let basicStatus = await vkAuthService.checkBasicToken()
-        guard basicStatus == .validBasicToken else {
-            return basicStatus
-        }
-
-        return await vkMusicService.checkVKMusicAccess()
     }
 
     func checkVKConnection() async -> VKConnectionStatus {
