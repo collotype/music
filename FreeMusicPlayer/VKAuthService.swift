@@ -250,6 +250,7 @@ final class VKAuthService {
     private let oauthAuthorizationURL = URL(string: "https://oauth.vk.com/authorize")!
     private let usersGetURL = URL(string: "https://api.vk.com/method/users.get")!
     private let defaultAPIVersion = "5.131"
+    @MainActor private var webAuthCoordinator: VKWebAuthCoordinator?
     static let defaultUserAgent = "FreeMusicPlayer/1.0 iOS"
 
     init(session: URLSession, credentialsStore: VKCredentialsStore) {
@@ -288,6 +289,11 @@ final class VKAuthService {
         }
 
         let coordinator = VKWebAuthCoordinator()
+        webAuthCoordinator = coordinator
+        defer {
+            webAuthCoordinator = nil
+        }
+
         let callbackURL = try await coordinator.authenticate(
             using: authURL,
             callbackURLScheme: callbackURLScheme
