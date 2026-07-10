@@ -7,10 +7,30 @@
 
 import SwiftUI
 
+enum MiniPlayerVisualStyle: String, CaseIterable, Hashable {
+    case compact
+    case record
+
+    var title: String {
+        switch self {
+        case .compact: return "Compact"
+        case .record: return "Record"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .compact: return "rectangle.compress.vertical"
+        case .record: return "record.circle"
+        }
+    }
+}
+
 struct MiniPlayer: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
     @Binding var showPlayer: Bool
+    @AppStorage("miniPlayer.visualStyle") private var visualStyleRawValue: String = MiniPlayerVisualStyle.compact.rawValue
 
     private let backgroundCornerRadius: CGFloat = 22
     private let rowHeight: CGFloat = 64
@@ -20,8 +40,20 @@ struct MiniPlayer: View {
         return dataManager.isTrackLiked(track)
     }
 
+    private var visualStyle: MiniPlayerVisualStyle {
+        get { MiniPlayerVisualStyle(rawValue: visualStyleRawValue) ?? .compact }
+        nonmutating set { visualStyleRawValue = newValue.rawValue }
+    }
+
     var body: some View {
-        miniPlayerRow
+        Group {
+            switch visualStyle {
+            case .compact:
+                compactMiniPlayer
+            case .record:
+                recordMiniPlayer
+            }
+        }
         .background {
             GeometryReader { proxy in
                 Color.clear
@@ -47,36 +79,13 @@ struct MiniPlayer: View {
         }
     }
 
-    private var miniPlayerRow: some View {
+    private var compactMiniPlayer: some View {
         HStack(spacing: 12) {
-            Group {
-                if let currentTrack = audioPlayer.currentTrack {
-                    MiniVinylArtwork(track: currentTrack, size: 48)
-                        .overlay(alignment: .topTrailing) {
-                            if dataManager.isTrackLiked(currentTrack) {
-                                Image(systemName: "heart.fill")
-                                    .font(.system(size: 9, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .padding(4)
-                                    .background(Circle().fill(AppTheme.accent))
-                                    .offset(x: 5, y: -5)
-                            }
-                        }
-                } else {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(AppTheme.ink)
-                            .frame(width: 48, height: 48)
-
-                        Image(systemName: "music.note")
-                            .foregroundColor(.white.opacity(0.5))
-                    }
-                }
-            }
+            compactArtwork
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
@@ -88,18 +97,7 @@ struct MiniPlayer: View {
 
             Spacer(minLength: 12)
 
-            if let currentTrack = audioPlayer.currentTrack {
-                Button {
-                    debugLog("Mini player like button pressed")
-                    dataManager.toggleFavorite(currentTrack)
-                } label: {
-                    Image(systemName: currentTrackIsLiked ? "heart.fill" : "heart")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(currentTrackIsLiked ? AppTheme.accent : AppTheme.mutedInk)
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
-            }
+            styleMenu
 
             Button {
                 debugLog("Mini player play/pause button pressed")
@@ -107,11 +105,11 @@ struct MiniPlayer: View {
             } label: {
                 Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.paper)
                     .frame(width: 40, height: 40)
                     .background(
                         Circle()
-                            .fill(AppTheme.ink)
+                            .fill(AppTheme.accent)
                     )
             }
             .buttonStyle(.plain)
@@ -122,11 +120,7 @@ struct MiniPlayer: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.92)
-
-                RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
-                    .fill(AppTheme.paper.opacity(0.62))
+                    .fill(AppTheme.elevatedPanel)
 
                 RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
                     .stroke(AppTheme.line, lineWidth: 1)
@@ -137,8 +131,8 @@ struct MiniPlayer: View {
             PlaybackProgressBar(
                 progress: playbackProgress,
                 barHeight: 3,
-                activeColor: AppTheme.ink.opacity(0.86),
-                inactiveColor: Color.black.opacity(0.08),
+                activeColor: AppTheme.accent,
+                inactiveColor: Color.white.opacity(0.08),
                 thumbColor: .clear,
                 maxWidth: nil,
                 showsThumb: false,
@@ -161,11 +155,141 @@ struct MiniPlayer: View {
         }
     }
 
+    private var recordMiniPlayer: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Text(audioPlayer.currentTrack?.displayArtist ?? "FreeMusic")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(AppTheme.mutedInk)
+                    .lineLimit(1)
+
+                Spacer()
+
+                styleMenu
+            }
+
+            HStack(spacing: 14) {
+                MiniVinylArtwork(track: audioPlayer.currentTrack, size: 70)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(AppTheme.ink)
+                        .lineLimit(1)
+
+                    Text(timeLine)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppTheme.mutedInk)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    debugLog("Mini player play/pause button pressed")
+                    audioPlayer.togglePlayPause()
+                } label: {
+                    Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(AppTheme.paper)
+                        .frame(width: 48, height: 48)
+                        .background(Circle().fill(AppTheme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+
+            PlaybackProgressBar(
+                progress: playbackProgress,
+                barHeight: 3,
+                activeColor: AppTheme.accent,
+                inactiveColor: Color.white.opacity(0.08),
+                thumbColor: .clear,
+                maxWidth: nil,
+                showsThumb: false,
+                animationDuration: 0.45,
+                onSeek: nil
+            )
+            .frame(height: 8)
+            .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(AppTheme.elevatedPanel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(AppTheme.line, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.22), radius: 18, x: 0, y: 10)
+        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .onTapGesture {
+            debugLog("Mini player tapped")
+            withAnimation(.spring(response: 0.3)) {
+                showPlayer = true
+            }
+        }
+    }
+
+    private var compactArtwork: some View {
+        Group {
+            if let currentTrack = audioPlayer.currentTrack {
+                TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 10, showsSourceBadge: true)
+                    .overlay(alignment: .topTrailing) {
+                        if dataManager.isTrackLiked(currentTrack) {
+                            Circle()
+                                .fill(AppTheme.accent)
+                                .frame(width: 10, height: 10)
+                                .offset(x: 3, y: -3)
+                        }
+                    }
+            } else {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(AppTheme.panel)
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .foregroundColor(AppTheme.mutedInk)
+                    )
+            }
+        }
+    }
+
+    private var styleMenu: some View {
+        Menu {
+            ForEach(MiniPlayerVisualStyle.allCases, id: \.self) { style in
+                Button {
+                    visualStyle = style
+                } label: {
+                    Label(style.title, systemImage: style.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(AppTheme.mutedInk)
+                .frame(width: 34, height: 34)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var timeLine: String {
+        "\(formatMiniTime(audioPlayer.currentTime)) / \(formatMiniTime(audioPlayer.duration))"
+    }
+
     private var playbackProgress: Double {
         resolvedPlaybackProgress(
             currentTime: audioPlayer.currentTime,
             duration: audioPlayer.duration
         )
+    }
+
+    private func formatMiniTime(_ time: TimeInterval) -> String {
+        guard time.isFinite else { return "0:00" }
+        let mins = Int(time) / 60
+        let secs = Int(time.truncatingRemainder(dividingBy: 60))
+        return String(format: "%d:%02d", mins, secs)
     }
 }
 

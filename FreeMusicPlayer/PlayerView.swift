@@ -130,10 +130,10 @@ struct PlayerView: View {
                         if !audioPlayer.queuedTracks.isEmpty {
                             Text("\(audioPlayer.queuedTracks.count)")
                                 .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
+                                .foregroundColor(AppTheme.paper)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
-                                .background(Capsule().fill(AppTheme.ink))
+                                .background(Capsule().fill(AppTheme.accent))
                                 .offset(x: 10, y: -8)
                         }
                     }
@@ -213,7 +213,7 @@ struct PlayerView: View {
                 progress: playbackProgress,
                 barHeight: 6,
                 activeColor: AppTheme.ink.opacity(0.92),
-                inactiveColor: Color.black.opacity(0.10),
+                inactiveColor: Color.white.opacity(0.10),
                 thumbColor: AppTheme.ink,
                 maxWidth: 312,
                 showsThumb: true,
@@ -443,12 +443,12 @@ struct PlayerView: View {
         } label: {
             ZStack {
                 Circle()
-                    .fill(AppTheme.ink)
+                    .fill(AppTheme.accent)
                     .frame(width: 74, height: 74)
 
                 Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 26, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.paper)
                     .offset(x: audioPlayer.isPlaying ? 0 : 2)
             }
             .shadow(color: .black.opacity(0.24), radius: 14, y: 6)
@@ -707,7 +707,7 @@ struct VinylScrubberRecord: View {
                     RadialGradient(
                         colors: [
                             Color(red: 0.16, green: 0.16, blue: 0.15),
-                            AppTheme.ink,
+                            Color.black,
                             Color.black
                         ],
                         center: .center,
@@ -734,7 +734,7 @@ struct VinylScrubberRecord: View {
             centerLabel
 
             Circle()
-                .fill(AppTheme.ink)
+                .fill(Color.black)
                 .frame(width: 15, height: 15)
                 .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 2))
         }
@@ -784,7 +784,7 @@ struct VinylScrubberRecord: View {
                 .offset(x: 122, y: -124)
 
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.white)
+                .fill(AppTheme.ink)
                 .frame(width: 42, height: 20)
                 .rotationEffect(.degrees(-22))
                 .shadow(color: .black.opacity(0.14), radius: 5, y: 3)

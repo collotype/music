@@ -169,7 +169,7 @@ struct SearchView: View {
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.black.opacity(0.06))
+                        .fill(Color.white.opacity(0.08))
                 )
 
                 if shouldShowProviderSwitcher {
@@ -215,7 +215,7 @@ struct SearchView: View {
                             .padding(.vertical, 9)
                             .background(
                                 Capsule()
-                                    .fill(selectedCategory == category ? AppTheme.ink : Color.black.opacity(0.05))
+                                    .fill(selectedCategory == category ? AppTheme.ink : Color.white.opacity(0.06))
                             )
                             .overlay(
                                 Capsule()
@@ -274,7 +274,7 @@ struct SearchView: View {
                                 .padding(.vertical, 8)
                                 .background(
                                     Capsule()
-                                        .fill(Color.black.opacity(0.06))
+                                        .fill(Color.white.opacity(0.08))
                                 )
                         }
                         .buttonStyle(.plain)
@@ -1048,7 +1048,7 @@ struct SearchProviderButton: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.black.opacity(0.05))
+                .fill(Color.white.opacity(0.06))
 
             Circle()
                 .stroke(provider.accentColor.opacity(0.4), lineWidth: 1)
@@ -1158,7 +1158,7 @@ struct SearchStatusRow: View {
                     .padding(.vertical, 8)
                     .background(
                         Capsule()
-                            .fill(Color.black.opacity(0.05))
+                            .fill(Color.white.opacity(0.06))
                     )
                 }
                 .buttonStyle(.plain)

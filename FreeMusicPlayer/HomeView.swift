@@ -110,12 +110,12 @@ struct MiniVinylArtwork: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(AppTheme.ink)
+                .fill(Color.black)
                 .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
 
             ForEach(0..<5, id: \.self) { index in
                 Circle()
-                    .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
                     .frame(width: size - CGFloat(index * 15), height: size - CGFloat(index * 15))
             }
 
@@ -124,7 +124,7 @@ struct MiniVinylArtwork: View {
                     .clipShape(Circle())
             } else {
                 Circle()
-                    .fill(AppTheme.paperDeep)
+                    .fill(AppTheme.elevatedPanel)
                     .frame(width: size * 0.42, height: size * 0.42)
                     .overlay(
                         Image(systemName: "music.note")
@@ -133,7 +133,7 @@ struct MiniVinylArtwork: View {
             }
 
             Circle()
-                .fill(AppTheme.ink)
+                .fill(Color.black)
                 .frame(width: size * 0.09, height: size * 0.09)
         }
         .frame(width: size, height: size)
@@ -365,7 +365,7 @@ struct TrackRow: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.black.opacity(0.04))
+                        .fill(Color.white.opacity(0.04))
                 )
 
             Image(systemName: dataManager.isTrackSaved(track) ? "heart.fill" : "heart")

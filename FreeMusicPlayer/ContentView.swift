@@ -8,13 +8,14 @@
 import SwiftUI
 
 enum AppTheme {
-    static let paper = Color(red: 0.94, green: 0.94, blue: 0.92)
-    static let paperDeep = Color(red: 0.86, green: 0.86, blue: 0.84)
-    static let ink = Color(red: 0.09, green: 0.09, blue: 0.09)
-    static let mutedInk = Color(red: 0.36, green: 0.36, blue: 0.34)
-    static let panel = Color.white.opacity(0.58)
-    static let line = Color.black.opacity(0.08)
-    static let accent = Color(red: 0.86, green: 0.20, blue: 0.16)
+    static let paper = Color(red: 0.04, green: 0.04, blue: 0.04)
+    static let paperDeep = Color(red: 0.01, green: 0.01, blue: 0.01)
+    static let ink = Color.white
+    static let mutedInk = Color(red: 0.62, green: 0.62, blue: 0.62)
+    static let panel = Color(red: 0.10, green: 0.10, blue: 0.10)
+    static let elevatedPanel = Color(red: 0.15, green: 0.15, blue: 0.15)
+    static let line = Color.white.opacity(0.07)
+    static let accent = Color(red: 0.26, green: 0.84, blue: 0.38)
 }
 
 struct ContentView: View {
@@ -67,7 +68,7 @@ struct ContentView: View {
             }
         }
         .accentColor(AppTheme.accent)
-        .preferredColorScheme(.light)
+        .preferredColorScheme(.dark)
         .task {
             // Start heavy data loading AFTER the first render — runs off main thread.
             dataManager.loadData()
@@ -125,8 +126,7 @@ struct CustomTabBar: View {
         .padding(.horizontal, 10)
         .background(
             Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(AppTheme.paper.opacity(0.72))
+                .fill(AppTheme.panel.opacity(0.96))
         )
         .overlay(alignment: .top) {
             Rectangle()

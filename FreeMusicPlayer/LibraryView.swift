@@ -325,10 +325,10 @@ struct LibraryView: View {
                                 Text("Play")
                             }
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppTheme.paper)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
-                            .background(Capsule().fill(AppTheme.ink))
+                            .background(Capsule().fill(AppTheme.accent))
                         }
                         .buttonStyle(.plain)
 
@@ -344,7 +344,7 @@ struct LibraryView: View {
                             .foregroundColor(AppTheme.ink)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
-                            .background(Capsule().fill(Color.black.opacity(0.06)))
+                            .background(Capsule().fill(Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
                     }
@@ -1055,7 +1055,7 @@ struct FilterChip: View {
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(isSelected ? AppTheme.ink : Color.black.opacity(0.05))
+                    .fill(isSelected ? AppTheme.ink : Color.white.opacity(0.06))
             )
             .overlay(
                 Capsule()
@@ -1088,7 +1088,7 @@ struct FavoriteArtistRow: View {
             HStack(spacing: 12) {
                 ZStack(alignment: .bottomTrailing) {
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.black.opacity(0.05))
+                        .fill(Color.white.opacity(0.06))
                         .frame(width: 56, height: 56)
                         .overlay(artworkContent)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -1191,7 +1191,7 @@ struct LibraryAlbumRow: View {
                 TrackArtworkView(track: representativeTrack, size: 56, cornerRadius: 12, showsSourceBadge: true)
             } else {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(0.05))
+                    .fill(Color.white.opacity(0.06))
                     .frame(width: 56, height: 56)
                     .overlay(
                         Image(systemName: "square.stack.fill")
@@ -1302,7 +1302,7 @@ struct TrackArtworkView: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(Color.black.opacity(0.05))
+                .fill(Color.white.opacity(0.06))
 
             artworkContent
 
@@ -1360,7 +1360,7 @@ struct TrackArtworkView: View {
                 .scaledToFill()
 
             LinearGradient(
-                colors: [Color.black.opacity(0.04), Color.black.opacity(0.22)],
+                colors: [Color.white.opacity(0.04), Color.black.opacity(0.22)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -2053,7 +2053,7 @@ struct TrackActionSheet: View {
                             .opacity(0.88)
 
                         RoundedRectangle(cornerRadius: popupCornerRadius, style: .continuous)
-                            .fill(Color.black.opacity(0.08))
+                            .fill(Color.white.opacity(0.10))
 
                         RoundedRectangle(cornerRadius: popupCornerRadius, style: .continuous)
                             .stroke(Color.white.opacity(0.08), lineWidth: 1)

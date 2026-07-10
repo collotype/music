@@ -106,7 +106,7 @@ struct PlaylistView: View {
                                         .padding(10)
                                         .background(
                                             Circle()
-                                                .fill(Color.black.opacity(0.05))
+                                                .fill(Color.white.opacity(0.06))
                                         )
                                 }
                                 .buttonStyle(.plain)
@@ -133,7 +133,7 @@ struct PlaylistView: View {
                                     .padding(.vertical, 10)
                                     .background(
                                         Capsule()
-                                            .fill(Color.black.opacity(0.05))
+                                            .fill(Color.white.opacity(0.06))
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -154,7 +154,7 @@ struct PlaylistView: View {
                                         .padding(.vertical, 10)
                                         .background(
                                             Capsule()
-                                                .fill(Color.black.opacity(0.05))
+                                                .fill(Color.white.opacity(0.06))
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -180,12 +180,12 @@ struct PlaylistView: View {
                                                 Text("Play playlist")
                                             }
                                             .font(.system(size: 15, weight: .semibold))
-                                            .foregroundColor(.black)
+                                            .foregroundColor(AppTheme.paper)
                                             .padding(.horizontal, 18)
                                             .padding(.vertical, 12)
                                             .background(
                                                 Capsule()
-                                                    .fill(Color.white)
+                                                    .fill(AppTheme.accent)
                                             )
                                         }
                                         .buttonStyle(.plain)
@@ -205,7 +205,7 @@ struct PlaylistView: View {
                                         .padding(.vertical, 12)
                                         .background(
                                             Capsule()
-                                                .fill(Color.black.opacity(0.05))
+                                                .fill(Color.white.opacity(0.06))
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -276,7 +276,7 @@ struct PlaylistView: View {
                                     .padding(.vertical, 10)
                                     .background(
                                         Capsule()
-                                            .fill(Color.black.opacity(0.06))
+                                            .fill(Color.white.opacity(0.08))
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -630,7 +630,7 @@ struct TrackSelectionSheet: View {
                     .background(Color.black.opacity(0.96))
                     .overlay(alignment: .top) {
                         Rectangle()
-                            .fill(Color.black.opacity(0.05))
+                            .fill(Color.white.opacity(0.06))
                             .frame(height: 0.5)
                     }
                 }
