@@ -209,153 +209,72 @@ struct LibraryView: View {
     }
 
     var headerSection: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .fill(AppTheme.panel)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 32, style: .continuous)
-                        .stroke(AppTheme.line, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.08), radius: 22, x: 0, y: 12)
-                .padding(.horizontal, 18)
-                .padding(.top, 12)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(AppTheme.accent)
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Text("F")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(AppTheme.paper)
+                    )
 
-            Circle()
-                .fill(AppTheme.ink.opacity(0.08))
-                .frame(width: 150, height: 150)
-                .overlay(
-                    Circle()
-                        .stroke(AppTheme.ink.opacity(0.08), lineWidth: 12)
-                        .padding(24)
-                )
-                .offset(x: 108, y: 42)
-
-            VStack(spacing: 16) {
-                HStack {
-                    Button {
-                        debugLog("Library back button pressed")
-                        router.navigate(to: .home)
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(AppTheme.ink)
-                    }
-                    .buttonStyle(.plain)
-
-                    Spacer()
-
-                    Button {
-                        debugLog("Library cycle filter button pressed")
-                        selectedFilter = selectedFilter.next
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease")
-                            .font(.system(size: 18))
-                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 16)
-
-                    Button {
-                        debugLog("Library search button pressed")
-                        router.navigate(to: .search)
-                    } label: {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 18))
-                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 16)
-
-                    Button {
-                        if dataManager.hasImportFolders {
-                            debugLog("Library refresh folder button pressed")
-                            refreshLinkedFolders()
-                        } else {
-                            debugLog("Library refresh button pressed without linked folders")
-                            showingFolderImporter = true
-                        }
-                    } label: {
-                        Image(systemName: dataManager.hasImportFolders ? "arrow.clockwise" : "folder.badge.plus")
-                            .font(.system(size: 18))
-                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isRefreshingImportFolders)
-                    .padding(.trailing, 16)
-
-                    Button {
-                        debugLog("Library import menu button pressed")
-                        showingImportOptions = true
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 18))
-                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 34)
-                .padding(.top, 30)
+                Text("Your Library")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(AppTheme.ink)
 
                 Spacer()
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(selectedFilter.screenTitle)
-                        .font(.system(size: 34, weight: .bold))
+                Button {
+                    debugLog("Library search button pressed")
+                    router.navigate(to: .search)
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(AppTheme.ink)
-                    Text(selectionSubtitle)
-                        .font(.system(size: 15))
-                        .foregroundColor(AppTheme.mutedInk.opacity(0.7))
-                    if dataManager.hasImportFolders {
-                        Text("\(dataManager.importFolders.count) linked folder(s)")
-                            .font(.system(size: 13))
-                            .foregroundColor(AppTheme.mutedInk.opacity(0.45))
-                    }
+                        .frame(width: 34, height: 34)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 38)
+                .buttonStyle(.plain)
+
+                Button {
+                    debugLog("Library import menu button pressed")
+                    showingImportOptions = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundColor(AppTheme.ink)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 10) {
+                Text(selectionSubtitle)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.mutedInk)
+
+                Spacer()
 
                 if showsPlaybackActions {
-                    HStack(spacing: 12) {
-                        Button {
-                            debugLog("Library play button pressed")
-                            playPrimarySelection(shuffled: false)
-                        } label: {
-                            HStack {
-                                Image(systemName: "play.fill")
-                                Text("Play")
-                            }
-                            .font(.system(size: 15, weight: .semibold))
+                    Button {
+                        debugLog("Library play button pressed")
+                        playPrimarySelection(shuffled: false)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 18, weight: .bold))
                             .foregroundColor(AppTheme.paper)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(Capsule().fill(AppTheme.accent))
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            debugLog("Library shuffle button pressed")
-                            playPrimarySelection(shuffled: true)
-                        } label: {
-                            HStack {
-                                Image(systemName: "shuffle")
-                                Text("Shuffle")
-                            }
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(AppTheme.ink)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 12)
-                            .background(Capsule().fill(Color.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
+                            .frame(width: 44, height: 44)
+                            .background(Circle().fill(AppTheme.accent))
                     }
-                    .padding(.horizontal, 38)
-                    .padding(.bottom, 24)
+                    .buttonStyle(.plain)
                 }
             }
         }
-        .frame(height: 280)
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 4)
     }
-
     var filterSection: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {

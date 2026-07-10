@@ -701,7 +701,7 @@ enum Tab: String, CaseIterable, Hashable {
     var title: String {
         switch self {
         case .home: return "Home"
-        case .library: return "Library"
+        case .library: return "Your Library"
         case .search: return "Search"
         }
     }

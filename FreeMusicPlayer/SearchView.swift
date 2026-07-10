@@ -241,51 +241,60 @@ struct SearchView: View {
     }
 
     var emptyState: some View {
-        VStack(spacing: 20) {
-            Spacer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Your top genres")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(AppTheme.ink)
 
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 80))
-                .foregroundColor(AppTheme.mutedInk.opacity(0.1))
-
-            Text("Search")
-                .font(.system(size: 24, weight: .bold))
-                .foregroundColor(AppTheme.mutedInk.opacity(0.3))
-
-            Text("Find tracks, artists, albums, or playlists.")
-                .font(.system(size: 16))
-                .foregroundColor(AppTheme.mutedInk.opacity(0.2))
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Popular")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(AppTheme.mutedInk.opacity(0.4))
-
-                FlowLayout {
-                    ForEach(["Rock", "Pop", "Hip-Hop", "Electronic", "Jazz"], id: \.self) { query in
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(searchTiles, id: \.title) { tile in
                         Button {
-                            debugLog("Popular search pressed: \(query)")
-                            searchText = query
+                            debugLog("Browse tile pressed: \(tile.title)")
+                            searchText = tile.title
                         } label: {
-                            Text(query)
-                                .font(.system(size: 14))
-                                .foregroundColor(AppTheme.ink)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.white.opacity(0.08))
-                                )
+                            SearchBrowseTile(title: tile.title, color: tile.color, systemImage: tile.systemImage)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Text("Browse all")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(AppTheme.ink)
+                    .padding(.top, 8)
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(browseTiles, id: \.title) { tile in
+                        Button {
+                            searchText = tile.title
+                        } label: {
+                            SearchBrowseTile(title: tile.title, color: tile.color, systemImage: tile.systemImage)
                         }
                         .buttonStyle(.plain)
                     }
                 }
             }
-            .padding(.top, 20)
-
-            Spacer()
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
+            .padding(.bottom, 120)
         }
-        .padding(.horizontal, 20)
+    }
+
+    private var searchTiles: [(title: String, color: Color, systemImage: String)] {
+        [
+            ("Dance", Color(red: 0.06, green: 0.54, blue: 0.48), "sparkles"),
+            ("Rock", Color(red: 0.78, green: 0.12, blue: 0.18), "guitars")
+        ]
+    }
+
+    private var browseTiles: [(title: String, color: Color, systemImage: String)] {
+        [
+            ("Hip-Hop", Color(red: 0.76, green: 0.40, blue: 0.06), "music.mic"),
+            ("Electronic", Color(red: 0.20, green: 0.30, blue: 0.78), "waveform"),
+            ("Pop", Color(red: 0.72, green: 0.25, blue: 0.58), "star.fill"),
+            ("Jazz", Color(red: 0.10, green: 0.42, blue: 0.72), "music.note")
+        ]
     }
 
     var searchResultsContent: some View {
@@ -1113,6 +1122,34 @@ struct SearchSectionCard<Content: View>: View {
                     .fill(AppTheme.panel)
             )
         }
+    }
+}
+
+struct SearchBrowseTile: View {
+    let title: String
+    let color: Color
+    let systemImage: String
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(color)
+
+            Text(title)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.white)
+                .padding(14)
+
+            Image(systemName: systemImage)
+                .font(.system(size: 44, weight: .bold))
+                .foregroundColor(.white.opacity(0.34))
+                .rotationEffect(.degrees(18))
+                .offset(x: 52, y: 46)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .clipped()
+        }
+        .frame(height: 104)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

@@ -21,11 +21,11 @@ struct HomeView: View {
             .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 24) {
                     homeHeader
-                    NowPlayingHomeCard()
+                    QuickAccessSection()
+                    RecentlyPlayedShelf()
                     PlaylistsSection()
-                    RecentSection()
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 18)
@@ -37,14 +37,9 @@ struct HomeView: View {
 
     private var homeHeader: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("FreeMusic")
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundColor(AppTheme.ink)
-                Text("\(dataManager.tracks.count) tracks in your player")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(AppTheme.mutedInk)
-            }
+            Text("Good afternoon")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundColor(AppTheme.ink)
 
             Spacer()
 
@@ -60,6 +55,120 @@ struct HomeView: View {
                     .overlay(Circle().stroke(AppTheme.line, lineWidth: 1))
             }
             .buttonStyle(.plain)
+        }
+    }
+}
+
+struct QuickAccessSection: View {
+    @EnvironmentObject var dataManager: DataManager
+    @EnvironmentObject var audioPlayer: AudioPlayer
+    @EnvironmentObject var router: AppRouter
+
+    private var quickTracks: [Track] {
+        Array(dataManager.tracks.prefix(4))
+    }
+
+    private var quickPlaylists: [Playlist] {
+        Array(dataManager.sortedPlaylists.prefix(max(0, 6 - quickTracks.count)))
+    }
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            ForEach(quickTracks) { track in
+                Button {
+                    audioPlayer.playTrack(track, in: quickTracks, contextName: "home:quick")
+                } label: {
+                    QuickAccessTile(
+                        artwork: AnyView(TrackArtworkView(track: track, size: 56, cornerRadius: 6, showsSourceBadge: true)),
+                        title: track.displayTitle
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(quickPlaylists) { playlist in
+                Button {
+                    router.openPlaylist(playlist.id)
+                } label: {
+                    QuickAccessTile(
+                        artwork: AnyView(PlaylistArtworkView(
+                            coverArtURL: playlist.coverArtURL,
+                            representativeTrack: dataManager.tracks(for: playlist.id).first,
+                            fallbackTitle: playlist.displayName,
+                            size: 56,
+                            cornerRadius: 6
+                        )),
+                        title: playlist.displayName
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+struct QuickAccessTile: View {
+    let artwork: AnyView
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            artwork
+                .frame(width: 56, height: 56)
+
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(AppTheme.ink)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 56)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(AppTheme.elevatedPanel)
+        )
+    }
+}
+
+struct RecentlyPlayedShelf: View {
+    @EnvironmentObject var dataManager: DataManager
+    @EnvironmentObject var audioPlayer: AudioPlayer
+
+    private var tracks: [Track] {
+        Array(dataManager.tracks.prefix(8))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Recently played")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(AppTheme.ink)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(tracks) { track in
+                        Button {
+                            audioPlayer.playTrack(track, in: tracks, contextName: "home:recently-played")
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                TrackArtworkView(track: track, size: 128, cornerRadius: 6, showsSourceBadge: true)
+
+                                Text(track.displayTitle)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(AppTheme.ink)
+                                    .lineLimit(1)
+
+                                Text(track.displayArtist)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(AppTheme.mutedInk)
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 128, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 }
