@@ -80,7 +80,7 @@ struct SearchView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            LinearGradient(colors: [AppTheme.paper, AppTheme.paperDeep], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
             VStack(spacing: 0) {
                 searchHeader
@@ -123,18 +123,27 @@ struct SearchView: View {
     }
 
     var searchHeader: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Spacer()
-                .frame(height: 16)
+                .frame(height: 10)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Search")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundColor(AppTheme.ink)
+                Text("Find tracks, artists, albums, and playlists")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.mutedInk)
+            }
 
             HStack(spacing: 12) {
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass")
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.5))
 
                     TextField("Search music", text: $searchText)
                         .font(.system(size: 17))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onChange(of: searchText) { newValue in
@@ -152,7 +161,7 @@ struct SearchView: View {
                             isSearchingOnline = false
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                         }
                         .buttonStyle(.plain)
                     }
@@ -160,7 +169,7 @@ struct SearchView: View {
                 .padding(12)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.1))
+                        .fill(Color.black.opacity(0.06))
                 )
 
                 if shouldShowProviderSwitcher {
@@ -201,17 +210,17 @@ struct SearchView: View {
                     } label: {
                         Text(category.title)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(selectedCategory == category ? .black : .white.opacity(0.88))
+                            .foregroundColor(selectedCategory == category ? .white : AppTheme.ink.opacity(0.74))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 9)
                             .background(
                                 Capsule()
-                                    .fill(selectedCategory == category ? Color.white : Color.white.opacity(0.08))
+                                    .fill(selectedCategory == category ? AppTheme.ink : Color.black.opacity(0.05))
                             )
                             .overlay(
                                 Capsule()
                                     .stroke(
-                                        selectedCategory == category ? Color.white.opacity(0.0) : Color.white.opacity(0.08),
+                                        selectedCategory == category ? Color.clear : AppTheme.line,
                                         lineWidth: 1
                                     )
                             )
@@ -237,20 +246,20 @@ struct SearchView: View {
 
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 80))
-                .foregroundColor(.white.opacity(0.1))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.1))
 
             Text("Search")
                 .font(.system(size: 24, weight: .bold))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.3))
 
             Text("Find tracks, artists, albums, or playlists.")
                 .font(.system(size: 16))
-                .foregroundColor(.white.opacity(0.2))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.2))
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Popular")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.4))
 
                 FlowLayout {
                     ForEach(["Rock", "Pop", "Hip-Hop", "Electronic", "Jazz"], id: \.self) { query in
@@ -260,12 +269,12 @@ struct SearchView: View {
                         } label: {
                             Text(query)
                                 .font(.system(size: 14))
-                                .foregroundColor(.white)
+                                .foregroundColor(AppTheme.ink)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 8)
                                 .background(
                                     Capsule()
-                                        .fill(Color.white.opacity(0.1))
+                                        .fill(Color.black.opacity(0.06))
                                 )
                         }
                         .buttonStyle(.plain)
@@ -311,7 +320,7 @@ struct SearchView: View {
                     )
                     if track.id != localResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             }
@@ -365,7 +374,7 @@ struct SearchView: View {
 
                     if result.id != artistResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             }
@@ -387,7 +396,7 @@ struct SearchView: View {
 
                     if result.id != onlineArtistResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             } else {
@@ -421,7 +430,7 @@ struct SearchView: View {
 
                     if result.id != albumResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             }
@@ -443,7 +452,7 @@ struct SearchView: View {
 
                     if result.id != onlineAlbumResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             } else {
@@ -473,7 +482,7 @@ struct SearchView: View {
 
                     if result.id != playlistResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             }
@@ -494,7 +503,7 @@ struct SearchView: View {
 
                     if result.id != onlinePlaylistResults.last?.id {
                         Divider()
-                            .background(Color.white.opacity(0.06))
+                            .background(AppTheme.line)
                     }
                 }
             } else {
@@ -1039,7 +1048,7 @@ struct SearchProviderButton: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color.white.opacity(0.08))
+                .fill(Color.black.opacity(0.05))
 
             Circle()
                 .stroke(provider.accentColor.opacity(0.4), lineWidth: 1)
@@ -1092,7 +1101,7 @@ struct SearchSectionCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.system(size: 20, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.ink)
 
             VStack(spacing: 0) {
                 content
@@ -1101,7 +1110,7 @@ struct SearchSectionCard<Content: View>: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white.opacity(0.05))
+                    .fill(AppTheme.panel)
             )
         }
     }
@@ -1119,15 +1128,15 @@ struct SearchStatusRow: View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 20))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                 .frame(width: 26)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                 Text(subtitle)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
             }
 
             Spacer()
@@ -1142,14 +1151,14 @@ struct SearchStatusRow: View {
                         } else {
                             Text(actionTitle)
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(AppTheme.ink)
                         }
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(
                         Capsule()
-                            .fill(Color.white.opacity(0.08))
+                            .fill(Color.black.opacity(0.05))
                     )
                 }
                 .buttonStyle(.plain)
@@ -1175,12 +1184,12 @@ struct SearchArtistRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.name)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text("\(result.tracks.count) track\(result.tracks.count == 1 ? "" : "s")")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.52))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.52))
                     .lineLimit(1)
             }
 
@@ -1188,7 +1197,7 @@ struct SearchArtistRow: View {
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.28))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.28))
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
@@ -1211,17 +1220,17 @@ struct SearchAlbumRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.title)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(result.artist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.58))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.58))
                     .lineLimit(1)
 
                 Text("\(result.tracks.count) track\(result.tracks.count == 1 ? "" : "s")")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.42))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.42))
                     .lineLimit(1)
             }
 
@@ -1229,7 +1238,7 @@ struct SearchAlbumRow: View {
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.28))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.28))
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
@@ -1252,12 +1261,12 @@ struct SearchPlaylistRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.playlist.displayName)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text("\(result.trackCount) track\(result.trackCount == 1 ? "" : "s")")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.52))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.52))
                     .lineLimit(1)
             }
 
@@ -1265,7 +1274,7 @@ struct SearchPlaylistRow: View {
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.28))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.28))
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
@@ -1288,12 +1297,12 @@ struct SearchTrackRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(track.displayArtist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                     .lineLimit(1)
             }
 
@@ -1301,7 +1310,7 @@ struct SearchTrackRow: View {
 
             Text(track.formattedDuration)
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.4))
 
             Button {
                 debugLog("Search play button pressed: \(track.displayTitle)")
@@ -1383,10 +1392,10 @@ struct PlaylistArtworkView: View {
                         VStack(spacing: 4) {
                             Image(systemName: "music.note.list")
                                 .font(.system(size: 18, weight: .semibold))
-                                .foregroundColor(.white.opacity(0.72))
+                                .foregroundColor(AppTheme.mutedInk.opacity(0.72))
                             Text(String(fallbackTitle.prefix(1)).uppercased())
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.white.opacity(0.42))
+                                .foregroundColor(AppTheme.mutedInk.opacity(0.42))
                         }
                     }
                     .frame(width: size, height: size)
@@ -1459,10 +1468,10 @@ struct PlaylistArtworkView: View {
                 VStack(spacing: 4) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.72))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.72))
                     Text(String(fallbackTitle.prefix(1)).uppercased())
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundColor(.white.opacity(0.42))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.42))
                 }
             }
     }
@@ -1492,12 +1501,12 @@ struct OnlineSearchTrackRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(result.title)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(result.detailLine)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                     .lineLimit(1)
             }
 
@@ -1505,7 +1514,7 @@ struct OnlineSearchTrackRow: View {
 
             Text(result.formattedDuration)
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.4))
 
             if let downloadAction {
                 Button(action: downloadAction) {
@@ -1586,12 +1595,12 @@ struct OnlineSearchArtistRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.name)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(result.providerDisplayName)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.52))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.52))
                     .lineLimit(1)
             }
 
@@ -1599,7 +1608,7 @@ struct OnlineSearchArtistRow: View {
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.28))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.28))
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
@@ -1625,17 +1634,17 @@ struct OnlineSearchAlbumRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.title)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(result.artist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.58))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.58))
                     .lineLimit(1)
 
                 Text(result.providerDisplayName)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.42))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.42))
                     .lineLimit(1)
             }
 
@@ -1643,7 +1652,7 @@ struct OnlineSearchAlbumRow: View {
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.28))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.28))
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
@@ -1669,12 +1678,12 @@ struct OnlineSearchPlaylistRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.title)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(metadataLine)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.52))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.52))
                     .lineLimit(1)
             }
 
@@ -1682,7 +1691,7 @@ struct OnlineSearchPlaylistRow: View {
 
             Image(systemName: "arrow.up.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.28))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.28))
         }
         .padding(.horizontal, 4)
         .padding(.vertical, 10)
@@ -1773,7 +1782,7 @@ struct OnlineResultArtworkView: View {
 
             Image(systemName: fallbackSystemImage)
                 .font(.system(size: size * 0.36, weight: .semibold))
-                .foregroundColor(.white.opacity(0.8))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.8))
         }
     }
 }

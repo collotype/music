@@ -56,7 +56,7 @@ struct PlaylistView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            LinearGradient(colors: [AppTheme.paper, AppTheme.paperDeep], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
             if let playlist {
                 List {
@@ -74,11 +74,11 @@ struct PlaylistView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(playlist.displayName)
                                         .font(.system(size: 28, weight: .bold))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(AppTheme.ink)
 
                                     HStack(spacing: 8) {
                                         Text("\(playlistTracks.count) tracks")
-                                            .foregroundColor(.gray)
+                                            .foregroundColor(AppTheme.mutedInk)
 
                                         if playlist.isStarred {
                                             Text("Favorite")
@@ -102,11 +102,11 @@ struct PlaylistView: View {
                                 } label: {
                                     Image(systemName: playlist.isStarred ? "star.fill" : "star")
                                         .font(.system(size: 20, weight: .semibold))
-                                        .foregroundColor(playlist.isStarred ? .yellow : .white.opacity(0.6))
+                                        .foregroundColor(playlist.isStarred ? AppTheme.accent : AppTheme.mutedInk.opacity(0.6))
                                         .padding(10)
                                         .background(
                                             Circle()
-                                                .fill(Color.white.opacity(0.08))
+                                                .fill(Color.black.opacity(0.05))
                                         )
                                 }
                                 .buttonStyle(.plain)
@@ -128,12 +128,12 @@ struct PlaylistView: View {
                                         Text(playlist.preferredCoverReference == nil ? "Add cover" : "Change cover")
                                     }
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AppTheme.ink)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 10)
                                     .background(
                                         Capsule()
-                                            .fill(Color.white.opacity(0.12))
+                                            .fill(Color.black.opacity(0.05))
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -149,12 +149,12 @@ struct PlaylistView: View {
                                             Text("Remove cover")
                                         }
                                         .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.82))
+                                        .foregroundColor(AppTheme.mutedInk.opacity(0.82))
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 10)
                                         .background(
                                             Capsule()
-                                                .fill(Color.white.opacity(0.08))
+                                                .fill(Color.black.opacity(0.05))
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -200,12 +200,12 @@ struct PlaylistView: View {
                                             Text("Add tracks")
                                         }
                                         .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(AppTheme.ink)
                                         .padding(.horizontal, 18)
                                         .padding(.vertical, 12)
                                         .background(
                                             Capsule()
-                                                .fill(Color(red: 0.12, green: 0.55, blue: 0.26))
+                                                .fill(Color.black.opacity(0.05))
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -222,7 +222,7 @@ struct PlaylistView: View {
                                         Text("Delete playlist")
                                     }
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AppTheme.ink)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 10)
                                     .background(
@@ -236,10 +236,19 @@ struct PlaylistView: View {
                             if !dataManager.tracks.isEmpty && availableLibraryTracks.isEmpty {
                                 Text("All tracks from your library are already in this playlist.")
                                     .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.45))
+                                    .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                             }
                         }
                         .padding(.vertical, 8)
+                        .padding(.horizontal, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .fill(AppTheme.panel)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .stroke(AppTheme.line, lineWidth: 1)
+                        )
                     }
                     .listRowBackground(Color.clear)
 
@@ -247,7 +256,7 @@ struct PlaylistView: View {
                         Section {
                             VStack(alignment: .leading, spacing: 12) {
                                 Text("This playlist is empty.")
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(AppTheme.mutedInk)
 
                                 Text("Open the add button here to pick tracks from your library.")
                                     .font(.system(size: 13))
@@ -262,12 +271,12 @@ struct PlaylistView: View {
                                         Text("Choose tracks from Library")
                                     }
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AppTheme.ink)
                                     .padding(.horizontal, 14)
                                     .padding(.vertical, 10)
                                     .background(
                                         Capsule()
-                                            .fill(Color.white.opacity(0.1))
+                                            .fill(Color.black.opacity(0.06))
                                     )
                                 }
                                 .buttonStyle(.plain)
@@ -302,7 +311,7 @@ struct PlaylistView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
-                .background(Color.black)
+                .background(AppTheme.paper)
                 .navigationTitle(playlist.displayName)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -359,10 +368,10 @@ struct PlaylistView: View {
                 VStack(spacing: 12) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 48))
-                        .foregroundColor(.white.opacity(0.2))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.2))
                     Text("Playlist not found")
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                 }
                 .navigationTitle("Playlist")
             }
@@ -423,11 +432,11 @@ struct PlaylistTrackRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
 
                 Text(track.displayArtist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
             }
 
             Spacer()
@@ -532,7 +541,7 @@ struct TrackSelectionSheet: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                LinearGradient(colors: [AppTheme.paper, AppTheme.paperDeep], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
                 if tracks.isEmpty {
                     TrackSelectionEmptyState(title: emptyTitle, subtitle: emptySubtitle)
@@ -549,14 +558,14 @@ struct TrackSelectionSheet: View {
                                     toggleVisibleSelection()
                                 }
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(.white)
+                                .foregroundColor(AppTheme.ink)
                                 .buttonStyle(.plain)
 
                                 Spacer()
 
                                 Text(selectionSummary)
                                     .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.55))
+                                    .foregroundColor(AppTheme.mutedInk.opacity(0.55))
                             }
                             .padding(.vertical, 4)
                         }
@@ -574,7 +583,7 @@ struct TrackSelectionSheet: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(Color.black)
+                    .background(AppTheme.paper)
                 }
             }
             .navigationTitle(title)
@@ -592,7 +601,7 @@ struct TrackSelectionSheet: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(selectionSummary)
                             .font(.system(size: 13))
-                            .foregroundColor(.white.opacity(0.65))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.65))
 
                         Button(role: actionRole) {
                             guard !selectedTracks.isEmpty else { return }
@@ -606,7 +615,7 @@ struct TrackSelectionSheet: View {
                                 Spacer()
                             }
                             .padding(.vertical, 14)
-                            .foregroundColor(.white)
+                            .foregroundColor(AppTheme.ink)
                             .background(
                                 RoundedRectangle(cornerRadius: 14)
                                     .fill(selectedTrackIDs.isEmpty ? Color.white.opacity(0.08) : actionTint)
@@ -621,7 +630,7 @@ struct TrackSelectionSheet: View {
                     .background(Color.black.opacity(0.96))
                     .overlay(alignment: .top) {
                         Rectangle()
-                            .fill(Color.white.opacity(0.08))
+                            .fill(Color.black.opacity(0.05))
                             .frame(height: 0.5)
                     }
                 }
@@ -661,12 +670,12 @@ struct SelectableTrackRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(track.displayTitle)
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                         .lineLimit(1)
 
                     Text(track.displayArtist)
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                         .lineLimit(1)
                 }
 
@@ -674,7 +683,7 @@ struct SelectableTrackRow: View {
 
                 Text(track.formattedDuration)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.4))
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22, weight: .semibold))
@@ -696,15 +705,15 @@ struct TrackSelectionEmptyState: View {
         VStack(spacing: 14) {
             Image(systemName: "music.note.list")
                 .font(.system(size: 54))
-                .foregroundColor(.white.opacity(0.18))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.18))
 
             Text(title)
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(.white.opacity(0.72))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.72))
 
             Text(subtitle)
                 .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.45))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
         }

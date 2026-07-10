@@ -105,7 +105,7 @@ struct LibraryView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            LinearGradient(colors: [AppTheme.paper, AppTheme.paperDeep], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
 
             VStack(spacing: 0) {
                 headerSection
@@ -210,16 +210,25 @@ struct LibraryView: View {
 
     var headerSection: some View {
         ZStack {
-            LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.8, green: 0.15, blue: 0.15),
-                    Color(red: 0.4, green: 0.1, blue: 0.1),
-                    Color.black
-                ]),
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            RoundedRectangle(cornerRadius: 32, style: .continuous)
+                .fill(AppTheme.panel)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .stroke(AppTheme.line, lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.08), radius: 22, x: 0, y: 12)
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+
+            Circle()
+                .fill(AppTheme.ink.opacity(0.08))
+                .frame(width: 150, height: 150)
+                .overlay(
+                    Circle()
+                        .stroke(AppTheme.ink.opacity(0.08), lineWidth: 12)
+                        .padding(24)
+                )
+                .offset(x: 108, y: 42)
 
             VStack(spacing: 16) {
                 HStack {
@@ -229,7 +238,7 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppTheme.ink)
                     }
                     .buttonStyle(.plain)
 
@@ -241,7 +250,7 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "line.3.horizontal.decrease")
                             .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     .padding(.trailing, 16)
@@ -252,7 +261,7 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     .padding(.trailing, 16)
@@ -268,7 +277,7 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: dataManager.hasImportFolders ? "arrow.clockwise" : "folder.badge.plus")
                             .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                     .disabled(isRefreshingImportFolders)
@@ -280,30 +289,30 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.8))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.8))
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding(.horizontal, 34)
+                .padding(.top, 30)
 
                 Spacer()
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text(selectedFilter.screenTitle)
                         .font(.system(size: 34, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                     Text(selectionSubtitle)
                         .font(.system(size: 15))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.7))
                     if dataManager.hasImportFolders {
                         Text("\(dataManager.importFolders.count) linked folder(s)")
                             .font(.system(size: 13))
-                            .foregroundColor(.white.opacity(0.45))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 38)
 
                 if showsPlaybackActions {
                     HStack(spacing: 12) {
@@ -316,13 +325,10 @@ struct LibraryView: View {
                                 Text("Play")
                             }
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.black)
+                            .foregroundColor(.white)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
-                            .background(
-                                Capsule()
-                                    .fill(Color.white)
-                            )
+                            .background(Capsule().fill(AppTheme.ink))
                         }
                         .buttonStyle(.plain)
 
@@ -335,18 +341,15 @@ struct LibraryView: View {
                                 Text("Shuffle")
                             }
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppTheme.ink)
                             .padding(.horizontal, 20)
                             .padding(.vertical, 12)
-                            .background(
-                                Capsule()
-                                    .fill(Color.white.opacity(0.15))
-                            )
+                            .background(Capsule().fill(Color.black.opacity(0.06)))
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 38)
+                    .padding(.bottom, 24)
                 }
             }
         }
@@ -401,7 +404,7 @@ struct LibraryView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .background(Color.black)
+            .background(AppTheme.paper)
         }
     }
 
@@ -420,7 +423,7 @@ struct LibraryView: View {
                                 HStack {
                                     Text("Playlists")
                                         .font(.system(size: 22, weight: .bold))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(AppTheme.ink)
                                         .padding(.horizontal, 16)
                                         .padding(.top, 16)
 
@@ -435,7 +438,7 @@ struct LibraryView: View {
                                             Text("Create")
                                         }
                                         .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(.white)
+                                        .foregroundColor(AppTheme.ink)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 8)
                                         .background(
@@ -464,17 +467,17 @@ struct LibraryView: View {
 
                                             VStack(alignment: .leading, spacing: 4) {
                                                 Text(playlist.displayName)
-                                                    .foregroundColor(.white)
+                                                    .foregroundColor(AppTheme.ink)
                                                     .lineLimit(1)
                                                 Text("\(playlist.trackCount) tracks")
                                                     .font(.system(size: 13))
-                                                    .foregroundColor(.gray)
+                                                    .foregroundColor(AppTheme.mutedInk)
                                             }
 
                                             Spacer()
 
                                             Image(systemName: "chevron.right")
-                                                .foregroundColor(.gray)
+                                                .foregroundColor(AppTheme.mutedInk)
                                         }
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 10)
@@ -494,7 +497,7 @@ struct LibraryView: View {
                             VStack(alignment: .leading, spacing: 0) {
                                 Text("Albums")
                                     .font(.system(size: 22, weight: .bold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AppTheme.ink)
                                     .padding(.horizontal, 16)
                                     .padding(.top, 8)
                                     .padding(.bottom, 4)
@@ -529,11 +532,11 @@ struct LibraryView: View {
                 VStack(spacing: 16) {
                     Image(systemName: "music.note.list")
                         .font(.system(size: 60))
-                        .foregroundColor(.white.opacity(0.2))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.2))
 
                     Text("No playlists yet")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.5))
 
                     Button {
                         debugLog("Library create playlist button pressed")
@@ -544,7 +547,7 @@ struct LibraryView: View {
                             Text("Create playlist")
                         }
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
                         .background(
@@ -567,7 +570,7 @@ struct LibraryView: View {
                                 Text("Create playlist")
                             }
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(AppTheme.ink)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(
@@ -600,16 +603,16 @@ struct LibraryView: View {
 
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(playlist.displayName)
-                                                .foregroundColor(.white)
+                                                .foregroundColor(AppTheme.ink)
                                             Text("\(playlist.trackCount) tracks")
                                                 .font(.system(size: 13))
-                                                .foregroundColor(.gray)
+                                                .foregroundColor(AppTheme.mutedInk)
                                         }
 
                                         Spacer()
 
                                         Image(systemName: "chevron.right")
-                                            .foregroundColor(.gray)
+                                            .foregroundColor(AppTheme.mutedInk)
                                     }
                                     .padding(.vertical, 6)
                                 }
@@ -630,7 +633,7 @@ struct LibraryView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(Color.black)
+                    .background(AppTheme.paper)
                 }
             }
         }
@@ -657,7 +660,7 @@ struct LibraryView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .background(Color.black)
+                .background(AppTheme.paper)
             }
         }
     }
@@ -671,15 +674,15 @@ struct LibraryView: View {
         VStack(spacing: 16) {
             Image(systemName: emptyStateSystemImage)
                 .font(.system(size: 60))
-                .foregroundColor(.white.opacity(0.2))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.2))
 
             Text(emptyStateTitle)
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.5))
 
             Text(emptyStateSubtitle)
                 .font(.system(size: 15))
-                .foregroundColor(.white.opacity(0.3))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.3))
 
             Button {
                 handleEmptyStateAction()
@@ -689,7 +692,7 @@ struct LibraryView: View {
                     Text(emptyStateActionTitle)
                 }
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.ink)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
                 .background(
@@ -1047,12 +1050,16 @@ struct FilterChip: View {
                         .font(.system(size: 13))
                 }
             }
-            .foregroundColor(isSelected ? .black : .white)
+            .foregroundColor(isSelected ? .white : AppTheme.ink.opacity(0.72))
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(isSelected ? Color.white : Color.white.opacity(0.1))
+                    .fill(isSelected ? AppTheme.ink : Color.black.opacity(0.05))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(isSelected ? Color.clear : AppTheme.line, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -1081,7 +1088,7 @@ struct FavoriteArtistRow: View {
             HStack(spacing: 12) {
                 ZStack(alignment: .bottomTrailing) {
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color.black.opacity(0.05))
                         .frame(width: 56, height: 56)
                         .overlay(artworkContent)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -1095,12 +1102,12 @@ struct FavoriteArtistRow: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(artist.artistName)
                         .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                         .lineLimit(1)
 
                     Text("Favorite artist on \(artist.provider.displayName)")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                         .lineLimit(1)
                 }
 
@@ -1108,7 +1115,7 @@ struct FavoriteArtistRow: View {
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.32))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.32))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -1142,7 +1149,7 @@ struct FavoriteArtistRow: View {
     private var placeholderArtwork: some View {
         Image(systemName: "person.fill")
             .font(.system(size: 20, weight: .semibold))
-            .foregroundColor(.white.opacity(0.45))
+            .foregroundColor(AppTheme.mutedInk.opacity(0.45))
     }
 }
 
@@ -1156,19 +1163,19 @@ struct LibraryArtistRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(artist.name)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text("\(artist.tracks.count) track(s)")
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.32))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.32))
         }
         .padding(.vertical, 8)
     }
@@ -1184,35 +1191,35 @@ struct LibraryAlbumRow: View {
                 TrackArtworkView(track: representativeTrack, size: 56, cornerRadius: 12, showsSourceBadge: true)
             } else {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color.black.opacity(0.05))
                     .frame(width: 56, height: 56)
                     .overlay(
                         Image(systemName: "square.stack.fill")
-                            .foregroundColor(.white.opacity(0.5))
+                            .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                     )
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(album.displayTitle)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(album.displayArtist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.58))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.58))
                     .lineLimit(1)
 
                 Text("\(dataManager.tracks(for: album).count) track(s)")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.42))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.42))
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.32))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.32))
         }
         .padding(.vertical, 8)
     }
@@ -1241,27 +1248,27 @@ struct LibraryTrackRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(isPlaying ? .red : .white)
+                    .foregroundColor(isPlaying ? AppTheme.accent : AppTheme.ink)
 
                 Text(track.displayArtist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
             }
 
             Spacer()
 
             Text(track.formattedDuration)
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.4))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.05))
+                        .fill(AppTheme.panel)
                 )
 
             Image(systemName: isLiked ? "heart.fill" : "heart")
-                .foregroundColor(isLiked ? .red : .white.opacity(0.5))
+                .foregroundColor(isLiked ? AppTheme.accent : AppTheme.mutedInk.opacity(0.5))
 
             AddToPlaylistMenu(track: track)
         }
@@ -1295,7 +1302,7 @@ struct TrackArtworkView: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(Color.white.opacity(0.08))
+                .fill(Color.black.opacity(0.05))
 
             artworkContent
 
@@ -1689,11 +1696,11 @@ struct TrackContextPreview: View {
             VStack(spacing: 4) {
                 Text(track.displayTitle)
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .multilineTextAlignment(.center)
                 Text(track.displayArtist)
                     .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.62))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.62))
                     .multilineTextAlignment(.center)
             }
         }
@@ -2128,19 +2135,19 @@ struct CompactTrackActionHeader: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(2)
 
                 Text(track.displayArtist)
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.68))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.68))
                     .lineLimit(1)
 
                 if let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !album.isEmpty {
                     Text(album)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.40))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.40))
                         .lineLimit(1)
                 }
             }
@@ -2168,19 +2175,19 @@ struct TrackActionHeader: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(track.displayTitle)
                     .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(2)
 
                 Text(track.displayArtist)
                     .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.72))
+                    .foregroundColor(AppTheme.mutedInk.opacity(0.72))
                     .lineLimit(1)
 
                 if let album = track.album?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !album.isEmpty {
                     Text(album)
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.55))
                         .lineLimit(1)
                 }
             }
@@ -2242,10 +2249,10 @@ struct TrackPlaylistPickerView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(playlist.displayName)
-                                        .foregroundColor(.white)
+                                        .foregroundColor(AppTheme.ink)
                                     Text("\(playlist.trackCount) tracks")
                                         .font(.system(size: 12))
-                                        .foregroundColor(.white.opacity(0.45))
+                                        .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                                 }
 
                                 Spacer()
@@ -2271,7 +2278,7 @@ struct TrackPlaylistPickerView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.black)
+        .background(AppTheme.paper)
         .navigationTitle("Add to Playlist")
         .navigationBarTitleDisplayMode(.inline)
         .alert("New Playlist", isPresented: $showingCreatePlaylistPrompt) {
@@ -2309,13 +2316,13 @@ struct TrackCollectionView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(AppTheme.ink)
                     Text(subtitle)
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.55))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.55))
                     Text("\(tracks.count) track(s)")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                 }
                 .padding(.vertical, 8)
                 .listRowBackground(Color.clear)
@@ -2332,17 +2339,17 @@ struct TrackCollectionView: View {
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(track.displayTitle)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(AppTheme.ink)
                                 Text(track.displayArtist)
                                     .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.5))
+                                    .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                             }
 
                             Spacer()
 
                             Text(track.formattedDuration)
                                 .font(.system(size: 12))
-                                .foregroundColor(.white.opacity(0.45))
+                                .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                         }
                     }
                 }
@@ -2350,7 +2357,7 @@ struct TrackCollectionView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.black)
+        .background(AppTheme.paper)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -2363,7 +2370,7 @@ struct TrackCollectionView: View {
                         )
                     } label: {
                         Image(systemName: "text.badge.plus")
-                            .foregroundColor(.white)
+                            .foregroundColor(AppTheme.ink)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Add album to playlist")
@@ -2402,21 +2409,21 @@ struct TrackDetailsView: View {
                !remotePageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Section("Source Link") {
                     Text(remotePageURL)
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.85))
                         .textSelection(.enabled)
                 }
             } else if let fileURL = track.fileURL,
                       !fileURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Section("File") {
                     Text(fileURL)
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.85))
                         .textSelection(.enabled)
                 }
             }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.black)
+        .background(AppTheme.paper)
         .navigationTitle("About Track")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -2429,10 +2436,10 @@ struct TrackMetadataRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(label)
-                .foregroundColor(.white.opacity(0.55))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.55))
             Spacer()
             Text(value)
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.ink)
                 .multilineTextAlignment(.trailing)
         }
     }
@@ -2496,7 +2503,7 @@ struct AddToPlaylistMenu: View {
             }
         } label: {
             Image(systemName: "text.badge.plus")
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.6))
                 .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
@@ -2548,10 +2555,10 @@ struct TrackGroupPlaylistPickerView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(playlist.displayName)
-                                        .foregroundColor(.white)
+                                        .foregroundColor(AppTheme.ink)
                                     Text("\(playlist.trackCount) tracks")
                                         .font(.system(size: 12))
-                                        .foregroundColor(.white.opacity(0.45))
+                                        .foregroundColor(AppTheme.mutedInk.opacity(0.45))
                                 }
 
                                 Spacer()
@@ -2577,7 +2584,7 @@ struct TrackGroupPlaylistPickerView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(Color.black)
+        .background(AppTheme.paper)
         .navigationTitle("Add Album to Playlist")
         .navigationBarTitleDisplayMode(.inline)
         .alert("New Playlist", isPresented: $showingCreatePlaylistPrompt) {
