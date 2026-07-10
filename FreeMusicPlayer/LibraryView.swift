@@ -542,7 +542,7 @@ struct LibraryView: View {
                                     dataManager.togglePlaylistFavorite(playlist)
                                 } label: {
                                     Image(systemName: playlist.isStarred ? "star.fill" : "star")
-                                        .foregroundColor(playlist.isStarred ? .yellow : .white.opacity(0.5))
+                                        .foregroundColor(playlist.isStarred ? AppTheme.accent : AppTheme.mutedInk.opacity(0.5))
                                         .frame(width: 28, height: 28)
                                 }
                                 .buttonStyle(.plain)
@@ -974,7 +974,7 @@ struct FilterChip: View {
             .padding(.vertical, 8)
             .background(
                 Capsule()
-                    .fill(isSelected ? AppTheme.ink : Color.white.opacity(0.06))
+                    .fill(isSelected ? AppTheme.accent : Color.white.opacity(0.06))
             )
             .overlay(
                 Capsule()

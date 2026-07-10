@@ -61,197 +61,80 @@ struct PlaylistView: View {
             if let playlist {
                 List {
                     Section {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(alignment: .top) {
-                                PlaylistArtworkView(
-                                    coverArtURL: playlist.coverArtURL,
-                                    representativeTrack: representativeTrack,
-                                    fallbackTitle: playlist.displayName,
-                                    size: 92,
-                                    cornerRadius: 18
-                                )
+                        VStack(alignment: .leading, spacing: 18) {
+                            PlaylistArtworkView(
+                                coverArtURL: playlist.coverArtURL,
+                                representativeTrack: representativeTrack,
+                                fallbackTitle: playlist.displayName,
+                                size: 190,
+                                cornerRadius: 4
+                            )
+                            .frame(maxWidth: .infinity)
+                            .shadow(color: .black.opacity(0.35), radius: 22, x: 0, y: 14)
 
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(playlist.displayName)
-                                        .font(.system(size: 28, weight: .bold))
-                                        .foregroundColor(AppTheme.ink)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(playlist.displayName)
+                                    .font(.system(size: 30, weight: .bold))
+                                    .foregroundColor(AppTheme.ink)
 
-                                    HStack(spacing: 8) {
-                                        Text("\(playlistTracks.count) tracks")
-                                            .foregroundColor(AppTheme.mutedInk)
+                                Text("\(playlistTracks.count) tracks")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppTheme.mutedInk)
+                            }
 
-                                        if playlist.isStarred {
-                                            Text("Favorite")
-                                                .font(.system(size: 12, weight: .semibold))
-                                                .foregroundColor(.yellow)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(
-                                                    Capsule()
-                                                        .fill(Color.yellow.opacity(0.12))
-                                                )
-                                        }
-                                    }
-                                }
-
-                                Spacer()
-
+                            HStack(spacing: 18) {
                                 Button {
                                     debugLog("Playlist favorite toggle pressed: \(playlist.displayName)")
                                     dataManager.togglePlaylistFavorite(playlist)
                                 } label: {
-                                    Image(systemName: playlist.isStarred ? "star.fill" : "star")
-                                        .font(.system(size: 20, weight: .semibold))
-                                        .foregroundColor(playlist.isStarred ? AppTheme.accent : AppTheme.mutedInk.opacity(0.6))
-                                        .padding(10)
-                                        .background(
-                                            Circle()
-                                                .fill(Color.white.opacity(0.06))
-                                        )
+                                    Image(systemName: playlist.isStarred ? "heart.fill" : "heart")
+                                        .font(.system(size: 24, weight: .semibold))
+                                        .foregroundColor(playlist.isStarred ? AppTheme.accent : AppTheme.mutedInk)
                                 }
                                 .buttonStyle(.plain)
-                            }
 
-                            HStack(spacing: 10) {
-                                PhotosPicker(
-                                    selection: $selectedCoverPickerItem,
-                                    matching: .images
-                                ) {
-                                    HStack(spacing: 8) {
-                                        if isSavingCustomCover {
-                                            ProgressView()
-                                                .tint(.white)
-                                        } else {
-                                            Image(systemName: playlist.preferredCoverReference == nil ? "photo.badge.plus" : "photo")
-                                        }
-
-                                        Text(playlist.preferredCoverReference == nil ? "Add cover" : "Change cover")
-                                    }
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(AppTheme.ink)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color.white.opacity(0.06))
-                                    )
+                                PhotosPicker(selection: $selectedCoverPickerItem, matching: .images) {
+                                    Image(systemName: playlist.preferredCoverReference == nil ? "photo.badge.plus" : "photo")
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundColor(AppTheme.mutedInk)
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(isSavingCustomCover)
 
-                                if playlist.preferredCoverReference != nil {
-                                    Button {
-                                        debugLog("Playlist remove cover button pressed: \(playlist.displayName)")
-                                        dataManager.removePlaylistCover(forPlaylistID: playlist.id)
-                                    } label: {
-                                        HStack(spacing: 8) {
-                                            Image(systemName: "trash")
-                                            Text("Remove cover")
-                                        }
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(AppTheme.mutedInk.opacity(0.82))
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 10)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.white.opacity(0.06))
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(isSavingCustomCover)
-                                }
-                            }
-
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack(spacing: 12) {
-                                    if !playlistTracks.isEmpty {
-                                        Button {
-                                            debugLog("Playlist play button pressed: \(playlist.name)")
-                                            if let firstTrack = playlistTracks.first {
-                                                audioPlayer.playTrack(
-                                                    firstTrack,
-                                                    in: playlistTracks,
-                                                    contextName: "playlist:\(playlist.id)"
-                                                )
-                                            }
-                                        } label: {
-                                            HStack {
-                                                Image(systemName: "play.fill")
-                                                Text("Play playlist")
-                                            }
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundColor(AppTheme.paper)
-                                            .padding(.horizontal, 18)
-                                            .padding(.vertical, 12)
-                                            .background(
-                                                Capsule()
-                                                    .fill(AppTheme.accent)
-                                            )
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-
-                                    Button {
-                                        debugLog("Playlist add tracks button pressed: \(playlist.name)")
-                                        showingAddTracksSheet = true
-                                    } label: {
-                                        HStack {
-                                            Image(systemName: "plus")
-                                            Text("Add tracks")
-                                        }
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(AppTheme.ink)
-                                        .padding(.horizontal, 18)
-                                        .padding(.vertical, 12)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.white.opacity(0.06))
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty)
-                                    .opacity(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty ? 0.45 : 1)
-                                }
-
-                                Button(role: .destructive) {
-                                    debugLog("Playlist delete button pressed: \(playlist.name)")
-                                    showingDeletePlaylistConfirmation = true
+                                Button {
+                                    debugLog("Playlist add tracks button pressed: \(playlist.name)")
+                                    showingAddTracksSheet = true
                                 } label: {
-                                    HStack {
-                                        Image(systemName: "trash")
-                                        Text("Delete playlist")
-                                    }
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundColor(AppTheme.ink)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color.red.opacity(0.18))
-                                    )
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 24, weight: .semibold))
+                                        .foregroundColor(AppTheme.mutedInk)
                                 }
                                 .buttonStyle(.plain)
-                            }
+                                .disabled(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty)
+                                .opacity(dataManager.tracks.isEmpty || availableLibraryTracks.isEmpty ? 0.45 : 1)
 
-                            if !dataManager.tracks.isEmpty && availableLibraryTracks.isEmpty {
-                                Text("All tracks from your library are already in this playlist.")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(AppTheme.mutedInk.opacity(0.45))
+                                Spacer()
+
+                                if !playlistTracks.isEmpty {
+                                    Button {
+                                        debugLog("Playlist play button pressed: \(playlist.name)")
+                                        if let firstTrack = playlistTracks.first {
+                                            audioPlayer.playTrack(firstTrack, in: playlistTracks, contextName: "playlist:\(playlist.id)")
+                                        }
+                                    } label: {
+                                        Image(systemName: "play.fill")
+                                            .font(.system(size: 28, weight: .bold))
+                                            .foregroundColor(AppTheme.paper)
+                                            .frame(width: 58, height: 58)
+                                            .background(Circle().fill(AppTheme.accent))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                         }
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .fill(AppTheme.panel)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .stroke(AppTheme.line, lineWidth: 1)
-                        )
+                        .padding(.vertical, 10)
                     }
                     .listRowBackground(Color.clear)
-
                     if playlistTracks.isEmpty {
                         Section {
                             VStack(alignment: .leading, spacing: 12) {
@@ -442,7 +325,7 @@ struct PlaylistTrackRow: View {
             Spacer()
 
             Image(systemName: dataManager.isTrackLiked(track) ? "heart.fill" : "heart")
-                .foregroundColor(dataManager.isTrackLiked(track) ? .red : .white.opacity(0.5))
+                .foregroundColor(dataManager.isTrackLiked(track) ? AppTheme.accent : .white.opacity(0.5))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 10)
@@ -687,7 +570,7 @@ struct SelectableTrackRow: View {
 
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(isSelected ? .red : .white.opacity(0.35))
+                    .foregroundColor(isSelected ? AppTheme.accent : .white.opacity(0.35))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)

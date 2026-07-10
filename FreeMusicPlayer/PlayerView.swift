@@ -19,7 +19,6 @@ struct PlayerView: View {
     @State private var isTogglingFavorite = false
     @State private var isTogglingDownload = false
     @State private var favoriteActionErrorMessage: String?
-    @State private var recordScrubProgress: Double?
     
     var body: some View {
         ZStack {
@@ -76,21 +75,23 @@ struct PlayerView: View {
 
     private var playerBackground: some View {
         ZStack {
+            TrackArtworkBackdrop(
+                track: audioPlayer.currentTrack,
+                fallbackPalette: .playerFallback
+            )
+            .scaleEffect(1.08)
+            .blur(radius: 38)
+            .opacity(0.30)
+
             LinearGradient(
                 colors: [
-                    AppTheme.paper,
-                    AppTheme.paperDeep,
-                    Color(red: 0.80, green: 0.80, blue: 0.78)
+                    Color.black.opacity(0.62),
+                    AppTheme.paper.opacity(0.94),
+                    AppTheme.paperDeep
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-
-            Circle()
-                .fill(Color.white.opacity(0.32))
-                .frame(width: 360, height: 360)
-                .blur(radius: 40)
-                .offset(y: -120)
         }
         .ignoresSafeArea()
     }
@@ -157,13 +158,27 @@ struct PlayerView: View {
     
     var albumArt: some View {
         VStack(spacing: 20) {
-            VinylScrubberRecord(
-                track: audioPlayer.currentTrack,
-                progress: recordScrubProgress ?? playbackProgress,
-                onScrub: { progress, ended in
-                    scrubRecord(to: progress, ended: ended)
+            ZStack {
+                if let currentTrack = audioPlayer.currentTrack {
+                    TrackArtworkView(track: currentTrack, size: 320, cornerRadius: 4, showsSourceBadge: false)
+                        .shadow(color: .black.opacity(0.45), radius: 26, x: 0, y: 16)
+                        .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .onTapGesture {
+                            guard dataManager.settings.showLyrics else { return }
+                            showLyricsSheet = true
+                        }
+                } else {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(AppTheme.elevatedPanel)
+                        .frame(width: 320, height: 320)
+                        .overlay(
+                            Image(systemName: "music.note")
+                                .font(.system(size: 72, weight: .semibold))
+                                .foregroundColor(AppTheme.mutedInk)
+                        )
+                        .shadow(color: .black.opacity(0.45), radius: 26, x: 0, y: 16)
                 }
-            )
+            }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 40)
             
@@ -212,9 +227,9 @@ struct PlayerView: View {
             PlaybackProgressBar(
                 progress: playbackProgress,
                 barHeight: 6,
-                activeColor: AppTheme.ink.opacity(0.92),
+                activeColor: AppTheme.accent,
                 inactiveColor: Color.white.opacity(0.10),
-                thumbColor: AppTheme.ink,
+                thumbColor: AppTheme.accent,
                 maxWidth: 312,
                 showsThumb: true,
                 animationDuration: 0.12
@@ -579,12 +594,6 @@ struct PlayerView: View {
         .buttonStyle(.plain)
     }
 
-    private func scrubRecord(to progress: Double, ended: Bool) {
-        guard audioPlayer.duration > 0, audioPlayer.duration.isFinite else { return }
-        let clampedProgress = min(max(progress, 0), 1)
-        recordScrubProgress = ended ? nil : clampedProgress
-        audioPlayer.seek(to: clampedProgress * audioPlayer.duration)
-    }
 
     private func openArtistPage(_ route: OnlineArtistRoute) {
         debugLog("Player artist pressed: \(route.artistName) [\(route.providerArtistID)]")
@@ -665,151 +674,6 @@ struct PlayerView: View {
                 }
             }
         }
-    }
-}
-
-struct VinylScrubberRecord: View {
-    let track: Track?
-    let progress: Double
-    let onScrub: (Double, Bool) -> Void
-
-    private let size: CGFloat = 318
-
-    var body: some View {
-        ZStack {
-            turntableBase
-
-            record
-                .rotationEffect(.degrees(progress * 360))
-                .gesture(recordScrubGesture)
-                .accessibilityLabel("Track scrubber record")
-                .accessibilityHint("Drag around the record to change track time")
-
-            tonearm
-        }
-        .frame(width: 340, height: 350)
-    }
-
-    private var turntableBase: some View {
-        RoundedRectangle(cornerRadius: 34, style: .continuous)
-            .fill(Color.white.opacity(0.38))
-            .overlay(
-                RoundedRectangle(cornerRadius: 34, style: .continuous)
-                    .stroke(AppTheme.line, lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.10), radius: 24, x: 0, y: 14)
-    }
-
-    private var record: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            Color(red: 0.16, green: 0.16, blue: 0.15),
-                            Color.black,
-                            Color.black
-                        ],
-                        center: .center,
-                        startRadius: 12,
-                        endRadius: size / 2
-                    )
-                )
-
-            ForEach(0..<12, id: \.self) { index in
-                Circle()
-                    .stroke(Color.white.opacity(index.isMultiple(of: 3) ? 0.07 : 0.035), lineWidth: 1)
-                    .frame(
-                        width: size - CGFloat(index * 18),
-                        height: size - CGFloat(index * 18)
-                    )
-            }
-
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(AppTheme.accent.opacity(0.72), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .frame(width: size + 12, height: size + 12)
-
-            centerLabel
-
-            Circle()
-                .fill(Color.black)
-                .frame(width: 15, height: 15)
-                .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 2))
-        }
-        .frame(width: size, height: size)
-        .contentShape(Circle())
-    }
-
-    private var centerLabel: some View {
-        Group {
-            if let track {
-                TrackArtworkView(track: track, size: 104, cornerRadius: 52, showsSourceBadge: false)
-                    .clipShape(Circle())
-            } else {
-                Circle()
-                    .fill(AppTheme.paperDeep)
-                    .frame(width: 104, height: 104)
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .font(.system(size: 30, weight: .semibold))
-                            .foregroundColor(AppTheme.mutedInk)
-                    )
-            }
-        }
-        .overlay(Circle().stroke(Color.white.opacity(0.55), lineWidth: 4))
-    }
-
-    private var tonearm: some View {
-        ZStack {
-            Capsule()
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white, Color(red: 0.68, green: 0.68, blue: 0.66)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .frame(width: 8, height: 158)
-                .shadow(color: .black.opacity(0.18), radius: 5, x: 1, y: 2)
-                .rotationEffect(.degrees(22))
-                .offset(x: 118, y: -28)
-
-            Circle()
-                .fill(Color(red: 0.86, green: 0.86, blue: 0.84))
-                .frame(width: 42, height: 42)
-                .overlay(Circle().stroke(Color.white.opacity(0.8), lineWidth: 2))
-                .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-                .offset(x: 122, y: -124)
-
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(AppTheme.ink)
-                .frame(width: 42, height: 20)
-                .rotationEffect(.degrees(-22))
-                .shadow(color: .black.opacity(0.14), radius: 5, y: 3)
-                .offset(x: 83, y: 82)
-        }
-        .allowsHitTesting(false)
-    }
-
-    private var recordScrubGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { value in
-                onScrub(progress(for: value.location), false)
-            }
-            .onEnded { value in
-                onScrub(progress(for: value.location), true)
-            }
-    }
-
-    private func progress(for location: CGPoint) -> Double {
-        let center = CGPoint(x: size / 2, y: size / 2)
-        let dx = location.x - center.x
-        let dy = location.y - center.y
-        let angle = atan2(dx, -dy)
-        let normalizedAngle = angle < 0 ? angle + (.pi * 2) : angle
-        return normalizedAngle / (.pi * 2)
     }
 }
 

@@ -215,7 +215,7 @@ struct SearchView: View {
                             .padding(.vertical, 9)
                             .background(
                                 Capsule()
-                                    .fill(selectedCategory == category ? AppTheme.ink : Color.white.opacity(0.06))
+                                    .fill(selectedCategory == category ? AppTheme.accent : Color.white.opacity(0.06))
                             )
                             .overlay(
                                 Capsule()
@@ -1067,7 +1067,7 @@ struct SearchProviderButton: View {
             if !isAvailable {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.yellow)
+                    .foregroundColor(AppTheme.accent)
                     .background(Circle().fill(Color.black))
                     .offset(x: 12, y: -12)
             }
@@ -1355,7 +1355,7 @@ struct SearchTrackRow: View {
             } label: {
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 28))
-                    .foregroundColor(.red)
+                    .foregroundColor(AppTheme.accent)
             }
             .buttonStyle(.plain)
         }
@@ -1583,7 +1583,7 @@ struct OnlineSearchTrackRow: View {
                     } else {
                         Image(systemName: isLiked ? "heart.fill" : "heart")
                             .font(.system(size: 20))
-                            .foregroundColor(isLiked ? .red : .white.opacity(0.78))
+                            .foregroundColor(isLiked ? AppTheme.accent : .white.opacity(0.78))
                     }
                 }
                 .buttonStyle(.plain)
@@ -1591,19 +1591,19 @@ struct OnlineSearchTrackRow: View {
             } else {
                 Image(systemName: isLiked ? "heart.fill" : "heart.slash")
                     .font(.system(size: 20))
-                    .foregroundColor(isLiked ? .red : .white.opacity(0.24))
+                    .foregroundColor(isLiked ? AppTheme.accent : .white.opacity(0.24))
                     .frame(width: 28, height: 28)
             }
 
             Button(action: primaryAction) {
                 if isPerformingPrimaryAction {
                     ProgressView()
-                        .tint(result.supportsInAppPlayback ? .red : result.provider.accentColor)
+                        .tint(result.supportsInAppPlayback ? AppTheme.accent : result.provider.accentColor)
                         .frame(width: 28, height: 28)
                 } else {
                     Image(systemName: result.supportsInAppPlayback ? "play.circle.fill" : "arrow.up.right.circle.fill")
                         .font(.system(size: 28))
-                        .foregroundColor(result.supportsInAppPlayback ? .red : result.provider.accentColor)
+                        .foregroundColor(result.supportsInAppPlayback ? AppTheme.accent : result.provider.accentColor)
                 }
             }
             .buttonStyle(.plain)

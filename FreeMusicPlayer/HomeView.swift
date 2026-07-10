@@ -354,7 +354,7 @@ struct PlaylistCard: View {
                 if playlist.isStarred {
                     Image(systemName: "star.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.yellow)
+                        .foregroundColor(AppTheme.accent)
                         .padding(8)
                 }
             }
