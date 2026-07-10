@@ -14,70 +14,129 @@ struct HomeView: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                gradient: Gradient(colors: [
-                    Color(red: 0.6, green: 0.1, blue: 0.1),
-                    Color(red: 0.3, green: 0.05, blue: 0.05),
-                    Color.black
-                ]),
+                gradient: Gradient(colors: [AppTheme.paper, AppTheme.paperDeep]),
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 22) {
+                    homeHeader
+                    NowPlayingHomeCard()
                     PlaylistsSection()
-                    PopularSection()
                     RecentSection()
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
+                .padding(.horizontal, 18)
+                .padding(.top, 18)
                 .padding(.bottom, 100)
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 8, height: 8)
-                    Text("FreeMusic")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                }
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var homeHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("FreeMusic")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundColor(AppTheme.ink)
+                Text("\(dataManager.tracks.count) tracks in your player")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppTheme.mutedInk)
             }
 
-            ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 16) {
-                    Button {
-                        debugLog("Home search button pressed")
-                        router.navigate(to: .search)
-                    } label: {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.white)
-                    }
-                    .buttonStyle(.plain)
+            Spacer()
 
-                    Button {
-                        debugLog("Home profile button pressed")
-                        router.navigate(to: .settings)
-                    } label: {
-                        AsyncImage(url: URL(string: "https://via.placeholder.com/40")) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        } placeholder: {
-                            Circle()
-                                .fill(Color.white.opacity(0.15))
-                        }
-                        .frame(width: 32, height: 32)
-                        .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
+            Button {
+                debugLog("Home search button pressed")
+                router.navigate(to: .search)
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(AppTheme.ink)
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(AppTheme.panel))
+                    .overlay(Circle().stroke(AppTheme.line, lineWidth: 1))
             }
+            .buttonStyle(.plain)
         }
+    }
+}
+
+struct NowPlayingHomeCard: View {
+    @EnvironmentObject var audioPlayer: AudioPlayer
+
+    var body: some View {
+        HStack(spacing: 18) {
+            MiniVinylArtwork(track: audioPlayer.currentTrack, size: 104)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Now playing")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(AppTheme.mutedInk)
+                    .textCase(.uppercase)
+
+                Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(AppTheme.ink)
+                    .lineLimit(2)
+
+                Text(audioPlayer.currentTrack?.displayArtist ?? "Choose a track from search or library")
+                    .font(.system(size: 14))
+                    .foregroundColor(AppTheme.mutedInk)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(AppTheme.panel)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .stroke(AppTheme.line, lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 22, x: 0, y: 12)
+    }
+}
+
+struct MiniVinylArtwork: View {
+    let track: Track?
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(AppTheme.ink)
+                .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
+
+            ForEach(0..<5, id: \.self) { index in
+                Circle()
+                    .stroke(Color.white.opacity(0.05), lineWidth: 1)
+                    .frame(width: size - CGFloat(index * 15), height: size - CGFloat(index * 15))
+            }
+
+            if let track {
+                TrackArtworkView(track: track, size: size * 0.42, cornerRadius: size * 0.21, showsSourceBadge: false)
+                    .clipShape(Circle())
+            } else {
+                Circle()
+                    .fill(AppTheme.paperDeep)
+                    .frame(width: size * 0.42, height: size * 0.42)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .foregroundColor(AppTheme.mutedInk)
+                    )
+            }
+
+            Circle()
+                .fill(AppTheme.ink)
+                .frame(width: size * 0.09, height: size * 0.09)
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -96,14 +155,14 @@ struct PlaylistsSection: View {
             HStack {
                 Text("Playlists")
                     .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
 
                 Spacer()
 
                 if !dataManager.favoritePlaylists.isEmpty {
                     Text("\(dataManager.favoritePlaylists.count) favorites")
                         .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.45))
+                        .foregroundColor(AppTheme.mutedInk)
                 }
             }
 
@@ -126,17 +185,18 @@ struct PlaylistsSection: View {
                     } label: {
                         VStack {
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.05))
+                                .fill(AppTheme.panel)
                                 .frame(width: 140, height: 140)
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppTheme.line, lineWidth: 1))
                                 .overlay(
                                     Image(systemName: "plus")
                                         .font(.system(size: 32))
-                                        .foregroundColor(.white.opacity(0.5))
+                                        .foregroundColor(AppTheme.mutedInk)
                                 )
 
                             Text("Create")
                                 .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.6))
+                                .foregroundColor(AppTheme.mutedInk)
                                 .padding(.top, 8)
                         }
                     }
@@ -192,12 +252,12 @@ struct PlaylistCard: View {
 
             Text(playlist.displayName)
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.ink)
                 .lineLimit(1)
 
             Text("\(playlist.trackCount) tracks")
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(AppTheme.mutedInk)
         }
         .frame(width: 140, alignment: .leading)
     }
@@ -208,7 +268,7 @@ struct PopularSection: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Popular")
                 .font(.system(size: 22, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.ink)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -230,12 +290,12 @@ struct PopularCard: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.1))
+                    .fill(AppTheme.panel)
                     .frame(width: 140, height: 140)
 
                 Text("Mix #\(index + 1)")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
             }
         }
         .buttonStyle(.plain)
@@ -249,7 +309,7 @@ struct RecentSection: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent")
                 .font(.system(size: 22, weight: .bold))
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.ink)
 
             VStack(spacing: 0) {
                 ForEach(Array(dataManager.tracks.prefix(10))) { track in
@@ -258,8 +318,9 @@ struct RecentSection: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color.white.opacity(0.03))
+                    .fill(AppTheme.panel)
             )
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppTheme.line, lineWidth: 1))
         }
     }
 }
@@ -282,33 +343,33 @@ struct TrackRow: View {
                 .frame(width: 50, height: 50)
                 .overlay(
                     Image(systemName: "music.note")
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.5))
                 )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.displayTitle)
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(isPlaying ? .red : .white)
+                    .foregroundColor(isPlaying ? AppTheme.accent : AppTheme.ink)
 
                 Text(track.displayArtist)
                     .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk)
             }
 
             Spacer()
 
             Text(track.formattedDuration)
                 .font(.system(size: 13))
-                .foregroundColor(.white.opacity(0.4))
+                .foregroundColor(AppTheme.mutedInk)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.05))
+                        .fill(Color.black.opacity(0.04))
                 )
 
             Image(systemName: dataManager.isTrackSaved(track) ? "heart.fill" : "heart")
-                .foregroundColor(dataManager.isTrackSaved(track) ? .red : .white.opacity(0.5))
+                .foregroundColor(dataManager.isTrackSaved(track) ? AppTheme.accent : AppTheme.mutedInk.opacity(0.55))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

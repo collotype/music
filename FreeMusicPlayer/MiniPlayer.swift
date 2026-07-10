@@ -51,27 +51,21 @@ struct MiniPlayer: View {
         HStack(spacing: 12) {
             Group {
                 if let currentTrack = audioPlayer.currentTrack {
-                    TrackArtworkView(track: currentTrack, size: 48, cornerRadius: 8, showsSourceBadge: true)
+                    MiniVinylArtwork(track: currentTrack, size: 48)
                         .overlay(alignment: .topTrailing) {
                             if dataManager.isTrackLiked(currentTrack) {
                                 Image(systemName: "heart.fill")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundColor(.white)
                                     .padding(4)
-                                    .background(Circle().fill(Color.red))
+                                    .background(Circle().fill(AppTheme.accent))
                                     .offset(x: 5, y: -5)
                             }
                         }
                 } else {
                     ZStack {
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.red, Color(red: 0.3, green: 0.1, blue: 0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
+                            .fill(AppTheme.ink)
                             .frame(width: 48, height: 48)
 
                         Image(systemName: "music.note")
@@ -83,12 +77,12 @@ struct MiniPlayer: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(audioPlayer.currentTrack?.displayTitle ?? "Nothing selected")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.ink)
                     .lineLimit(1)
 
                 Text(audioPlayer.currentTrack?.displayArtist ?? "")
                     .font(.system(size: 12))
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundColor(AppTheme.mutedInk)
                     .lineLimit(1)
             }
 
@@ -101,7 +95,7 @@ struct MiniPlayer: View {
                 } label: {
                     Image(systemName: currentTrackIsLiked ? "heart.fill" : "heart")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(currentTrackIsLiked ? .red : .white)
+                        .foregroundColor(currentTrackIsLiked ? AppTheme.accent : AppTheme.mutedInk)
                         .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
@@ -117,7 +111,7 @@ struct MiniPlayer: View {
                     .frame(width: 40, height: 40)
                     .background(
                         Circle()
-                            .fill(Color.white.opacity(0.15))
+                            .fill(AppTheme.ink)
                     )
             }
             .buttonStyle(.plain)
@@ -127,22 +121,15 @@ struct MiniPlayer: View {
         .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .center)
         .background {
             ZStack {
-                TrackArtworkBackdrop(
-                    track: audioPlayer.currentTrack,
-                    fallbackPalette: .cardFallback,
-                    cornerRadius: backgroundCornerRadius
-                )
-                .opacity(0.5)
-
                 RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
                     .fill(.ultraThinMaterial)
-                    .opacity(0.78)
+                    .opacity(0.92)
 
                 RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
-                    .fill(Color.black.opacity(0.18))
+                    .fill(AppTheme.paper.opacity(0.62))
 
                 RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(AppTheme.line, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
         }
@@ -150,8 +137,8 @@ struct MiniPlayer: View {
             PlaybackProgressBar(
                 progress: playbackProgress,
                 barHeight: 3,
-                activeColor: .white.opacity(0.92),
-                inactiveColor: .white.opacity(0.12),
+                activeColor: AppTheme.ink.opacity(0.86),
+                inactiveColor: Color.black.opacity(0.08),
                 thumbColor: .clear,
                 maxWidth: nil,
                 showsThumb: false,
@@ -164,7 +151,7 @@ struct MiniPlayer: View {
             .allowsHitTesting(false)
         }
         .clipShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
-        .shadow(color: Color.black.opacity(0.24), radius: 20, x: 0, y: 8)
+        .shadow(color: Color.black.opacity(0.12), radius: 18, x: 0, y: 8)
         .contentShape(RoundedRectangle(cornerRadius: backgroundCornerRadius, style: .continuous))
         .onTapGesture {
             debugLog("Mini player tapped")

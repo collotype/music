@@ -7,6 +7,16 @@
 
 import SwiftUI
 
+enum AppTheme {
+    static let paper = Color(red: 0.94, green: 0.94, blue: 0.92)
+    static let paperDeep = Color(red: 0.86, green: 0.86, blue: 0.84)
+    static let ink = Color(red: 0.09, green: 0.09, blue: 0.09)
+    static let mutedInk = Color(red: 0.36, green: 0.36, blue: 0.34)
+    static let panel = Color.white.opacity(0.58)
+    static let line = Color.black.opacity(0.08)
+    static let accent = Color(red: 0.86, green: 0.20, blue: 0.16)
+}
+
 struct ContentView: View {
     @EnvironmentObject var audioPlayer: AudioPlayer
     @EnvironmentObject var dataManager: DataManager
@@ -15,7 +25,12 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            LinearGradient(
+                colors: [AppTheme.paper, AppTheme.paperDeep],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 NavigationStack(path: $router.path) {
@@ -51,7 +66,8 @@ struct ContentView: View {
                     .zIndex(1)
             }
         }
-        .accentColor(.red)
+        .accentColor(AppTheme.accent)
+        .preferredColorScheme(.light)
         .task {
             // Start heavy data loading AFTER the first render — runs off main thread.
             dataManager.loadData()
@@ -68,8 +84,6 @@ struct ContentView: View {
             LibraryView()
         case .search:
             SearchView()
-        case .settings:
-            SettingsView()
         }
     }
 }
@@ -88,25 +102,35 @@ struct CustomTabBar: View {
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 22))
+                            .font(.system(size: 20, weight: .semibold))
                         Text(tab.title)
-                            .font(.system(size: 10))
+                            .font(.system(size: 10, weight: .semibold))
                     }
-                    .foregroundColor(router.selectedTab == tab ? .white : .gray)
+                    .foregroundColor(router.selectedTab == tab ? AppTheme.ink : AppTheme.mutedInk.opacity(0.58))
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .top) {
+                        if router.selectedTab == tab {
+                            Circle()
+                                .fill(AppTheme.accent)
+                                .frame(width: 5, height: 5)
+                                .offset(y: -2)
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.vertical, 8)
+        .padding(.horizontal, 10)
         .background(
-            Color(red: 0.1, green: 0.1, blue: 0.1)
-                .opacity(0.95)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(AppTheme.paper.opacity(0.72))
         )
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(Color.white.opacity(0.1))
+                .fill(AppTheme.line)
                 .frame(height: 0.5)
         }
     }

@@ -681,14 +681,12 @@ enum Tab: String, CaseIterable, Hashable {
     case home
     case library
     case search
-    case settings
 
     static var allCases: [Tab] {
         [
             .home,
             .library,
-            .search,
-            .settings
+            .search
         ]
     }
 
@@ -697,7 +695,6 @@ enum Tab: String, CaseIterable, Hashable {
         case .home: return "house.fill"
         case .library: return "folder.fill"
         case .search: return "magnifyingglass"
-        case .settings: return "gearshape.fill"
         }
     }
 
@@ -706,7 +703,6 @@ enum Tab: String, CaseIterable, Hashable {
         case .home: return "Home"
         case .library: return "Library"
         case .search: return "Search"
-        case .settings: return "Settings"
         }
     }
 }
