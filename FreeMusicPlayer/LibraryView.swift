@@ -81,6 +81,27 @@ struct LibraryView: View {
         }
     }
 
+    private var combinedMediaItems: [LibraryMediaItem] {
+        var seenTitles = Set<String>()
+        var items: [LibraryMediaItem] = []
+
+        for playlist in filteredPlaylists {
+            let key = LibraryMediaItem.normalizedTitle(playlist.displayName)
+            if seenTitles.insert(key).inserted {
+                items.append(.playlist(playlist))
+            }
+        }
+
+        for album in filteredAlbums {
+            let key = LibraryMediaItem.normalizedTitle(album.displayTitle)
+            if seenTitles.insert(key).inserted {
+                items.append(.album(album))
+            }
+        }
+
+        return items
+    }
+
     private var selectionSubtitle: String {
         switch selectedFilter {
         case .liked:
@@ -90,7 +111,8 @@ struct LibraryView: View {
         case .artists:
             return "\(filteredArtists.count) artists"
         case .media:
-            return "\(filteredAlbums.count) albums, \(filteredPlaylists.count) playlists"
+            let count = combinedMediaItems.count
+            return "\(count) album\(count == 1 ? "" : "s") & playlist\(count == 1 ? "" : "s")"
         }
     }
 
@@ -328,100 +350,67 @@ struct LibraryView: View {
     }
 
     var mediaSection: some View {
-        let hasAlbums = !filteredAlbums.isEmpty
-        let hasPlaylists = !filteredPlaylists.isEmpty
+        let items = combinedMediaItems
 
         return Group {
-            if !hasAlbums && !hasPlaylists {
+            if items.isEmpty {
                 emptyStateView
             } else {
                 ScrollView {
-                    VStack(spacing: 0) {
-                        if hasPlaylists {
-                            VStack(alignment: .leading, spacing: 0) {
-                                HStack {
-                                    Text("Playlists")
-                                        .font(.system(size: 22, weight: .bold))
-                                        .foregroundColor(AppTheme.ink)
-                                        .padding(.horizontal, 16)
-                                        .padding(.top, 16)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .center) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Albums & Playlists")
+                                    .font(.system(size: 22, weight: .bold))
+                                    .foregroundColor(AppTheme.ink)
 
-                                    Spacer()
+                                Text("Saved music without duplicates")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundColor(AppTheme.mutedInk.opacity(0.6))
+                            }
 
-                                    Button {
-                                        debugLog("Library playlist create prompt button pressed")
-                                        presentCreatePlaylistPrompt()
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "plus.circle.fill")
-                                            Text("Create")
-                                        }
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(AppTheme.ink)
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 8)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color.white.opacity(0.12))
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.trailing, 16)
-                                    .padding(.top, 16)
-                                }
+                            Spacer()
 
-                                ForEach(filteredPlaylists) { playlist in
+                            Button {
+                                debugLog("Library playlist create prompt button pressed")
+                                presentCreatePlaylistPrompt()
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(AppTheme.ink)
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(Color.white.opacity(0.1)))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 16)
+
+                        VStack(spacing: 0) {
+                            ForEach(items) { item in
+                                switch item {
+                                case .playlist(let playlist):
                                     Button {
                                         debugLog("Library playlist row pressed: \(playlist.displayName)")
                                         router.openPlaylist(playlist.id)
                                     } label: {
-                                        HStack(spacing: 12) {
-                                            PlaylistArtworkView(
-                                                coverArtURL: playlist.coverArtURL,
-                                                representativeTrack: representativePlaylistTrack(for: playlist),
-                                                fallbackTitle: playlist.displayName,
-                                                size: 52,
-                                                cornerRadius: 10
+                                        LibraryCombinedMediaRow(
+                                            title: playlist.displayName,
+                                            subtitle: "\(playlist.trackCount) tracks",
+                                            type: "Playlist",
+                                            artwork: AnyView(
+                                                PlaylistArtworkView(
+                                                    coverArtURL: playlist.coverArtURL,
+                                                    representativeTrack: representativePlaylistTrack(for: playlist),
+                                                    fallbackTitle: playlist.displayName,
+                                                    size: 56,
+                                                    cornerRadius: 8
+                                                )
                                             )
-
-                                            VStack(alignment: .leading, spacing: 4) {
-                                                Text(playlist.displayName)
-                                                    .foregroundColor(AppTheme.ink)
-                                                    .lineLimit(1)
-                                                Text("\(playlist.trackCount) tracks")
-                                                    .font(.system(size: 13))
-                                                    .foregroundColor(AppTheme.mutedInk)
-                                            }
-
-                                            Spacer()
-
-                                            Image(systemName: "chevron.right")
-                                                .foregroundColor(AppTheme.mutedInk)
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 10)
+                                        )
                                     }
                                     .buttonStyle(.plain)
-                                }
-                            }
-                        }
-
-                        if hasAlbums && hasPlaylists {
-                            Divider()
-                                .background(Color.white.opacity(0.1))
-                                .padding(.vertical, 12)
-                        }
-
-                        if hasAlbums {
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text("Albums")
-                                    .font(.system(size: 22, weight: .bold))
-                                    .foregroundColor(AppTheme.ink)
-                                    .padding(.horizontal, 16)
-                                    .padding(.top, 8)
-                                    .padding(.bottom, 4)
-
-                                ForEach(filteredAlbums) { album in
+                                case .album(let album):
                                     NavigationLink {
                                         TrackCollectionView(
                                             title: album.displayTitle,
@@ -430,15 +419,20 @@ struct LibraryView: View {
                                             contextName: "album:\(album.id)"
                                         )
                                     } label: {
-                                        LibraryAlbumRow(album: album)
+                                        LibraryCombinedMediaRow(
+                                            title: album.displayTitle,
+                                            subtitle: album.displayArtist,
+                                            type: "Album",
+                                            artwork: AnyView(
+                                                LibraryAlbumArtwork(album: album)
+                                            )
+                                        )
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 6)
                                 }
                             }
                         }
-
-                        Spacer(minLength: 20)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 120)
                     }
                 }
             }
@@ -1097,6 +1091,88 @@ struct LibraryArtistRow: View {
                 .foregroundColor(AppTheme.mutedInk.opacity(0.32))
         }
         .padding(.vertical, 8)
+    }
+}
+
+enum LibraryMediaItem: Identifiable {
+    case playlist(Playlist)
+    case album(SavedAlbum)
+
+    var id: String {
+        switch self {
+        case .playlist(let playlist):
+            return "playlist:\(playlist.id)"
+        case .album(let album):
+            return "album:\(album.id)"
+        }
+    }
+
+    static func normalizedTitle(_ title: String) -> String {
+        title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+}
+
+struct LibraryCombinedMediaRow: View {
+    let title: String
+    let subtitle: String
+    let type: String
+    let artwork: AnyView
+
+    var body: some View {
+        HStack(spacing: 12) {
+            artwork
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(AppTheme.ink)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(type)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(AppTheme.ink)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.09)))
+
+                    Text(subtitle)
+                        .font(.system(size: 13))
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.58))
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(AppTheme.mutedInk.opacity(0.32))
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+}
+
+struct LibraryAlbumArtwork: View {
+    let album: SavedAlbum
+    @EnvironmentObject var dataManager: DataManager
+
+    var body: some View {
+        if let representativeTrack = dataManager.representativeTrack(for: album) {
+            TrackArtworkView(track: representativeTrack, size: 56, cornerRadius: 8, showsSourceBadge: true)
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white.opacity(0.06))
+                .frame(width: 56, height: 56)
+                .overlay(
+                    Image(systemName: "square.stack.fill")
+                        .foregroundColor(AppTheme.mutedInk.opacity(0.5))
+                )
+        }
     }
 }
 
